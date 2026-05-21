@@ -4,15 +4,15 @@
 
 -- USE business_management;
 
--- Create _migrations table if it doesn't exist
-CREATE TABLE IF NOT EXISTS _migrations (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(255) NOT NULL UNIQUE,
-  executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- -- Create _migrations table if it doesn't exist
+-- CREATE TABLE IF NOT EXISTS _migrations (
+--   id INT AUTO_INCREMENT PRIMARY KEY,
+--   name VARCHAR(255) NOT NULL UNIQUE,
+--   executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- );
 
--- Only run if not already executed
-INSERT IGNORE INTO _migrations (name) VALUES ('012_ngo_chart_of_accounts.sql');
+-- -- Only run if not already executed
+-- INSERT IGNORE INTO _migrations (name) VALUES ('012_ngo_chart_of_accounts.sql');
 
 -- ============================================================
 -- NGO REVENUE ACCOUNTS (under 4000 Revenue)

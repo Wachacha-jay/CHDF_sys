@@ -3,8 +3,8 @@
 
 -- USE business_management;
 
--- Only run if not already executed
-INSERT IGNORE INTO _migrations (name) VALUES ('013_inter_departmental_accounting.sql');
+-- -- Only run if not already executed
+-- INSERT IGNORE INTO _migrations (name) VALUES ('013_inter_departmental_accounting.sql');
 
 -- ============================================================
 -- INTER-DEPARTMENTAL CLEARING / LOAN ACCOUNTS
