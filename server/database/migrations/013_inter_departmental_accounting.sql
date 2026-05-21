@@ -1,7 +1,7 @@
 -- Migration 013: Inter-departmental Accounting
 -- Adds accounts for tracking internal loans and transfers between departments
 
-USE business_management;
+-- USE business_management;
 
 -- Only run if not already executed
 INSERT IGNORE INTO _migrations (name) VALUES ('013_inter_departmental_accounting.sql');

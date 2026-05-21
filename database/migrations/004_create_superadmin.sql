@@ -2,7 +2,7 @@
 -- This migration creates a default superadmin account for initial system access
 -- Run this after 003_seed_data.sql
 
-USE business_management;
+-- USE business_management;
 
 -- Create superadmin user
 -- Email: admin@business.com

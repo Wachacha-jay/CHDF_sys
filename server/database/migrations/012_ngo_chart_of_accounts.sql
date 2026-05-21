@@ -2,7 +2,7 @@
 -- Adds accounts specifically for Fund Accounting & Child Support module
 -- Run after 011_payroll_accounts_fix.sql
 
-USE business_management;
+-- USE business_management;
 
 -- Create _migrations table if it doesn't exist
 CREATE TABLE IF NOT EXISTS _migrations (

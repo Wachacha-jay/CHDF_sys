@@ -2,7 +2,7 @@
 -- Description: Professional Role-Based Access Control System
 -- Author: Antigravity (Senior Software Engineer)
 
-USE business_management;
+-- USE business_management;
 
 -- 1. Create Roles Table with correct collation to match users table
 DROP TABLE IF EXISTS role_permissions;
