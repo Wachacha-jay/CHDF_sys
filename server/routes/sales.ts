@@ -23,7 +23,12 @@ router.post('/', authenticate, async (req, res) => {
       paid_amount,
       payment_status,
       payment_method,
-      notes
+      notes,
+      sale_type,
+      child_id,
+      department_id,
+      fund_id,
+      donor_id
     } = req.body;
 
     const saleId = crypto.randomUUID();
@@ -36,9 +41,28 @@ router.post('/', authenticate, async (req, res) => {
 
     // 1. Create Sale
     await connection.query(
-      `INSERT INTO sales (id, sale_number, customer_id, sale_date, due_date, subtotal, tax_amount, discount_amount, total_amount, paid_amount, payment_status, payment_method, notes) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [saleId, saleNumber, customer_id || null, sale_date, due_date || null, normalizedSubtotal, normalizedTaxAmount, normalizedDiscountAmount, normalizedTotalAmount, normalizedPaidAmount, payment_status, payment_method, notes]
+      `INSERT INTO sales (id, sale_number, customer_id, sale_date, due_date, subtotal, tax_amount, discount_amount, total_amount, paid_amount, payment_status, payment_method, notes, sale_type, child_id, department_id, fund_id, donor_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        saleId, 
+        saleNumber, 
+        customer_id || null, 
+        sale_date, 
+        due_date || null, 
+        normalizedSubtotal, 
+        normalizedTaxAmount, 
+        normalizedDiscountAmount, 
+        normalizedTotalAmount, 
+        normalizedPaidAmount, 
+        payment_status, 
+        payment_method, 
+        notes,
+        sale_type || 'standard',
+        child_id || null,
+        department_id || null,
+        fund_id || null,
+        donor_id || null
+      ]
     );
 
     // 2. Process Items

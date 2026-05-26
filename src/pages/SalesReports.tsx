@@ -21,6 +21,11 @@ const SalesReports: React.FC = () => {
     const [allSales, setAllSales] = useState<Sale[]>([]);
     const [businessSettings, setBusinessSettings] = useState<BusinessSettings | null>(null);
 
+    const getCurrency = () => {
+        const c = businessSettings?.default_currency;
+        return (!c || c === 'USD') ? 'KES' : c;
+    };
+
     useEffect(() => {
         // Set initial date range based on quick filter
         applyQuickFilter('month');
@@ -167,7 +172,7 @@ const SalesReports: React.FC = () => {
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{businessSettings?.default_currency || 'USD'} {Number(totalRevenue || 0).toFixed(2)}</p>
+                            <p className="text-3xl font-bold text-gray-900 mt-2">{getCurrency()} {Number(totalRevenue || 0).toFixed(2)}</p>
                         </div>
                         <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
                             <DollarSign className="h-6 w-6 text-green-600" />
@@ -179,7 +184,7 @@ const SalesReports: React.FC = () => {
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{businessSettings?.default_currency || 'USD'} {Number(averageOrderValue || 0).toFixed(2)}</p>
+                            <p className="text-3xl font-bold text-gray-900 mt-2">{getCurrency()} {Number(averageOrderValue || 0).toFixed(2)}</p>
                         </div>
                         <div className="h-12 w-12 bg-purple-100 rounded-full flex items-center justify-center">
                             <TrendingUp className="h-6 w-6 text-purple-600" />
@@ -215,10 +220,10 @@ const SalesReports: React.FC = () => {
                                             </td>
                                             <td className="py-3 px-4 text-sm text-gray-900 text-right">{day.salesCount}</td>
                                             <td className="py-3 px-4 text-sm text-gray-900 text-right font-medium">
-                                                {businessSettings?.default_currency || 'USD'} {Number(day.totalRevenue || 0).toFixed(2)}
+                                                {getCurrency()} {Number(day.totalRevenue || 0).toFixed(2)}
                                             </td>
                                             <td className="py-3 px-4 text-sm text-gray-600 text-right">
-                                                {businessSettings?.default_currency || 'USD'} {Number(day.averageOrderValue || 0).toFixed(2)}
+                                                {getCurrency()} {Number(day.averageOrderValue || 0).toFixed(2)}
                                             </td>
                                         </tr>
                                     ))}
@@ -252,7 +257,7 @@ const SalesReports: React.FC = () => {
                                         <span className="text-sm font-medium text-gray-600">{method.count} sales</span>
                                     </div>
                                     <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm text-gray-600">{businessSettings?.default_currency || 'USD'} {Number(method.total || 0).toFixed(2)}</span>
+                                        <span className="text-sm text-gray-600">{getCurrency()} {Number(method.total || 0).toFixed(2)}</span>
                                         <span className="text-sm font-medium text-blue-600">{Number(method.percentage || 0).toFixed(1)}%</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2">

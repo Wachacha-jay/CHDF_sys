@@ -71,9 +71,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
         { name: 'Donations', href: '/funds/donations', icon: Heart },
         { name: 'Internal Transfers', href: '/funds/transfers', icon: ArrowRightLeft },
         { name: 'NGO Billing', href: '/funds/billing', icon: Receipt },
+        { name: 'Reports Workspace', href: '/funds/reports', icon: BookOpen },
         { name: 'Dept. & Funds Setup', href: '/funds/setup', icon: Building2 },
       ]
     },
+
     { name: 'Customers', href: '/customers', icon: Users },
     { name: 'Employees', href: '/employees', icon: UserCheck },
     { name: 'Suppliers', href: '/suppliers', icon: Truck },

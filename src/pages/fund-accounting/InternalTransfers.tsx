@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FundAccountingService } from '../../services/fundAccountingService';
-import { ArrowRightLeft, Plus, CheckCircle, Clock, XCircle, AlertCircle, TrendingUp, Wallet } from 'lucide-react';
+import { ApiService } from '../../services/api';
+import { ArrowRightLeft, Plus, CheckCircle, Clock, XCircle, TrendingUp, Wallet, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { Department, InternalTransfer } from '../../types';
 import { useAuthContext } from '../../contexts/useAuthContext';
@@ -24,12 +25,13 @@ const InternalTransfers: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [tList, dList] = await Promise.all([
-      // Generic API fetch for internal_transfers
-      fetch('/api/internal_transfers').then(res => res.json()).then(data => data.internal_transfers || []),
+    const [tResponse, dList] = await Promise.all([
+      ApiService.get<InternalTransfer>('internal_transfers', {
+        orderBy: { column: 'transfer_date', ascending: false }
+      }),
       FundAccountingService.getDepartments()
     ]);
-    setTransfers(tList);
+    setTransfers(tResponse.success ? (tResponse.data || []) : []);
     setDepartments(dList);
     setLoading(false);
   };
@@ -211,17 +213,31 @@ const InternalTransfers: React.FC = () => {
                             </select>
                         </div>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Amount (KES)</label>
-                        <input 
-                            type="number" required min={1}
-                            className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-3 font-bold text-xl"
-                            value={formData.amount || ''}
-                            onChange={e => setFormData({ ...formData, amount: Number(e.target.value) })}
-                        />
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Amount (KES)</label>
+                            <input 
+                                type="number" required min={1}
+                                className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-3 font-bold text-xl"
+                                value={formData.amount || ''}
+                                onChange={e => setFormData({ ...formData, amount: Number(e.target.value) })}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Transfer Date</label>
+                            <div className="relative">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                <input 
+                                    type="date" required
+                                    className="w-full pl-9 rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                                    value={formData.transfer_date}
+                                    onChange={e => setFormData({ ...formData, transfer_date: e.target.value })}
+                                />
+                            </div>
+                        </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Description / Reason</label>
                         <textarea 
                             required rows={2}
                             className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"

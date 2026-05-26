@@ -37,6 +37,8 @@ import Donations from './pages/fund-accounting/Donations';
 import DepartmentsAndFunds from './pages/fund-accounting/DepartmentsAndFunds';
 import InternalTransfers from './pages/fund-accounting/InternalTransfers';
 import NGOBilling from './pages/fund-accounting/NGOBilling';
+import FundReports from './pages/fund-accounting/FundReports';
+
 
 
 const AppRoutes: React.FC = () => {
@@ -79,6 +81,8 @@ const AppRoutes: React.FC = () => {
           <Route path="/funds/setup" element={<DepartmentsAndFunds />} />
           <Route path="/funds/transfers" element={<InternalTransfers />} />
           <Route path="/funds/billing" element={<NGOBilling />} />
+          <Route path="/funds/reports" element={<FundReports />} />
+
         </Route>
       </Routes>
     );

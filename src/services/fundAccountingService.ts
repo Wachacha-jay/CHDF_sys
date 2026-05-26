@@ -124,40 +124,56 @@ export class FundAccountingService {
       return flatten(accounts).find(a => a.code === code);
     };
 
-    const cashAccount = findAccount('1000'); // Cash
-    const mpesaAccount = findAccount('1111'); // Bank/Mpesa
-    const donationRevenueAccount = findAccount('4200') || findAccount('4100'); // Use 4200 (NGO Donation) if exists, else 4100 (Other Income)
+    // 1110 = Cash (physical), 1111 = Bank / M-Pesa / Card
+    const cashAccount    = findAccount('1110');
+    const mpesaAccount   = findAccount('1111');
+    // 4200 = NGO Donation Revenue — MUST be distinct from 4100 (Retail Sales Revenue)
+    const donationRevenueAccount = findAccount('4200');
 
     if (!donationRevenueAccount) {
-        console.error('Donation Revenue account not found');
+        console.error('Donation Revenue account 4200 not found. Please ensure NGO Chart of Accounts migration has been run.');
         return;
     }
 
-    let debitAccountId = cashAccount?.id;
-    if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank') {
-        debitAccountId = mpesaAccount?.id || cashAccount?.id;
+    // Pick the correct asset account to debit based on payment method
+    let debitAccount = cashAccount; // default: physical cash
+    if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
+        debitAccount = mpesaAccount || cashAccount;
     }
 
-    if (!debitAccountId) return;
+    if (!debitAccount) {
+        console.error('Cash / Bank account (1110 or 1111) not found for donation posting.');
+        return;
+    }
+
+    // Build a human-readable donor label for the journal description
+    const donorLabel = donation.donor_id ? `Donor #${donation.donor_id}` : 'Anonymous Donor';
+    const restrictionNote = donation.restricted_to_child_id
+        ? ` [Child-Restricted: ${donation.restricted_to_child_id}]`
+        : donation.fund_id
+            ? ` [Fund-Restricted]`
+            : ' [Unrestricted]';
 
     await AccountingService.createJournalEntry({
       entry_date: donation.donation_date,
-      description: `Donation from ${donation.donor_id}${donation.notes ? ': ' + donation.notes : ''}`,
+      description: `Donation from ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
       is_posted: true,
       lines: [
+        // DR: Cash or Bank/M-Pesa
         {
-          account_id: debitAccountId,
-          description: `Donation received`,
+          account_id: debitAccount.id,
+          description: `Donation received via ${donation.payment_method || 'bank'}`,
           debit_amount: donation.amount,
           credit_amount: 0,
           donor_id: donation.donor_id,
           fund_id: donation.fund_id || undefined,
           child_id: donation.restricted_to_child_id || undefined
         },
+        // CR: NGO Donation Revenue (4200) — never fallback to Sales Revenue (4100)
         {
           account_id: donationRevenueAccount.id,
-          description: `Donation revenue recognition`,
+          description: `Donation revenue recognised${restrictionNote}`,
           debit_amount: 0,
           credit_amount: donation.amount,
           donor_id: donation.donor_id,
@@ -199,14 +215,18 @@ export class FundAccountingService {
         return flatten(accounts).find(a => a.code === code);
     };
 
-    const cashAccount = findAccount('1000');
-    const interDeptReceivable = findAccount('1300');
-    const interDeptPayable = findAccount('2300');
-    const transferIn = findAccount('4900');
-    const transferOut = findAccount('5900');
+    // 1111 = Bank/M-Pesa (primary liquid account for inter-dept movement)
+    // Fall back to 1110 (Cash) if not found
+    const bankAccount         = findAccount('1111') || findAccount('1110');
+    const interDeptReceivable = findAccount('1300'); // Due From Other Departments
+    const interDeptPayable    = findAccount('2300'); // Due To Other Departments
+    const transferIn          = findAccount('4900'); // Transfer In
+    const transferOut         = findAccount('5900'); // Transfer Out
 
-    if (!cashAccount || !interDeptReceivable || !interDeptPayable || !transferIn || !transferOut) {
-        console.error('Inter-departmental G/L accounts missing');
+    if (!bankAccount || !interDeptReceivable || !interDeptPayable || !transferIn || !transferOut) {
+        console.error(
+          'Inter-departmental G/L accounts missing. Expected: 1111/1110, 1300, 2300, 4900, 5900.'
+        );
         return;
     }
 
@@ -216,44 +236,47 @@ export class FundAccountingService {
     const type = transfer.transfer_type || 'direct_transfer';
 
     if (type === 'direct_transfer') {
+        // DR: Transfer Out (expense-side) in Source Dept
+        // CR: Transfer In  (revenue-side) in Destination Dept
+        // These two clearing accounts net to zero at the org level.
         lines.push(
             {
                 account_id: transferOut.id,
-                description: `Internal Transfer Out to ${transfer.to_department_id}`,
+                description: `Direct Transfer Out → ${transfer.to_department_id}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
                 account_id: transferIn.id,
-                description: `Internal Transfer In from ${transfer.from_department_id}`,
+                description: `Direct Transfer In ← ${transfer.from_department_id}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id
             }
         );
     } else if (type === 'internal_loan') {
-        // Source Department (Lender)
+        // Lender Dept: DR Due-From (1300), CR Bank (1111)
         lines.push(
             {
                 account_id: interDeptReceivable.id,
-                description: `Internal Loan to Dept ${transfer.to_department_id}`,
+                description: `Loan Receivable from Dept ${transfer.to_department_id}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
-                account_id: cashAccount.id,
-                description: `Funds lent to Dept ${transfer.to_department_id}`,
+                account_id: bankAccount.id,
+                description: `Funds disbursed to Dept ${transfer.to_department_id}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
             }
         );
-        // Destination Department (Borrower)
+        // Borrower Dept: DR Bank (1111), CR Due-To (2300)
         lines.push(
             {
-                account_id: cashAccount.id,
+                account_id: bankAccount.id,
                 description: `Loan received from Dept ${transfer.from_department_id}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
@@ -261,42 +284,42 @@ export class FundAccountingService {
             },
             {
                 account_id: interDeptPayable.id,
-                description: `Internal Loan Payable to Dept ${transfer.from_department_id}`,
+                description: `Loan Payable to Dept ${transfer.from_department_id}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id
             }
         );
     } else if (type === 'loan_repayment') {
-        // Source Department (Repayer/Borrower)
+        // Repayer (Borrower) Dept: DR Due-To (2300), CR Bank (1111)
         lines.push(
             {
                 account_id: interDeptPayable.id,
-                description: `Repayment of Loan to Dept ${transfer.to_department_id}`,
+                description: `Loan Repayment to Dept ${transfer.to_department_id}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
-                account_id: cashAccount.id,
-                description: `Funds sent for loan repayment`,
+                account_id: bankAccount.id,
+                description: `Repayment funds sent to Dept ${transfer.to_department_id}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
             }
         );
-        // Destination Department (Lender)
+        // Receiving (Lender) Dept: DR Bank (1111), CR Due-From (1300)
         lines.push(
             {
-                account_id: cashAccount.id,
-                description: `Loan repayment received from Dept ${transfer.from_department_id}`,
+                account_id: bankAccount.id,
+                description: `Repayment received from Dept ${transfer.from_department_id}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.to_department_id
             },
             {
                 account_id: interDeptReceivable.id,
-                description: `Settlement of Internal Loan Receivable`,
+                description: `Loan Receivable settled from Dept ${transfer.from_department_id}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id

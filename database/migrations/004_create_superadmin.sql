@@ -13,7 +13,7 @@ INSERT INTO users (id, email, password_hash, first_name, last_name, is_active, c
 VALUES (
   UUID(), 
   'admin@business.com', 
-  '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 
+  '$2b$10$UB4d7bWhNsJq3ETNHezn5uV/ugGDKAQQKfQUNB3ugWXR/LwClb6Zq', 
   'Super', 
   'Admin', 
   1,

@@ -8,7 +8,11 @@ export class BusinessSettingsService {
     });
 
     if (response.success && response.data && response.data.length > 0) {
-      return response.data[0];
+      const settings = response.data[0];
+      if (!settings.default_currency || settings.default_currency === 'USD') {
+        settings.default_currency = 'KES';
+      }
+      return settings;
     }
 
     return null;
@@ -44,7 +48,7 @@ export class BusinessSettingsService {
   static async initializeDefaultSettings(): Promise<BusinessSettings | null> {
     const defaultSettings: Partial<BusinessSettings> = {
       business_name: 'My Business',
-      default_currency: 'USD',
+      default_currency: 'KES',
       tax_rate: 0.16,
       receipt_prefix: 'RCP',
       invoice_prefix: 'INV',
