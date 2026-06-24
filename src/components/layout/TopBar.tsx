@@ -14,6 +14,19 @@ const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
   const { user, logout } = useAuthContext();
   const { settings } = useSettingsContext();
   const navigate = useNavigate();
+
+  const businessName = settings?.business_name || 'BizManager';
+  const nameLength = businessName.length;
+
+  const fontSizeClass = nameLength > 20 
+    ? 'text-xs md:text-sm lg:text-base font-semibold' 
+    : nameLength > 12 
+      ? 'text-sm md:text-base lg:text-lg font-bold' 
+      : 'text-base md:text-lg lg:text-xl font-extrabold';
+
+  const maxWidthClass = nameLength > 20
+    ? 'max-w-[180px] md:max-w-[280px] lg:max-w-[380px]'
+    : 'max-w-[120px] md:max-w-[220px] lg:max-w-[320px]';
   
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -94,16 +107,20 @@ const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
           <Menu className="w-6 h-6" />
         </button>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-3">
           {settings?.logo_url ? (
-            <img src={settings.logo_url} alt={settings.business_name} className="h-8 w-auto lg:h-10 select-none rounded" />
+            <img 
+              src={settings.logo_url} 
+              alt={businessName} 
+              className="h-8 md:h-9 lg:h-10 w-auto select-none rounded object-contain max-w-[80px] md:max-w-[100px] lg:max-w-[120px]" 
+            />
           ) : (
-            <div className="h-8 w-8 lg:h-10 lg:w-10 bg-indigo-600 rounded flex items-center justify-center font-bold text-white">
-              {settings?.business_name?.charAt(0) || 'B'}
+            <div className="h-8 w-8 lg:h-10 lg:w-10 bg-indigo-600 rounded-xl flex items-center justify-center font-black text-white shadow-md select-none transform hover:rotate-6 transition-all duration-300">
+              {businessName.charAt(0)}
             </div>
           )}
-          <span className="hidden sm:inline text-base lg:text-lg font-bold text-slate-100 truncate max-w-[120px] lg:max-w-[200px]">
-            {settings?.business_name || 'BizManager'}
+          <span className={`hidden sm:inline text-slate-100 truncate transition-all duration-300 ${fontSizeClass} ${maxWidthClass}`}>
+            {businessName}
           </span>
         </div>
         

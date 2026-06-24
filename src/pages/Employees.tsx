@@ -36,8 +36,8 @@ const Employees: React.FC = () => {
     hire_date: new Date().toISOString().split('T')[0],
     basic_salary: 0,
     tax_pin: '',
-    nssf_no: '',
-    nhif_no: '',
+    nssf_number: '',
+    nhif_number: '',
     bank_name: '',
     bank_account: ''
   });
@@ -228,8 +228,8 @@ const Employees: React.FC = () => {
                   hire_date: new Date().toISOString().split('T')[0],
                   basic_salary: 0,
                   tax_pin: '',
-                  nssf_no: '',
-                  nhif_no: '',
+                  nssf_number: '',
+                  nhif_number: '',
                   bank_name: '',
                   bank_account: ''
                 });
@@ -418,8 +418,8 @@ const Employees: React.FC = () => {
                                     hire_date: employee.hire_date || '',
                                     basic_salary: employee.basic_salary || 0,
                                     tax_pin: employee.tax_pin || '',
-                                    nssf_no: employee.nssf_no || '',
-                                    nhif_no: employee.nhif_no || '',
+                                    nssf_number: employee.nssf_number || employee.nssf_no || '',
+                                    nhif_number: employee.nhif_number || employee.nhif_no || '',
                                     bank_name: employee.bank_name || '',
                                     bank_account: employee.bank_account || ''
                                   });
@@ -648,8 +648,8 @@ const Employees: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      value={employeeFormData.nssf_no}
-                      onChange={(e) => setEmployeeFormData(prev => ({ ...prev, nssf_no: e.target.value }))}
+                      value={employeeFormData.nssf_number}
+                      onChange={(e) => setEmployeeFormData(prev => ({ ...prev, nssf_number: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
@@ -662,8 +662,8 @@ const Employees: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      value={employeeFormData.nhif_no}
-                      onChange={(e) => setEmployeeFormData(prev => ({ ...prev, nhif_no: e.target.value }))}
+                      value={employeeFormData.nhif_number}
+                      onChange={(e) => setEmployeeFormData(prev => ({ ...prev, nhif_number: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>

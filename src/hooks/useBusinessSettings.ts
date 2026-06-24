@@ -36,19 +36,30 @@ export const useBusinessSettings = () => {
 
   const updateSettings = async (updates: Partial<BusinessSettings>) => {
     try {
-      if (!settings?.id) {
-        throw new Error('Settings ID not found');
+      let response;
+      if (settings?.id) {
+        response = await ApiService.update<BusinessSettings>(
+          'business_settings',
+          settings.id,
+          updates
+        );
+      } else {
+        response = await ApiService.create<BusinessSettings>(
+          'business_settings',
+          updates
+        );
       }
-
-      const response = await ApiService.update<BusinessSettings>(
-        'business_settings',
-        settings.id,
-        updates
-      );
 
       if (response.error) throw new Error(response.error);
 
-      setSettings(response.data);
+      let settingsData = Array.isArray(response.data) ? response.data[0] : response.data;
+      
+      // Enforce KES default
+      if (settingsData && (!settingsData.default_currency || settingsData.default_currency === 'USD')) {
+        settingsData.default_currency = 'KES';
+      }
+
+      setSettings(settingsData);
       toast.success('Settings updated successfully');
       return { success: true };
     } catch (error: any) {

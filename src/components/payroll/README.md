@@ -88,12 +88,12 @@ A comprehensive payroll management system integrated with the accounting module 
 - `payroll_journal_lines`: Individual journal entry lines
 
 ### Employee Extensions
-- `basic_salary`: Monthly basic salary
-- `bank_name`: Bank name for payments
-- `bank_account`: Bank account number
-- `nhif_number`: NHIF membership number
-- `nssf_number`: NSSF membership number
-- `tax_pin`: Tax PIN number
+- `basic_salary`: Monthly basic salary (used for calculating payroll runs)
+- `bank_name`: Bank name for payments (optional, relevant for bank transfer payment method)
+- `bank_account`: Bank account number (optional, relevant for bank transfer payment method)
+- `nhif_number`: NHIF/SHA membership number (**optional**; the form submits successfully without it and persists details to the DB)
+- `nssf_number`: NSSF membership number (**optional**; the form submits successfully without it and persists details to the DB)
+- `tax_pin`: Tax PIN number (**optional**, for tax computation records)
 - `payment_method`: Payment method (bank, mpesa, cash)
 
 ## Usage
