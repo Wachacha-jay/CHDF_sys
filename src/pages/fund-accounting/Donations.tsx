@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Donor, FundAccount, Donation } from '../../types';
+import { Donor, FundAccount, Donation, DonorCluster } from '../../types';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { ApiService } from '../../services/api';
 import { DimensionSelector } from '../../components/fund-accounting/DimensionSelector';
@@ -12,6 +12,7 @@ const Donations: React.FC = () => {
   const [donors, setDonors] = useState<Donor[]>([]);
   const [funds, setFunds] = useState<FundAccount[]>([]);
   const [donations, setDonations] = useState<any[]>([]);
+  const [clusters, setClusters] = useState<DonorCluster[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [formData, setFormData] = useState<Partial<Donation>>({
@@ -25,7 +26,8 @@ const Donations: React.FC = () => {
     name: '',
     email: '',
     phone: '',
-    donor_type: 'individual'
+    donor_type: 'individual',
+    cluster_id: ''
   });
 
   const [dimensions, setDimensions] = useState<{
@@ -36,14 +38,16 @@ const Donations: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [dList, fList, donationList] = await Promise.all([
+    const [dList, fList, donationList, cList] = await Promise.all([
       FundAccountingService.getDonors(),
       FundAccountingService.getFundAccounts(),
-      ApiService.get<any>('donations', { orderBy: { column: 'donation_date', ascending: false }, limit: 10 })
+      ApiService.get<any>('donations', { orderBy: { column: 'donation_date', ascending: false }, limit: 10 }),
+      FundAccountingService.getDonorClusters()
     ]);
     setDonors(dList);
     setFunds(fList);
     setDonations(donationList.success ? (donationList.data || []) : []);
+    setClusters(cList);
     setLoading(false);
   };
 
@@ -258,6 +262,19 @@ const Donations: React.FC = () => {
                   <option value="individual">Individual</option>
                   <option value="corporate">Corporate</option>
                   <option value="foundation">Foundation</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Donor Cluster</label>
+                <select 
+                  className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                  value={donorFormData.cluster_id || ''}
+                  onChange={(e) => setDonorFormData({...donorFormData, cluster_id: e.target.value || undefined})}
+                >
+                  <option value="">-- No Cluster --</option>
+                  {clusters.map(cluster => (
+                    <option key={cluster.id} value={cluster.id}>{cluster.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="pt-4 flex gap-3">

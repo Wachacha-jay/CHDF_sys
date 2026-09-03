@@ -22,7 +22,7 @@ interface TrialBalanceData {
 
 const TrialBalance: React.FC = () => {
   const { settings } = useSettingsContext();
-  const currency = settings?.default_currency || 'USD';
+  const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
   const [trialBalance, setTrialBalance] = useState<TrialBalanceData | null>(null);
   const [categories, setCategories] = useState<AccountCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -144,7 +144,7 @@ const TrialBalance: React.FC = () => {
   const printTrialBalance = () => {
     if (!trialBalance) return;
 
-    const currency = settings?.default_currency || 'USD';
+    const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
     const printWindow = window.open('', '_blank');
     if (printWindow) {
       printWindow.document.write(`

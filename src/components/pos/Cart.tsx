@@ -54,10 +54,10 @@ const Cart: React.FC<CartProps> = ({ cart, updateQuantity, removeFromCart }) => 
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium text-gray-900">
-                    {settings?.default_currency || 'USD'} {(item.quantity * item.unitPrice).toFixed(2)}
+                    {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {(item.quantity * item.unitPrice).toFixed(2)}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {settings?.default_currency || 'USD'} {item.unitPrice.toFixed(2)} each
+                    {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {item.unitPrice.toFixed(2)} each
                   </p>
                 </div>
               </div>

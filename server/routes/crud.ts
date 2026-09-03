@@ -14,7 +14,7 @@ const VALID_TABLES = [
   'payroll_deductions', 'payroll_allowances', 'payroll_reports', 'payroll_journal_entries',
   'bank_reconciliations', 'journal_entries', 'journal_entry_lines',
   // NGO / Fund Accounting tables
-  'departments', 'children', 'guardians', 'donors', 'sponsors', 
+  'departments', 'children', 'guardians', 'donors', 'sponsors', 'donor_clusters',
   'fund_accounts', 'donations', 'sponsorships', 'internal_transfers', 'audit_logs'
 ];
 
@@ -283,9 +283,10 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
     }
 
     const placeholders = keys.map(() => '?').join(', ');
+    const sanitizedValues = values.map(val => (val === '' ? null : val));
 
     const query = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
-    await pool.query(query, values);
+    await pool.query(query, sanitizedValues);
     
     const [rows]: any = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [newId]);
     
@@ -309,7 +310,7 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
     delete updateData.id; // Never update ID column
     
     const keys = Object.keys(updateData);
-    const values = Object.values(updateData);
+    const values = Object.values(updateData).map(val => (val === '' ? null : val));
     
     if (keys.length === 0) {
       res.status(400).json({ success: false, error: 'No data provided' });

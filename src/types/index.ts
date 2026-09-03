@@ -115,6 +115,9 @@ export interface Supplier {
   id: string;
   code: string;
   name: string;
+  organization_name?: string;
+  bank_name?: string;
+  account_number?: string;
   contact_person?: string;
   email?: string;
   phone?: string;
@@ -551,6 +554,8 @@ export interface Child {
   last_name: string;
   date_of_birth: string;
   gender: string;
+  class_name?: string;
+  disability_type?: string;
   guardian_id?: string;
   status: 'active' | 'graduated' | 'inactive';
   enrollment_date: string;
@@ -559,12 +564,22 @@ export interface Child {
   guardian?: Guardian;
 }
 
+export interface DonorCluster {
+  id: string;
+  name: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Donor {
   id: string;
   name: string;
   email?: string;
   phone?: string;
   donor_type: 'individual' | 'corporate' | 'foundation';
+  cluster_id?: string;
+  cluster?: DonorCluster;
   address?: string;
   is_active: boolean;
   created_at: string;

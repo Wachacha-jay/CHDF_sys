@@ -243,17 +243,24 @@ const ChartOfAccounts: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Category</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Category (Optional)</label>
                   <select
-                    required
                     value={formData.category_id}
                     onChange={e => setFormData({...formData, category_id: e.target.value})}
                     className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
                   >
                     <option value="">Select Category</option>
-                    {categories.filter(c => c.account_type === formData.account_type).map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
+                    {(() => {
+                      const typeCats = categories.filter(
+                        c => c.account_type && c.account_type.toLowerCase() === formData.account_type.toLowerCase()
+                      );
+                      const listToDisplay = typeCats.length > 0 ? typeCats : categories;
+                      return listToDisplay.map(cat => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name} {typeCats.length === 0 && cat.account_type ? `(${cat.account_type})` : ''}
+                        </option>
+                      ));
+                    })()}
                   </select>
                 </div>
               </div>

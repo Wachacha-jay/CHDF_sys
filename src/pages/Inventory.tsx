@@ -195,10 +195,10 @@ const Inventory: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {settings?.default_currency || 'USD'} {product.cost_price.toFixed(2)}
+                        {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {product.cost_price.toFixed(2)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {settings?.default_currency || 'USD'} {product.selling_price.toFixed(2)}
+                        {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {product.selling_price.toFixed(2)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${stockStatus.bg} ${stockStatus.color}`}>

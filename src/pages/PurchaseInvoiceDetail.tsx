@@ -27,7 +27,7 @@ const PurchaseInvoiceDetail: React.FC = () => {
     const printWindow = window.open('', '_blank');
     if (printWindow && invoice && business) {
       const logoUrl = business.logo_url || '';
-      const currency = business.default_currency || 'USD';
+      const currency = (business.default_currency && business.default_currency !== 'USD') ? business.default_currency : 'KES';
 
       printWindow.document.write(`
         <!DOCTYPE html>

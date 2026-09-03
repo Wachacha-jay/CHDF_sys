@@ -33,7 +33,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ products, loading, onAddToCar
                 <h3 className="font-medium text-gray-900 text-sm mb-1">{product.name}</h3>
                 <p className="text-xs text-gray-500 mb-2">{product.code}</p>
                 <p className="text-lg font-bold text-blue-600">
-                  {settings?.default_currency || 'USD'} {product.selling_price.toFixed(2)}
+                  {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {product.selling_price.toFixed(2)}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   Stock: {product.current_stock}

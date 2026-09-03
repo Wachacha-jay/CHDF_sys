@@ -270,7 +270,7 @@ const Customers: React.FC = () => {
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Total Spent:</span>
                   <span className="font-medium text-gray-900">
-                    {settings?.default_currency || 'USD'} {(customer.total_spent || 0).toFixed(2)}
+                    {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {(customer.total_spent || 0).toFixed(2)}
                   </span>
                 </div>
               </div>

@@ -55,7 +55,7 @@ const GeneralLedger: React.FC = () => {
     return matchesSearch && matchesAccount && matchesDateFrom && matchesDateTo;
   });
 
-  const currency = settings?.default_currency || 'USD';
+  const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
   const totalDebits = filteredEntries.reduce((sum, entry) => sum + entry.total_debit, 0);
   const totalCredits = filteredEntries.reduce((sum, entry) => sum + entry.total_credit, 0);
 

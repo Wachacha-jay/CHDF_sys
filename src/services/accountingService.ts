@@ -24,6 +24,34 @@ export interface AccountFilters {
   parent_id?: string;
 }
 
+export const DEFAULT_ACCOUNT_CATEGORIES: AccountCategory[] = [
+  // Assets
+  { id: 'cat-asset-1', name: 'Current Assets', account_type: 'asset', description: 'Cash, Bank, AR, Inventory', created_at: '', updated_at: '' },
+  { id: 'cat-asset-2', name: 'Fixed Assets', account_type: 'asset', description: 'Equipment, Vehicles, Furniture', created_at: '', updated_at: '' },
+  { id: 'cat-asset-3', name: 'Intangible Assets', account_type: 'asset', description: 'Software, Patents, Goodwill', created_at: '', updated_at: '' },
+  
+  // Liabilities
+  { id: 'cat-liab-1', name: 'Current Liabilities', account_type: 'liability', description: 'Accounts Payable, Short-term Loans', created_at: '', updated_at: '' },
+  { id: 'cat-liab-2', name: 'Long-term Liabilities', account_type: 'liability', description: 'Long-term Loans, Mortgages', created_at: '', updated_at: '' },
+  { id: 'cat-liab-3', name: 'Statutory & Tax Liabilities', account_type: 'liability', description: 'PAYE, NSSF, NHIF/SHIF, Housing Levy', created_at: '', updated_at: '' },
+
+  // Equity
+  { id: 'cat-equity-1', name: 'Owner\'s Equity', account_type: 'equity', description: 'Capital and Owner Funds', created_at: '', updated_at: '' },
+  { id: 'cat-equity-2', name: 'Retained Earnings', account_type: 'equity', description: 'Accumulated Profits/Losses', created_at: '', updated_at: '' },
+  { id: 'cat-equity-3', name: 'Reserves & Net Assets', account_type: 'equity', description: 'Restricted & Unrestricted Net Assets', created_at: '', updated_at: '' },
+
+  // Revenue
+  { id: 'cat-rev-1', name: 'Sales Revenue', account_type: 'revenue', description: 'Income from primary sales', created_at: '', updated_at: '' },
+  { id: 'cat-rev-2', name: 'Donations & Grants', account_type: 'revenue', description: 'NGO donations, sponsorships, grants', created_at: '', updated_at: '' },
+  { id: 'cat-rev-3', name: 'Other Income', account_type: 'revenue', description: 'Secondary or non-operating income', created_at: '', updated_at: '' },
+
+  // Expenses
+  { id: 'cat-exp-1', name: 'Operating Expenses', account_type: 'expense', description: 'Rent, Utilities, Office Supplies', created_at: '', updated_at: '' },
+  { id: 'cat-exp-2', name: 'Cost of Goods Sold', account_type: 'expense', description: 'Direct inventory/COGS costs', created_at: '', updated_at: '' },
+  { id: 'cat-exp-3', name: 'Payroll & Salaries', account_type: 'expense', description: 'Basic salaries, wages, allowances', created_at: '', updated_at: '' },
+  { id: 'cat-exp-4', name: 'Program Expenses', account_type: 'expense', description: 'Education, health, social welfare programs', created_at: '', updated_at: '' },
+];
+
 export class AccountingService {
   // Account operations
   static async getAccounts(filters?: AccountFilters): Promise<Account[]> {
@@ -70,11 +98,23 @@ export class AccountingService {
 
   // Account Category operations
   static async getAccountCategories(filters?: { account_type?: string }): Promise<AccountCategory[]> {
-    const response = await ApiService.get<AccountCategory>('account_categories', {
-      filters,
-      orderBy: { column: 'name', ascending: true }
-    });
-    return response.success ? (response.data || []) : [];
+    try {
+      const response = await ApiService.get<AccountCategory>('account_categories', {
+        filters,
+        orderBy: { column: 'name', ascending: true }
+      });
+      if (response.success && response.data && response.data.length > 0) {
+        return response.data;
+      }
+    } catch (error) {
+      console.warn('Failed to fetch account categories from API, using defaults:', error);
+    }
+
+    // Fallback to default categories if API response is empty or fails
+    if (filters?.account_type) {
+      return DEFAULT_ACCOUNT_CATEGORIES.filter(c => c.account_type.toLowerCase() === filters.account_type?.toLowerCase());
+    }
+    return DEFAULT_ACCOUNT_CATEGORIES;
   }
 
   static async createAccountCategory(category: Partial<AccountCategory>): Promise<AccountCategory | null> {

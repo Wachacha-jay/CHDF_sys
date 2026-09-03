@@ -7,7 +7,7 @@ import { printPaymentReceipt } from '../../utils/receiptUtils';
 import { 
   UserPlus, Search, Filter, MoreHorizontal, GraduationCap, HeartHandshake, Plus,
   Calendar, ArrowUpRight, ArrowDownLeft, Receipt, DollarSign, Activity, AlertCircle,
-  Printer, Trash2
+  Printer, Trash2, Eye, Edit2, X, School
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -23,6 +23,8 @@ const ChildManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [editingChild, setEditingChild] = useState<Child | null>(null);
+  const [viewingChild, setViewingChild] = useState<Child | null>(null);
   const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [formData, setFormData] = useState<any>({
     first_name: '',
@@ -30,6 +32,8 @@ const ChildManagement: React.FC = () => {
     code: '',
     date_of_birth: '',
     gender: 'Male',
+    class_name: '',
+    disability_type: 'None',
     status: 'active',
     enrollment_date: new Date().toISOString().split('T')[0],
     guardian_id: '',
@@ -167,13 +171,67 @@ const ChildManagement: React.FC = () => {
     loadPayments();
   }, []);
 
-  useEffect(() => {
-    if (showModal) {
-      FundAccountingService.getNextChildCode().then(code => {
-        setFormData(prev => ({ ...prev, code }));
-      });
+  const openCreateModal = async () => {
+    setEditingChild(null);
+    const code = await FundAccountingService.getNextChildCode();
+    setFormData({
+      first_name: '',
+      last_name: '',
+      code,
+      date_of_birth: '',
+      gender: 'Male',
+      class_name: '',
+      disability_type: 'None',
+      status: 'active',
+      enrollment_date: new Date().toISOString().split('T')[0],
+      guardian_id: '',
+      new_guardian_name: '',
+      new_guardian_phone: '',
+      new_guardian_relationship: 'Parent'
+    });
+    setShowModal(true);
+  };
+
+  const openEditModal = (child: Child) => {
+    setEditingChild(child);
+    setFormData({
+      first_name: child.first_name || '',
+      last_name: child.last_name || '',
+      code: child.code || '',
+      date_of_birth: child.date_of_birth || '',
+      gender: child.gender || 'Male',
+      class_name: child.class_name || '',
+      disability_type: child.disability_type || 'None',
+      status: child.status || 'active',
+      enrollment_date: child.enrollment_date || new Date().toISOString().split('T')[0],
+      guardian_id: child.guardian_id || '',
+      new_guardian_name: '',
+      new_guardian_phone: '',
+      new_guardian_relationship: 'Parent'
+    });
+    setShowModal(true);
+  };
+
+  const openViewModal = (child: Child) => {
+    setViewingChild(child);
+  };
+
+  const handleDeleteChild = async (child: Child) => {
+    if (!window.confirm(`Are you sure you want to delete child record "${child.first_name} ${child.last_name}" (${child.code})? This action cannot be undone.`)) {
+      return;
     }
-  }, [showModal]);
+    try {
+      const success = await FundAccountingService.deleteChild(child.id);
+      if (success) {
+        toast.success('Child profile deleted successfully');
+        loadAllData();
+      } else {
+        toast.error('Failed to delete child profile');
+      }
+    } catch (error) {
+      toast.error('Failed to delete child profile');
+    }
+  };
 
   // Set default fund & department in fee payment modal
   useEffect(() => {
@@ -212,25 +270,43 @@ const ChildManagement: React.FC = () => {
       }
     }
 
-    const result = await FundAccountingService.createChild({
+    const payload: Partial<Child> = {
       first_name: formData.first_name,
       last_name: formData.last_name,
       code: formData.code,
       date_of_birth: formData.date_of_birth,
       gender: formData.gender,
+      class_name: formData.class_name,
+      disability_type: formData.disability_type,
       status: formData.status,
       enrollment_date: formData.enrollment_date,
       guardian_id: guardianId
-    });
+    };
+
+    let result;
+    if (editingChild) {
+      result = await FundAccountingService.updateChild(editingChild.id, payload);
+      if (result) {
+        toast.success('Child profile updated successfully');
+      }
+    } else {
+      result = await FundAccountingService.createChild(payload);
+      if (result) {
+        toast.success('Child registered successfully');
+      }
+    }
 
     if (result) {
       setShowModal(false);
+      setEditingChild(null);
       setFormData({
         first_name: '',
         last_name: '',
         code: '',
         date_of_birth: '',
         gender: 'Male',
+        class_name: '',
+        disability_type: 'None',
         status: 'active',
         enrollment_date: new Date().toISOString().split('T')[0],
         guardian_id: '',
@@ -239,7 +315,6 @@ const ChildManagement: React.FC = () => {
         new_guardian_relationship: 'Parent'
       });
       loadAllData();
-      toast.success('Child registered successfully');
     }
   };
 
@@ -404,7 +479,7 @@ const ChildManagement: React.FC = () => {
         <div className="flex gap-3">
           {activeTab === 'children' ? (
             <button 
-              onClick={() => setShowModal(true)}
+              onClick={openCreateModal}
               className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-sm"
             >
               <Plus size={18} />
@@ -456,7 +531,7 @@ const ChildManagement: React.FC = () => {
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden overflow-y-auto max-h-[90vh]">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/50">
-                  <h2 className="text-xl font-bold text-gray-900">Register New Beneficiary</h2>
+                  <h2 className="text-xl font-bold text-gray-900">{editingChild ? 'Edit Beneficiary Profile' : 'Register New Beneficiary'}</h2>
                   <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">&times;</button>
                 </div>
                 <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -488,9 +563,10 @@ const ChildManagement: React.FC = () => {
                         <input 
                           type="text" 
                           required 
-                          readOnly
+                          readOnly={!editingChild}
                           className="mt-1 w-full rounded-xl border-gray-100 bg-gray-50 text-gray-500 font-mono" 
                           value={formData.code}
+                          onChange={(e) => setFormData({...formData, code: e.target.value})}
                         />
                       </div>
                       <div>
@@ -502,6 +578,35 @@ const ChildManagement: React.FC = () => {
                         >
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Class / Grade Level</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. PP1, Grade 4, Form 2" 
+                          className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500" 
+                          value={formData.class_name}
+                          onChange={(e) => setFormData({...formData, class_name: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Type of Disability</label>
+                        <select 
+                          className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                          value={formData.disability_type}
+                          onChange={(e) => setFormData({...formData, disability_type: e.target.value})}
+                        >
+                          <option value="None">None (No Disability)</option>
+                          <option value="Cerebral Palsy">Cerebral Palsy</option>
+                          <option value="Physical Disability">Physical Disability</option>
+                          <option value="Visual Impairment">Visual Impairment</option>
+                          <option value="Hearing Impairment">Hearing Impairment</option>
+                          <option value="Speech Impairment">Speech Impairment</option>
+                          <option value="Intellectual / Learning Disability">Intellectual / Learning Disability</option>
+                          <option value="Autism Spectrum">Autism Spectrum</option>
+                          <option value="Multiple Disabilities">Multiple Disabilities</option>
                           <option value="Other">Other</option>
                         </select>
                       </div>
@@ -525,6 +630,20 @@ const ChildManagement: React.FC = () => {
                           onChange={(e) => setFormData({...formData, enrollment_date: e.target.value})}
                         />
                       </div>
+                      {editingChild && (
+                        <div className="col-span-2">
+                          <label className="block text-sm font-medium text-gray-700">Status</label>
+                          <select 
+                            className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                            value={formData.status}
+                            onChange={(e) => setFormData({...formData, status: e.target.value})}
+                          >
+                            <option value="active">Active</option>
+                            <option value="graduated">Graduated</option>
+                            <option value="inactive">Inactive</option>
+                          </select>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -583,7 +702,7 @@ const ChildManagement: React.FC = () => {
                   </div>
 
                   <div className="pt-4 flex gap-3 sticky bottom-0 bg-white pb-2">
-                    <button type="submit" className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100">Register Child</button>
+                    <button type="submit" className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100">{editingChild ? 'Update Profile' : 'Register Child'}</button>
                     <button type="button" onClick={() => setShowModal(false)} className="px-6 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">Cancel</button>
                   </div>
                 </form>
@@ -616,6 +735,8 @@ const ChildManagement: React.FC = () => {
                 <tr>
                   <th className="px-6 py-4 font-semibold">Child Details</th>
                   <th className="px-6 py-4 font-semibold">Code</th>
+                  <th className="px-6 py-4 font-semibold">Class / Grade</th>
+                  <th className="px-6 py-4 font-semibold">Disability Status</th>
                   <th className="px-6 py-4 font-semibold">Guardian</th>
                   <th className="px-6 py-4 font-semibold">Status</th>
                   <th className="px-6 py-4 font-semibold">Enrollment</th>
@@ -626,7 +747,7 @@ const ChildManagement: React.FC = () => {
                 {loading ? (
                   [1, 2, 3].map(i => (
                     <tr key={i} className="animate-pulse">
-                      <td colSpan={6} className="px-6 py-8 h-16 bg-gray-50/50"></td>
+                      <td colSpan={8} className="px-6 py-8 h-16 bg-gray-50/50"></td>
                     </tr>
                   ))
                 ) : filteredChildren.map((child) => (
@@ -643,6 +764,27 @@ const ChildManagement: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-gray-600">{child.code}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700 font-medium">
+                      {child.class_name ? (
+                        <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold">
+                          {child.class_name}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs italic">Unspecified</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      {child.disability_type && child.disability_type !== 'None' ? (
+                        <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                          <AlertCircle size={12} />
+                          {child.disability_type}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-xs font-medium">
+                          None
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-sm text-gray-600">
                       {child.guardian?.name || 'N/A'}
                       <div className="text-xs text-gray-400">{child.guardian?.phone}</div>
@@ -659,9 +801,27 @@ const ChildManagement: React.FC = () => {
                       {new Date(child.enrollment_date).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex gap-2 justify-end">
-                        <button className="p-2 hover:bg-white rounded-lg text-gray-400 hover:text-indigo-600 border border-transparent hover:border-gray-100 transition-all">
-                          <HeartHandshake size={18} title="Link Sponsor" />
+                      <div className="flex gap-1 justify-end">
+                        <button 
+                          onClick={() => openViewModal(child)}
+                          className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-all"
+                          title="View Profile Details"
+                        >
+                          <Eye size={18} />
+                        </button>
+                        <button 
+                          onClick={() => openEditModal(child)}
+                          className="p-2 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-lg transition-all"
+                          title="Edit Child Profile"
+                        >
+                          <Edit2 size={18} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteChild(child)}
+                          className="p-2 hover:bg-rose-50 text-gray-400 hover:text-rose-600 rounded-lg transition-all"
+                          title="Delete Child Profile"
+                        >
+                          <Trash2 size={18} />
                         </button>
                         <button 
                           onClick={() => {
@@ -669,12 +829,10 @@ const ChildManagement: React.FC = () => {
                             setActiveTab('payments');
                             setShowPaymentModal(true);
                           }}
-                          className="p-2 hover:bg-white rounded-lg text-gray-400 hover:text-emerald-600 border border-transparent hover:border-gray-100 transition-all"
+                          className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-all"
+                          title="Pay School Fee"
                         >
-                          <GraduationCap size={18} title="Pay School Fee" />
-                        </button>
-                        <button className="p-2 hover:bg-white rounded-lg text-gray-400 hover:text-gray-600 border border-transparent hover:border-gray-100 transition-all">
-                          <MoreHorizontal size={18} />
+                          <GraduationCap size={18} />
                         </button>
                       </div>
                     </td>
@@ -1021,6 +1179,110 @@ const ChildManagement: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Child Details Modal */}
+      {viewingChild && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-lg">
+                  {viewingChild.first_name[0]}{viewingChild.last_name[0]}
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">{viewingChild.first_name} {viewingChild.last_name}</h2>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 font-mono">
+                    <span>Code: {viewingChild.code}</span>
+                    <span>•</span>
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${
+                      viewingChild.status === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                      viewingChild.status === 'graduated' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                    }`}>
+                      {viewingChild.status.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setViewingChild(null)} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">&times;</button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Class / Grade</span>
+                  <span className="font-bold text-gray-900 text-sm">{viewingChild.class_name || 'Not Specified'}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Type of Disability</span>
+                  <span className={`font-bold text-sm inline-flex items-center gap-1 ${
+                    viewingChild.disability_type && viewingChild.disability_type !== 'None'
+                      ? 'text-purple-700'
+                      : 'text-gray-700'
+                  }`}>
+                    {viewingChild.disability_type || 'None'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Gender</span>
+                  <span className="font-medium text-gray-800 text-sm">{viewingChild.gender}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Date of Birth & Age</span>
+                  <span className="font-medium text-gray-800 text-sm">
+                    {viewingChild.date_of_birth} ({new Date().getFullYear() - new Date(viewingChild.date_of_birth).getFullYear()} yrs)
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Enrollment Date</span>
+                  <span className="font-medium text-gray-800 text-sm">{new Date(viewingChild.enrollment_date).toLocaleDateString()}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold text-gray-400 uppercase">Guardian</span>
+                  <span className="font-medium text-gray-800 text-sm">
+                    {viewingChild.guardian?.name || 'N/A'} {viewingChild.guardian?.relationship ? `(${viewingChild.guardian.relationship})` : ''}
+                  </span>
+                  {viewingChild.guardian?.phone && (
+                    <div className="text-xs text-gray-500">{viewingChild.guardian.phone}</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    const child = viewingChild;
+                    setViewingChild(null);
+                    openEditModal(child);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-xl font-bold hover:bg-amber-700 transition-colors shadow-sm text-sm"
+                >
+                  <Edit2 size={16} />
+                  Edit Profile
+                </button>
+                <button
+                  onClick={() => {
+                    const child = viewingChild;
+                    setViewingChild(null);
+                    setPaymentFormData(prev => ({ ...prev, child_id: child.id, payment_type: 'revenue' }));
+                    setActiveTab('payments');
+                    setShowPaymentModal(true);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-sm text-sm"
+                >
+                  <GraduationCap size={16} />
+                  Pay School Fee
+                </button>
+                <button
+                  onClick={() => setViewingChild(null)}
+                  className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-colors text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

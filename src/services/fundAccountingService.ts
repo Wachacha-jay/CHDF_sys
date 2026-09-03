@@ -2,6 +2,7 @@ import { ApiService } from './api';
 import { 
   Department, 
   Donor, 
+  DonorCluster,
   Child, 
   FundAccount, 
   Donation, 
@@ -33,6 +34,29 @@ export class FundAccountingService {
     return response.success ? response.data : null;
   }
 
+  // Donor Cluster Operations
+  static async getDonorClusters(): Promise<DonorCluster[]> {
+    const response = await ApiService.get<DonorCluster>('donor_clusters', {
+      orderBy: { column: 'name', ascending: true }
+    });
+    return response.success ? (response.data || []) : [];
+  }
+
+  static async createDonorCluster(data: Partial<DonorCluster>): Promise<DonorCluster | null> {
+    const response = await ApiService.create<DonorCluster>('donor_clusters', data);
+    return response.success ? response.data : null;
+  }
+
+  static async updateDonorCluster(id: string, data: Partial<DonorCluster>): Promise<boolean> {
+    const response = await ApiService.update('donor_clusters', id, data);
+    return response.success;
+  }
+
+  static async deleteDonorCluster(id: string): Promise<boolean> {
+    const response = await ApiService.delete('donor_clusters', id);
+    return response.success;
+  }
+
   // Donor Operations
   static async getDonors(): Promise<Donor[]> {
     const response = await ApiService.get<Donor>('donors', {
@@ -55,8 +79,21 @@ export class FundAccountingService {
   }
 
   static async createChild(data: Partial<Child>): Promise<Child | null> {
-    const response = await ApiService.post<Child>('children', data);
+    const response = await ApiService.create<Child>('children', data);
     return response.success ? response.data : null;
+  }
+
+  static async updateChild(id: string, data: Partial<Child>): Promise<Child | null> {
+    const response = await ApiService.update<Child>('children', id, {
+      ...data,
+      updated_at: new Date().toISOString()
+    });
+    return response.success ? response.data : null;
+  }
+
+  static async deleteChild(id: string): Promise<boolean> {
+    const response = await ApiService.delete('children', id);
+    return response.success;
   }
 
   // Guardian Operations

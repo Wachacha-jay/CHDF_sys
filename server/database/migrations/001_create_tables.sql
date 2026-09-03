@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   child_id CHAR(36),
   donor_id CHAR(36),
   fund_id CHAR(36),
+  payment_account_id CHAR(36),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (account_id) REFERENCES accounts(id),

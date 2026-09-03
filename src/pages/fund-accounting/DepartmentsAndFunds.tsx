@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { Building2, Plus, Pencil, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { Department, FundAccount } from '../../types';
+import type { Department, FundAccount, DonorCluster } from '../../types';
+import { Users } from 'lucide-react';
 
-type Tab = 'departments' | 'funds';
+type Tab = 'departments' | 'funds' | 'clusters';
 
 const DepartmentsAndFunds: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('departments');
   const [departments, setDepartments] = useState<Department[]>([]);
   const [funds, setFunds] = useState<FundAccount[]>([]);
+  const [clusters, setClusters] = useState<DonorCluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
@@ -17,15 +19,18 @@ const DepartmentsAndFunds: React.FC = () => {
   const [fundForm, setFundForm] = useState<Partial<FundAccount>>({
     name: '', code: '', description: '', restriction_type: 'unrestricted'
   });
+  const [clusterForm, setClusterForm] = useState<Partial<DonorCluster>>({ name: '', description: '' });
 
   const loadData = async () => {
     setLoading(true);
-    const [dList, fList] = await Promise.all([
+    const [dList, fList, cList] = await Promise.all([
       FundAccountingService.getDepartments(),
-      FundAccountingService.getFundAccounts()
+      FundAccountingService.getFundAccounts(),
+      FundAccountingService.getDonorClusters()
     ]);
     setDepartments(dList);
     setFunds(fList);
+    setClusters(cList);
     setLoading(false);
   };
 
@@ -57,6 +62,19 @@ const DepartmentsAndFunds: React.FC = () => {
     }
   };
 
+  const handleClusterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const result = await FundAccountingService.createDonorCluster(clusterForm);
+    if (result) {
+      toast.success('Donor Cluster created successfully');
+      setShowModal(false);
+      setClusterForm({ name: '', description: '' });
+      loadData();
+    } else {
+      toast.error('Failed to create donor cluster');
+    }
+  };
+
   const restrictionBadge = (type: string) => {
     const map: Record<string, { label: string; cls: string }> = {
       unrestricted: { label: 'Unrestricted', cls: 'bg-emerald-100 text-emerald-700' },
@@ -73,14 +91,14 @@ const DepartmentsAndFunds: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Departments & Fund Accounts</h1>
-          <p className="text-gray-500 mt-0.5">Manage cost centers, program funds, and restriction levels</p>
+          <p className="text-gray-500 mt-0.5">Manage cost centers, program funds, and donor clusters</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
           className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-sm"
         >
           <Plus size={18} />
-          {activeTab === 'departments' ? 'New Department' : 'New Fund Account'}
+          {activeTab === 'departments' ? 'New Department' : activeTab === 'funds' ? 'New Fund Account' : 'New Donor Cluster'}
         </button>
       </div>
 
@@ -97,6 +115,12 @@ const DepartmentsAndFunds: React.FC = () => {
           className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === 'funds' ? 'bg-indigo-600 text-white shadow' : 'text-gray-500 hover:text-gray-700'}`}
         >
           Fund Accounts ({funds.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('clusters')}
+          className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === 'clusters' ? 'bg-indigo-600 text-white shadow' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          Donor Clusters ({clusters.length})
         </button>
       </div>
 
@@ -210,6 +234,49 @@ const DepartmentsAndFunds: React.FC = () => {
         </div>
       )}
 
+      {/* Donor Clusters Tab */}
+      {activeTab === 'clusters' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4 font-semibold">Cluster Name</th>
+                <th className="px-6 py-4 font-semibold">Description</th>
+                <th className="px-6 py-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                [1,2,3].map(i => (
+                  <tr key={i} className="animate-pulse">
+                    <td colSpan={3} className="px-6 py-5">
+                      <div className="h-4 bg-gray-100 rounded w-3/4"></div>
+                    </td>
+                  </tr>
+                ))
+              ) : clusters.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-6 py-16 text-center">
+                    <p className="font-semibold text-gray-700">No donor clusters yet</p>
+                    <p className="text-gray-400 text-sm mt-1">Create a donor cluster to categorize your donors</p>
+                  </td>
+                </tr>
+              ) : clusters.map(cluster => (
+                <tr key={cluster.id} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-6 py-4 font-semibold text-gray-900">{cluster.name}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500">{cluster.description || '—'}</td>
+                  <td className="px-6 py-4 text-right">
+                    <button className="p-2 hover:bg-indigo-50 rounded-lg text-gray-400 hover:text-indigo-600 transition-colors">
+                      <Pencil size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Create Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -252,7 +319,7 @@ const DepartmentsAndFunds: React.FC = () => {
                   </button>
                 </div>
               </form>
-            ) : (
+            ) : activeTab === 'funds' ? (
               <form onSubmit={handleFundSubmit} className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -301,6 +368,37 @@ const DepartmentsAndFunds: React.FC = () => {
                 <div className="flex gap-3 pt-2">
                   <button type="submit" className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100">
                     Create Fund Account
+                  </button>
+                  <button type="button" onClick={() => setShowModal(false)} className="px-6 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleClusterSubmit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Cluster Name <span className="text-red-500">*</span></label>
+                  <input
+                    type="text" required
+                    className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="e.g. Individual Monthly Donors"
+                    value={clusterForm.name}
+                    onChange={e => setClusterForm({ ...clusterForm, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Description</label>
+                  <textarea
+                    rows={3}
+                    className="mt-1 w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Describe this donor cluster..."
+                    value={clusterForm.description || ''}
+                    onChange={e => setClusterForm({ ...clusterForm, description: e.target.value })}
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="submit" className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100">
+                    Create Donor Cluster
                   </button>
                   <button type="button" onClick={() => setShowModal(false)} className="px-6 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">
                     Cancel

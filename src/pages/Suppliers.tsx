@@ -18,7 +18,10 @@ const Suppliers: React.FC = () => {
     email: '',
     phone: '',
     contact_person: '',
-    address: ''
+    address: '',
+    organization_name: '',
+    bank_name: '',
+    account_number: ''
   });
   
   // Orders View State
@@ -34,7 +37,10 @@ const Suppliers: React.FC = () => {
         email: selectedSupplier.email || '',
         phone: selectedSupplier.phone || '',
         contact_person: selectedSupplier.contact_person || '',
-        address: selectedSupplier.address || ''
+        address: selectedSupplier.address || '',
+        organization_name: selectedSupplier.organization_name || '',
+        bank_name: selectedSupplier.bank_name || '',
+        account_number: selectedSupplier.account_number || ''
       });
     } else {
       setFormData({
@@ -43,7 +49,10 @@ const Suppliers: React.FC = () => {
         email: '',
         phone: '',
         contact_person: '',
-        address: ''
+        address: '',
+        organization_name: '',
+        bank_name: '',
+        account_number: ''
       });
     }
   }, [selectedSupplier, showModal]);
@@ -367,6 +376,42 @@ const Suppliers: React.FC = () => {
                     type="text"
                     value={formData.contact_person}
                     onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Organization Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.organization_name}
+                    onChange={(e) => setFormData({ ...formData, organization_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Bank Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.bank_name}
+                    onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Account Number (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.account_number}
+                    onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>

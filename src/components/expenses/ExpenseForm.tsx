@@ -94,6 +94,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({
 
     const expenseData: Partial<Expense> = {
       ...formData,
+      supplier_id: formData.supplier_id || undefined,
+      payment_account_id: formData.payment_account_id || undefined,
+      department_id: formData.department_id || undefined,
+      child_id: formData.child_id || undefined,
+      donor_id: formData.donor_id || undefined,
+      fund_id: formData.fund_id || undefined,
       amount: parseFloat(formData.amount) || 0,
       tax_amount: parseFloat(formData.tax_amount) || 0
     };
