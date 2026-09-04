@@ -34,6 +34,16 @@ export class FundAccountingService {
     return response.success ? response.data : null;
   }
 
+  static async updateDepartment(id: string, data: Partial<Department>): Promise<boolean> {
+    const response = await ApiService.update('departments', id, data);
+    return response.success;
+  }
+
+  static async deleteDepartment(id: string): Promise<boolean> {
+    const response = await ApiService.delete('departments', id);
+    return response.success;
+  }
+
   // Donor Cluster Operations
   static async getDonorClusters(): Promise<DonorCluster[]> {
     const response = await ApiService.get<DonorCluster>('donor_clusters', {
@@ -137,6 +147,16 @@ export class FundAccountingService {
   static async createFundAccount(data: Partial<FundAccount>): Promise<FundAccount | null> {
     const response = await ApiService.create<FundAccount>('fund_accounts', data);
     return response.success ? response.data : null;
+  }
+
+  static async updateFundAccount(id: string, data: Partial<FundAccount>): Promise<boolean> {
+    const response = await ApiService.update('fund_accounts', id, data);
+    return response.success;
+  }
+
+  static async deleteFundAccount(id: string): Promise<boolean> {
+    const response = await ApiService.delete('fund_accounts', id);
+    return response.success;
   }
 
   // Donation Operations

@@ -30,6 +30,7 @@ import UserManagement from './pages/UserManagement';
 import BankReconciliation from './pages/accounting/BankReconciliation';
 import IncomeStatement from './pages/accounting/IncomeStatement';
 import CashFlow from './pages/accounting/CashFlow';
+import FixedAssets from './pages/accounting/FixedAssets';
 
 import FundDashboard from './pages/fund-accounting/FundDashboard';
 import ChildManagement from './pages/fund-accounting/ChildManagement';
@@ -65,6 +66,7 @@ const AppRoutes: React.FC = () => {
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/invoices" element={<InvoiceList />} />
           <Route path="/accounting" element={<AccountingDashboard />} />
+          <Route path="/accounting/fixed-assets" element={<FixedAssets />} />
           <Route path="/customers" element={<Customers />} />
           <Route path="/employees" element={<Employees />} />
           <Route path="/suppliers" element={<Suppliers />} />

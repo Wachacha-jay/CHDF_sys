@@ -15,7 +15,8 @@ const VALID_TABLES = [
   'bank_reconciliations', 'journal_entries', 'journal_entry_lines',
   // NGO / Fund Accounting tables
   'departments', 'children', 'guardians', 'donors', 'sponsors', 'donor_clusters',
-  'fund_accounts', 'donations', 'sponsorships', 'internal_transfers', 'audit_logs'
+  'fund_accounts', 'donations', 'sponsorships', 'internal_transfers', 'audit_logs',
+  'fixed_assets'
 ];
 
 // GET list

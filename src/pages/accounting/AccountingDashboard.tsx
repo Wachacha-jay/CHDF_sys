@@ -10,7 +10,8 @@ import {
   PieChart,
   List,
   FolderTree,
-  CheckCircle2
+  CheckCircle2,
+  Package
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useSettingsContext } from '../../contexts/SettingsContext';
@@ -117,6 +118,13 @@ const AccountingDashboard: React.FC = () => {
       icon: CheckCircle2,
       color: 'emerald',
       path: '/accounting/bank-reconciliation'
+    },
+    {
+      title: 'Fixed Asset Register',
+      description: 'Track NGO equipment, furniture, and donated assets by department',
+      icon: Package,
+      color: 'teal',
+      path: '/accounting/fixed-assets'
     }
   ];
 
@@ -128,6 +136,7 @@ const AccountingDashboard: React.FC = () => {
       case 'orange': return 'bg-orange-50 text-orange-600 hover:bg-orange-100';
       case 'emerald': return 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100';
       case 'indigo': return 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100';
+      case 'teal': return 'bg-teal-50 text-teal-600 hover:bg-teal-100';
       default: return 'bg-gray-50 text-gray-600 hover:bg-gray-100';
     }
   };

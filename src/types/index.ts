@@ -657,3 +657,21 @@ export interface InternalTransfer {
   from_department?: Department;
   to_department?: Department;
 }
+
+export interface FixedAsset {
+  id: string;
+  asset_name: string;
+  description?: string;
+  serial_number?: string;
+  asset_type?: string;
+  purchase_date: string;
+  purchase_cost: number;
+  current_value: number;
+  salvage_value?: number;
+  useful_life_years?: number;
+  department_id?: string;
+  status: 'Active' | 'Disposed' | 'Maintenance';
+  created_at: string;
+  updated_at: string;
+  department?: Department;
+}
