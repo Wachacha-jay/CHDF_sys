@@ -382,8 +382,8 @@ const BankReconciliation: React.FC = () => {
                 </div>
               </div>
 
-              <div className="max-h-[500px] overflow-y-auto">
-                <table className="w-full text-sm">
+              <div className="max-h-[500px] overflow-y-auto overflow-x-auto">
+                <table className="w-full text-sm min-w-[650px]">
                   <thead className="bg-white sticky top-0 shadow-sm z-10">
                     <tr className="text-gray-400 uppercase text-[10px] tracking-wider font-bold">
                       <th className="px-6 py-3 text-left">Matched</th>
@@ -527,8 +527,8 @@ const BankReconciliation: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-sm min-w-[800px]">
             <thead className="bg-gray-50 text-gray-400 uppercase text-[10px] tracking-widest font-black">
               <tr>
                 <th className="px-8 py-4 text-left">Statement Date</th>

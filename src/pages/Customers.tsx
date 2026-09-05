@@ -404,8 +404,8 @@ const Customers: React.FC = () => {
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
                 </div>
               ) : customerOrders.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-sm text-left min-w-[700px]">
                     <thead className="bg-gray-50 text-gray-500 border-b border-gray-100">
                       <tr>
                         <th className="px-4 py-3 font-semibold">Receipt Number</th>

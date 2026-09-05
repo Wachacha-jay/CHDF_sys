@@ -170,70 +170,101 @@ export class FundAccountingService {
     return null;
   }
 
+  static async updateDonation(id: string, donation: Partial<Donation>): Promise<boolean> {
+    const response = await ApiService.update<Donation>('donations', id, donation);
+    if (response.success && response.data) {
+      // Re-post updated donation details to Ledger
+      await this.postDonationToLedger(response.data);
+      return true;
+    }
+    return response.success;
+  }
+
+  static async deleteDonation(id: string): Promise<boolean> {
+    const response = await ApiService.delete('donations', id);
+    return response.success;
+  }
+
   private static async postDonationToLedger(donation: Donation): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
-      };
-      return flatten(accounts).find(a => a.code === code);
+    const flattenAll = (accs: any[]): any[] => {
+      return accs.reduce((prev, curr) => {
+        return prev.concat(curr).concat(curr.children ? flattenAll(curr.children) : []);
+      }, []);
     };
+    const allFlatAccounts = flattenAll(accounts);
+    const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
 
-    // 1110 = Cash (physical), 1111 = Bank / M-Pesa / Card
-    const cashAccount    = findAccount('1110');
-    const mpesaAccount   = findAccount('1111');
-    // 4200 = NGO Donation Revenue — MUST be distinct from 4100 (Retail Sales Revenue)
-    const donationRevenueAccount = findAccount('4200');
+    // Asset Accounts: 1110 (Cash), 1111 (Bank/Mpesa), 1150 (Restricted Cash)
+    const cashAccount = findAccount('1110') || allFlatAccounts.find(a => a.account_type === 'asset' && (a.code.startsWith('11') || a.code.startsWith('10')));
+    const mpesaAccount = findAccount('1111') || cashAccount;
 
-    if (!donationRevenueAccount) {
-        console.error('Donation Revenue account 4200 not found. Please ensure NGO Chart of Accounts migration has been run.');
-        return;
+    // Revenue Account Selection: specific NGO revenue codes (4210 Unrestricted, 4220 Temp Restricted, 4240 Child Sponsorship, 4200 Donation Revenue)
+    let donationRevenueAccount = null;
+    if (donation.restricted_to_child_id) {
+      donationRevenueAccount = findAccount('4240') || findAccount('4220') || findAccount('4200');
+    } else if (donation.fund_id) {
+      donationRevenueAccount = findAccount('4220') || findAccount('4200');
+    } else {
+      donationRevenueAccount = findAccount('4210') || findAccount('4200');
     }
 
-    // Pick the correct asset account to debit based on payment method
-    let debitAccount = cashAccount; // default: physical cash
+    if (!donationRevenueAccount) {
+      donationRevenueAccount = findAccount('4200') || allFlatAccounts.find(a => a.account_type === 'revenue');
+    }
+
+    if (!donationRevenueAccount) {
+      console.error('Revenue account not found for donation GL posting.');
+      return;
+    }
+
+    // Pick asset account to debit based on payment method
+    let debitAccount = cashAccount;
     if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
-        debitAccount = mpesaAccount || cashAccount;
+      debitAccount = mpesaAccount || cashAccount;
+    }
+    if (!debitAccount) {
+      debitAccount = allFlatAccounts.find(a => a.account_type === 'asset');
     }
 
     if (!debitAccount) {
-        console.error('Cash / Bank account (1110 or 1111) not found for donation posting.');
-        return;
+      console.error('Cash / Bank asset account not found for donation GL posting.');
+      return;
     }
 
-    // Build a human-readable donor label for the journal description
-    const donorLabel = donation.donor_id ? `Donor #${donation.donor_id}` : 'Anonymous Donor';
+    // Build human-readable donor label & restriction note
+    const donorLabel = donation.is_anonymous ? 'Anonymous Donor' : (donation.donor_id ? `Donor #${donation.donor_id}` : 'General Donor');
     const restrictionNote = donation.restricted_to_child_id
-        ? ` [Child-Restricted: ${donation.restricted_to_child_id}]`
-        : donation.fund_id
-            ? ` [Fund-Restricted]`
-            : ' [Unrestricted]';
+      ? ` [Child-Restricted: ${donation.restricted_to_child_id}]`
+      : donation.fund_id
+        ? ` [Fund-Restricted]`
+        : ' [Unrestricted]';
+
+    const amt = Number(donation.amount || 0);
 
     await AccountingService.createJournalEntry({
-      entry_date: donation.donation_date,
-      description: `Donation from ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
+      entry_date: donation.donation_date ? new Date(donation.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      description: `Donation: ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
       is_posted: true,
       lines: [
-        // DR: Cash or Bank/M-Pesa
+        // DR: Asset (Cash/Bank)
         {
           account_id: debitAccount.id,
           description: `Donation received via ${donation.payment_method || 'bank'}`,
-          debit_amount: donation.amount,
+          debit_amount: amt,
           credit_amount: 0,
-          donor_id: donation.donor_id,
+          donor_id: donation.donor_id || undefined,
           fund_id: donation.fund_id || undefined,
           child_id: donation.restricted_to_child_id || undefined
         },
-        // CR: NGO Donation Revenue (4200) — never fallback to Sales Revenue (4100)
+        // CR: NGO Donation Revenue (4200 / 4210 / 4220 / 4240)
         {
           account_id: donationRevenueAccount.id,
           description: `Donation revenue recognised${restrictionNote}`,
           debit_amount: 0,
-          credit_amount: donation.amount,
-          donor_id: donation.donor_id,
+          credit_amount: amt,
+          donor_id: donation.donor_id || undefined,
           fund_id: donation.fund_id || undefined,
           child_id: donation.restricted_to_child_id || undefined
         }

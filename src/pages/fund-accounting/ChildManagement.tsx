@@ -343,17 +343,26 @@ const ChildManagement: React.FC = () => {
             return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
           }, []);
         };
-        return flatten(accounts).find(a => a.code === code);
+        const flatList = flatten(accounts);
+        return flatList.find(a => a.code === code);
       };
 
-      const cashAccount = findAccount('1110');
-      const mpesaAccount = findAccount('1111');
-      const restrictedCashAccount = findAccount('1150');
-      const revenueAccount = findAccount('4300'); // School Fees Revenue
-      const expenseAccount = findAccount('5310'); // Education Program Expenses
+      const flattenAll = (accs: any[]): any[] => {
+        return accs.reduce((prev, curr) => {
+          return prev.concat(curr).concat(curr.children ? flattenAll(curr.children) : []);
+        }, []);
+      };
 
-      if (!cashAccount || !mpesaAccount || !revenueAccount || !expenseAccount) {
-        toast.error('Required G/L accounts (1110, 1111, 4300, 5310) are missing in the Chart of Accounts. Please verify setups.');
+      const allFlatAccounts = flattenAll(accounts);
+
+      const cashAccount = findAccount('1110') || allFlatAccounts.find(a => a.account_type === 'asset' && (a.code.startsWith('11') || a.code.startsWith('10')));
+      const mpesaAccount = findAccount('1111') || cashAccount;
+      const restrictedCashAccount = findAccount('1150') || mpesaAccount || cashAccount;
+      const revenueAccount = findAccount('4300') || findAccount('4400') || findAccount('4240') || findAccount('4200') || allFlatAccounts.find(a => a.account_type === 'revenue');
+      const expenseAccount = findAccount('5310') || findAccount('5350') || findAccount('5300') || allFlatAccounts.find(a => a.account_type === 'expense');
+
+      if (!cashAccount || !revenueAccount || !expenseAccount) {
+        toast.error('Required G/L accounts (Cash, Revenue, Expense) are missing in the Chart of Accounts. Please verify Chart of Accounts.');
         setPaymentSubmitting(false);
         return;
       }
@@ -364,7 +373,7 @@ const ChildManagement: React.FC = () => {
       if (paymentFormData.payment_type === 'revenue') {
         // Guardian pays NGO
         // Debit: Cash/Mpesa
-        const debitAcc = paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount;
+        const debitAcc = (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
         lines.push({
           account_id: debitAcc.id,
           description: `School Fee payment received from guardian ${guardianName} for child ${childFullName}`,
@@ -399,14 +408,14 @@ const ChildManagement: React.FC = () => {
         // Credit: Bank/Mpesa, Cash, or Restricted Fund Cash
         let creditAcc = cashAccount;
         if (paymentFormData.fund_id) {
-          creditAcc = restrictedCashAccount || mpesaAccount;
+          creditAcc = restrictedCashAccount || mpesaAccount || cashAccount;
         } else {
-          creditAcc = paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount;
+          creditAcc = (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
         }
         
         lines.push({
           account_id: creditAcc.id,
-          description: `School Fee payment disbursement from ${creditAcc.name}`,
+          description: `School Fee payment disbursement from ${creditAcc.name || 'cash/bank'}`,
           debit_amount: 0,
           credit_amount: amt,
           child_id: paymentFormData.child_id,
@@ -730,7 +739,8 @@ const ChildManagement: React.FC = () => {
               </div>
             </div>
 
-            <table className="w-full text-left">
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left min-w-[950px]">
               <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="px-6 py-4 font-semibold">Child Details</th>
@@ -840,6 +850,7 @@ const ChildManagement: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {!loading && filteredChildren.length === 0 && (
               <div className="p-12 text-center">
@@ -871,7 +882,8 @@ const ChildManagement: React.FC = () => {
               </div>
             </div>
 
-            <table className="w-full text-left">
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left min-w-[1000px]">
               <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="px-6 py-4 font-semibold">Date</th>
@@ -978,6 +990,7 @@ const ChildManagement: React.FC = () => {
                 })}
               </tbody>
             </table>
+            </div>
 
             {!loadingPayments && filteredPayments.length === 0 && (
               <div className="p-12 text-center">

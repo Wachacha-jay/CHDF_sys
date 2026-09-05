@@ -202,7 +202,8 @@ const UserManagement: React.FC = () => {
             </button>
           </div>
 
-          <table className="w-full text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left min-w-[700px]">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider font-semibold">
               <tr>
                 <th className="px-6 py-4">User Identity</th>
@@ -258,6 +259,7 @@ const UserManagement: React.FC = () => {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-12 gap-6">

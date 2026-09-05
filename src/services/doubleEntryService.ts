@@ -287,57 +287,64 @@ export class DoubleEntryService {
   /**
    * Post an expense
    */
-  static async postExpense(expense: Expense): Promise<void> {
+  static async postExpense(expense: Expense): Promise<any> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
-      };
-      return flatten(accounts).find(a => a.code === code);
+    const flattenAll = (accs: any[]): any[] => {
+      return accs.reduce((prev, curr) => {
+        return prev.concat(curr).concat(curr.children ? flattenAll(curr.children) : []);
+      }, []);
     };
+    const flatAccounts = flattenAll(accounts);
+    const findAccountByCode = (code: string) => flatAccounts.find(a => a.code === code);
 
-    const mpesaAccount = findAccount('1111'); // Bank/Mpesa
-    const expenseAccount = await AccountingService.getAccountById(expense.account_id);
+    // Expense Account: selected account_id or default expense account
+    const expenseAccount = flatAccounts.find(a => a.id === expense.account_id) 
+      || findAccountByCode('5100') 
+      || findAccountByCode('5200')
+      || flatAccounts.find(a => a.account_type === 'expense');
 
-    if (!mpesaAccount || !expenseAccount) {
-      console.error('Required accounts not found for expense posting');
-      return;
+    // Payment Account: selected payment_account_id, or 1110 (Cash), 1111 (Bank/Mpesa), or any asset account
+    const paymentAccount = (expense.payment_account_id ? flatAccounts.find(a => a.id === expense.payment_account_id) : null)
+      || findAccountByCode('1110')
+      || findAccountByCode('1111')
+      || findAccountByCode('1000')
+      || flatAccounts.find(a => a.account_type === 'asset');
+
+    if (!expenseAccount || !paymentAccount) {
+      console.error('Required accounts (Expense or Asset payment account) not found for expense posting.');
+      return null;
     }
 
     const created = await AccountingService.createJournalEntry({
-      entry_date: expense.expense_date,
-      description: `Expense: ${expense.description}`,
-      reference: expense.expense_number,
+      entry_date: expense.expense_date ? new Date(expense.expense_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      description: `Expense: ${expense.expense_number || ''} - ${expense.description || 'General Expense'}`,
+      reference: expense.reference || expense.expense_number || undefined,
       lines: [
         {
           account_id: expenseAccount.id,
-          description: expense.description,
-          debit_amount: expense.amount,
+          description: expense.description || 'Expense',
+          debit_amount: Number(expense.amount || 0),
           credit_amount: 0,
-          department_id: expense.department_id,
-          child_id: expense.child_id,
-          fund_id: expense.fund_id,
-          donor_id: expense.donor_id
+          department_id: expense.department_id || undefined,
+          child_id: expense.child_id || undefined,
+          fund_id: expense.fund_id || undefined,
+          donor_id: expense.donor_id || undefined
         },
         {
-          account_id: mpesaAccount.id,
-          description: `Payment for ${expense.expense_number}`,
+          account_id: paymentAccount.id,
+          description: `Payment for ${expense.expense_number || 'expense'}`,
           debit_amount: 0,
-          credit_amount: expense.amount,
-          department_id: expense.department_id,
-          child_id: expense.child_id,
-          fund_id: expense.fund_id,
-          donor_id: expense.donor_id
+          credit_amount: Number(expense.amount || 0),
+          department_id: expense.department_id || undefined,
+          child_id: expense.child_id || undefined,
+          fund_id: expense.fund_id || undefined,
+          donor_id: expense.donor_id || undefined
         }
       ],
       is_posted: true
     });
 
-    if (created && !created.is_posted) {
-      await AccountingService.postJournalEntry(created.id);
-    }
+    return created;
   }
 
   /**

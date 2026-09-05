@@ -137,8 +137,8 @@ const ChartOfAccounts: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-sm min-w-[650px]">
             <thead className="bg-gray-50 text-gray-500 uppercase">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold">Code</th>

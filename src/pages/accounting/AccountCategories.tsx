@@ -110,8 +110,8 @@ const AccountCategories: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-gray-50 text-gray-500 text-sm uppercase">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold">Name</th>

@@ -241,7 +241,8 @@ export class AccountingService {
         reference: entryData.reference,
         total_debit: totalDebits,
         total_credit: totalCredits,
-        is_posted: entryData.is_posted ? true : false
+        is_posted: entryData.is_posted ? true : false,
+        lines: entryData.lines
       });
 
       if (!entryResponse.success || !entryResponse.data) {
@@ -250,20 +251,22 @@ export class AccountingService {
 
       const entry = entryResponse.data;
 
-      // Create journal entry lines
-      for (const line of entryData.lines) {
-        await ApiService.create<JournalEntryLine>('journal_entry_lines', {
-          journal_entry_id: entry.id,
-          account_id: line.account_id,
-          description: line.description,
-          debit_amount: Number(line.debit_amount || 0),
-          credit_amount: Number(line.credit_amount || 0),
-          department_id: line.department_id,
-          child_id: line.child_id,
-          donor_id: line.donor_id,
-          fund_id: line.fund_id,
-          sponsor_id: line.sponsor_id
-        });
+      // If backend did not return lines, insert them individually as fallback
+      if (!entry.lines || entry.lines.length === 0) {
+        for (const line of entryData.lines) {
+          await ApiService.create<JournalEntryLine>('journal_entry_lines', {
+            journal_entry_id: entry.id,
+            account_id: line.account_id,
+            description: line.description,
+            debit_amount: Number(line.debit_amount || 0),
+            credit_amount: Number(line.credit_amount || 0),
+            department_id: line.department_id,
+            child_id: line.child_id,
+            donor_id: line.donor_id,
+            fund_id: line.fund_id,
+            sponsor_id: line.sponsor_id
+          });
+        }
       }
 
       return await this.getJournalEntryById(entry.id);

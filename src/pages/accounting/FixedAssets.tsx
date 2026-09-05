@@ -219,61 +219,71 @@ const FixedAssets: React.FC = () => {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Asset</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Purchase Date</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Cost (KES)</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Current Value (KES)</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-100">
-              {filtered.length === 0 ? (
+          <div className="overflow-x-auto w-full">
+            <table className="min-w-[900px] w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
                 <tr>
-                  <td colSpan={8} className="text-center py-14 text-gray-400">
-                    <PackageSearch size={40} className="mx-auto mb-3 opacity-50" />
-                    <p className="font-medium text-gray-500">No assets found</p>
-                    <p className="text-sm">Click "Add Asset" to register your first fixed asset</p>
-                  </td>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Asset</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Purchase Date</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Cost (KES)</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Current Value (KES)</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
-              ) : filtered.map(asset => (
-                <tr key={asset.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">{asset.asset_name}</div>
-                    {asset.serial_number && <div className="text-xs text-gray-400">S/N: {asset.serial_number}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 text-sm text-gray-600">
-                      {getTypeIcon(asset.asset_type)}
-                      {asset.asset_type || '—'}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {departments.find(d => d.id === asset.department_id)?.name || '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">{new Date(asset.purchase_date).toLocaleDateString()}</td>
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900 text-right">{Number(asset.purchase_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-sm font-medium text-green-700 text-right">{Number(asset.current_value).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3">{getStatusBadge(asset.status)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => openEdit(asset)} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Edit">
-                        <Edit size={16} />
-                      </button>
-                      <button onClick={() => setDeleteConfirm(asset.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-14 text-gray-400">
+                      <PackageSearch size={40} className="mx-auto mb-3 opacity-50" />
+                      <p className="font-medium text-gray-500">No assets found</p>
+                    </td>
+                  </tr>
+                ) : filtered.map(asset => (
+                  <tr key={asset.id} className="hover:bg-gray-50 transition-colors text-sm">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-gray-900">{asset.asset_name}</div>
+                      {asset.serial_number && (
+                        <div className="text-xs text-gray-400 font-mono">S/N: {asset.serial_number}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 font-medium">{asset.asset_type || 'General'}</td>
+                    <td className="px-4 py-3 text-gray-600">{departments.find(d => d.id === asset.department_id)?.name || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 font-mono">
+                      {asset.purchase_date ? new Date(asset.purchase_date).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-900">
+                      {asset.purchase_cost != null ? Number(asset.purchase_cost).toLocaleString() : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-indigo-600">
+                      {asset.current_value != null ? Number(asset.current_value).toLocaleString() : '—'}
+                    </td>
+                    <td className="px-4 py-3">{getStatusBadge(asset.status)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => openEdit(asset)}
+                          className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-indigo-600"
+                          title="Edit"
+                        >
+                          <Edit size={15} />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm(asset.id)}
+                          className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-600"
+                          title="Delete"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

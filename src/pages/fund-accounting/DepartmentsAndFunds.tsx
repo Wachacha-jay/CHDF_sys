@@ -194,7 +194,8 @@ const DepartmentsAndFunds: React.FC = () => {
       {/* ── DEPARTMENTS TABLE ─────────────────────────────────────────── */}
       {activeTab === 'departments' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="w-full text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left min-w-[650px]">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-4 font-semibold">Department</th>
@@ -245,13 +246,15 @@ const DepartmentsAndFunds: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {/* ── FUND ACCOUNTS TABLE ──────────────────────────────────────── */}
       {activeTab === 'funds' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="w-full text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left min-w-[750px]">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-4 font-semibold">Fund Name</th>
@@ -286,13 +289,15 @@ const DepartmentsAndFunds: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {/* ── DONOR CLUSTERS TABLE ─────────────────────────────────────── */}
       {activeTab === 'clusters' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="w-full text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left min-w-[650px]">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-4 font-semibold">Cluster Name</th>
@@ -331,6 +336,7 @@ const DepartmentsAndFunds: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

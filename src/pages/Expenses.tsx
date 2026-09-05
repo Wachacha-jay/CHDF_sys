@@ -7,6 +7,7 @@ import ExpenseStats from '../components/expenses/ExpenseStats';
 import ExpenseFilters from '../components/expenses/ExpenseFilters';
 import { AccountingService } from '../services/accountingService';
 import { FundAccountingService } from '../services/fundAccountingService';
+import { DoubleEntryService } from '../services/doubleEntryService';
 import { useAuthContext } from '../contexts/useAuthContext';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import type { Expense, Account, Supplier, AccountCategory, Department, FundAccount, Child, Donor } from '../types';
@@ -132,13 +133,17 @@ const Expenses: React.FC = () => {
       let response;
       
       if (selectedExpense) {
-        response = await ApiService.update('expenses', selectedExpense.id, expenseData);
+        response = await ApiService.update<Expense>('expenses', selectedExpense.id, expenseData);
       } else {
         response = await ApiService.create<Expense>('expenses', expenseData);
       }
 
-      if (response.success) {
-        toast.success(selectedExpense ? 'Expense updated successfully' : 'Expense added successfully');
+      if (response.success && response.data) {
+        const savedExpense = response.data;
+        // Post directly to General Ledger upon saving
+        await DoubleEntryService.postExpense(savedExpense);
+
+        toast.success(selectedExpense ? 'Expense updated & posted to General Ledger' : 'Expense added & posted to General Ledger');
         setShowForm(false);
         setSelectedExpense(null);
         loadExpenses();
@@ -146,6 +151,7 @@ const Expenses: React.FC = () => {
         toast.error(response.error || 'Failed to save expense');
       }
     } catch (error) {
+      console.error('Save expense error:', error);
       toast.error('Failed to save expense');
     } finally {
       setLoading(false);
@@ -186,38 +192,11 @@ const Expenses: React.FC = () => {
         }
       }
 
-      // 2. Create Journal Entry (Professional Double Entry)
-      const journalEntry = await AccountingService.createJournalEntry({
-        entry_date: new Date(expense.expense_date).toISOString().split('T')[0],
-        description: `Expense Approval: ${expense.expense_number} - ${expense.description}`,
-        reference: expense.reference || expense.expense_number,
-        is_posted: true,
-        lines: [
-          {
-            account_id: expense.account_id,
-            description: expense.description,
-            debit_amount: Number(expense.amount),
-            credit_amount: 0,
-            department_id: expense.department_id || undefined,
-            child_id: expense.child_id || undefined,
-            donor_id: expense.donor_id || undefined,
-            fund_id: expense.fund_id || undefined
-          },
-          {
-            account_id: expense.payment_account_id || 'DEFAULT_CASH_ACCOUNT_ID',
-            description: `Payment for ${expense.expense_number}`,
-            debit_amount: 0,
-            credit_amount: Number(expense.amount),
-            department_id: expense.department_id || undefined,
-            child_id: expense.child_id || undefined,
-            donor_id: expense.donor_id || undefined,
-            fund_id: expense.fund_id || undefined
-          }
-        ]
-      });
+      // 2. Post to Ledger via DoubleEntryService
+      const journalEntry = await DoubleEntryService.postExpense(expense);
 
       if (!journalEntry) {
-        toast.error('G/L Posting Failed: Please verify accounts are valid');
+        toast.error('G/L Posting Failed: Please verify accounts are valid in Chart of Accounts');
         return;
       }
 
@@ -312,8 +291,8 @@ const Expenses: React.FC = () => {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+          <div className="overflow-x-auto w-full">
+            <table className="min-w-[900px] w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
