@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Donor, FundAccount, Donation, DonorCluster, Child } from '../../types';
+import { Donor, FundAccount, Donation, DonorCluster, Child, Account } from '../../types';
 import { FundAccountingService } from '../../services/fundAccountingService';
+import { AccountingService } from '../../services/accountingService';
 import { ApiService } from '../../services/api';
 import { DimensionSelector } from '../../components/fund-accounting/DimensionSelector';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { printPaymentReceipt, ReceiptData } from '../../utils/receiptUtils';
 import { 
   Plus, HandCoins, Calendar, History, Receipt, 
-  Eye, Pencil, Trash2, Printer, CheckCircle, AlertCircle, X 
+  Eye, Pencil, Trash2, Printer, CheckCircle, Clock, Send, AlertCircle, X, Building2 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -24,12 +25,14 @@ const Donations: React.FC = () => {
   const [children, setChildren] = useState<Child[]>([]);
   const [donations, setDonations] = useState<any[]>([]);
   const [clusters, setClusters] = useState<DonorCluster[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [formData, setFormData] = useState<Partial<Donation>>({
     donation_date: new Date().toISOString().split('T')[0],
     amount: 0,
     payment_method: 'bank',
+    payment_account_id: '',
     is_anonymous: false
   });
 
@@ -49,18 +52,20 @@ const Donations: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [dList, fList, chList, donationList, cList] = await Promise.all([
+    const [dList, fList, chList, donationList, cList, accList] = await Promise.all([
       FundAccountingService.getDonors(),
       FundAccountingService.getFundAccounts(),
       FundAccountingService.getChildren(),
       ApiService.get<any>('donations', { orderBy: { column: 'donation_date', ascending: false } }),
-      FundAccountingService.getDonorClusters()
+      FundAccountingService.getDonorClusters(),
+      AccountingService.getAccounts()
     ]);
     setDonors(dList);
     setFunds(fList);
     setChildren(chList);
     setDonations(donationList.success ? (donationList.data || []) : []);
     setClusters(cList);
+    setAccounts(accList || []);
     setLoading(false);
   };
 
@@ -70,10 +75,12 @@ const Donations: React.FC = () => {
 
   const openRecordModal = () => {
     setEditingDonationId(null);
+    const bankAccounts = accounts.filter(a => a.account_type === 'asset');
     setFormData({
       donation_date: new Date().toISOString().split('T')[0],
       amount: 0,
       payment_method: 'bank',
+      payment_account_id: bankAccounts.length > 0 ? bankAccounts[0].id : '',
       is_anonymous: false
     });
     setDimensions({});
@@ -86,6 +93,7 @@ const Donations: React.FC = () => {
       donation_date: d.donation_date ? new Date(d.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       amount: Number(d.amount),
       payment_method: d.payment_method || 'bank',
+      payment_account_id: d.payment_account_id || '',
       reference_number: d.reference_number || '',
       notes: d.notes || '',
       is_anonymous: !!d.is_anonymous
@@ -120,6 +128,7 @@ const Donations: React.FC = () => {
 
     const payload = {
       ...formData,
+      payment_account_id: formData.payment_account_id || undefined,
       donor_id: dimensions.donor_id,
       fund_id: dimensions.fund_id || null,
       restricted_to_child_id: dimensions.child_id || null
@@ -128,11 +137,11 @@ const Donations: React.FC = () => {
     let ok = false;
     if (editingDonationId) {
       ok = await FundAccountingService.updateDonation(editingDonationId, payload);
-      if (ok) toast.success('Donation updated successfully');
+      if (ok) toast.success('Donation record updated successfully');
     } else {
       const result = await FundAccountingService.recordDonation(payload);
       ok = !!result;
-      if (ok) toast.success('Donation recorded and posted to General Ledger');
+      if (ok) toast.success('Donation recorded as Draft (Pending G/L Posting)');
     }
 
     if (ok) {
@@ -142,12 +151,33 @@ const Donations: React.FC = () => {
         donation_date: new Date().toISOString().split('T')[0],
         amount: 0,
         payment_method: 'bank',
+        payment_account_id: '',
         is_anonymous: false
       });
       setDimensions({});
       loadData();
     } else {
       toast.error('Failed to save donation');
+    }
+  };
+
+  const handlePostToGL = async (d: any) => {
+    try {
+      setLoading(true);
+      const ok = await FundAccountingService.postDonationToGL(d);
+      if (ok) {
+        toast.success(`Donation of KES ${Number(d.amount).toLocaleString()} posted to General Ledger!`);
+        if (viewingDonation?.id === d.id) {
+          setViewingDonation({ ...viewingDonation, is_posted: true });
+        }
+        loadData();
+      } else {
+        toast.error('Failed to post donation to General Ledger. Please verify G/L setup.');
+      }
+    } catch (error: any) {
+      toast.error('Error posting to G/L: ' + (error.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -221,7 +251,7 @@ const Donations: React.FC = () => {
       <div className="flex flex-wrap justify-between items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Donation Management</h1>
-          <p className="text-gray-500">Track and allocate contributions with full audit trails &amp; G/L posting</p>
+          <p className="text-gray-500">Record contributions, verify details, and post to General Ledger</p>
         </div>
         <div className="flex gap-3">
           <button 
@@ -251,28 +281,30 @@ const Donations: React.FC = () => {
             </h3>
           </div>
           <div className="overflow-x-auto w-full">
-            <table className="w-full text-left min-w-[750px]">
+            <table className="w-full text-left min-w-[850px]">
               <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="px-6 py-4 font-semibold">Donor / Date</th>
                   <th className="px-6 py-4 font-semibold">Fund / Restriction</th>
                   <th className="px-6 py-4 font-semibold">Amount</th>
+                  <th className="px-6 py-4 font-semibold">G/L Status</th>
                   <th className="px-6 py-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {loading ? (
                   <tr className="animate-pulse">
-                    <td colSpan={4} className="px-6 py-8 text-center text-gray-400">Loading history...</td>
+                    <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Loading history...</td>
                   </tr>
                 ) : donations.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No donations recorded yet</td>
+                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">No donations recorded yet</td>
                   </tr>
                 ) : donations.map((d) => {
                   const donorObj = donors.find(donor => donor.id === d.donor_id);
                   const fundObj = funds.find(f => f.id === d.fund_id);
                   const childObj = children.find(c => c.id === d.restricted_to_child_id);
+                  const isPosted = !!d.is_posted;
 
                   return (
                     <tr key={d.id} className="hover:bg-gray-50/50 transition-colors">
@@ -306,32 +338,52 @@ const Donations: React.FC = () => {
                       <td className="px-6 py-4 font-bold text-emerald-600">
                         KES {Number(d.amount).toLocaleString()}
                       </td>
+                      <td className="px-6 py-4">
+                        {isPosted ? (
+                          <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                            <CheckCircle size={13} /> Posted
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                            <Clock size={13} /> Draft (Unposted)
+                          </span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex justify-end items-center gap-1.5">
+                          {!isPosted && (
+                            <button
+                              onClick={() => handlePostToGL(d)}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm shadow-emerald-100 mr-1"
+                              title="Review & Post to General Ledger"
+                            >
+                              <Send size={13} /> Post to G/L
+                            </button>
+                          )}
                           <button
                             onClick={() => setViewingDonation(d)}
-                            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+                            className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
                             title="View Details"
                           >
                             <Eye size={16} />
                           </button>
                           <button
                             onClick={() => handlePrintReceipt(d)}
-                            className="p-2 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+                            className="p-1.5 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
                             title="Print Receipt"
                           >
                             <Printer size={16} />
                           </button>
                           <button
                             onClick={() => openEditModal(d)}
-                            className="p-2 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-lg transition-colors"
+                            className="p-1.5 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-lg transition-colors"
                             title="Edit Donation"
                           >
                             <Pencil size={16} />
                           </button>
                           <button
                             onClick={() => setDeleteConfirm(d)}
-                            className="p-2 hover:bg-rose-50 text-gray-400 hover:text-rose-600 rounded-lg transition-colors"
+                            className="p-1.5 hover:bg-rose-50 text-gray-400 hover:text-rose-600 rounded-lg transition-colors"
                             title="Delete / Void"
                           >
                             <Trash2 size={16} />
@@ -375,10 +427,9 @@ const Donations: React.FC = () => {
           </div>
 
           <div className="bg-indigo-600 p-6 rounded-2xl shadow-lg shadow-indigo-100 text-white">
-            <h3 className="font-bold mb-2">Audit Ready</h3>
+            <h3 className="font-bold mb-2">Controlled G/L Posting</h3>
             <p className="text-indigo-100 text-sm leading-relaxed">
-              Every donation recorded here instantly creates a balanced Journal Entry in the General Ledger. 
-              Restricted funds are tagged at the line level for real-time compliance reporting.
+              Donations are saved as <strong>Drafts</strong> first. Review the amount, donor, and restriction tags, then click <strong>"Post to G/L"</strong> to generate the double-entry journal posting.
             </p>
           </div>
         </div>
@@ -402,6 +453,26 @@ const Donations: React.FC = () => {
             </div>
             
             <div className="p-6 space-y-4 text-sm">
+              {/* G/L Status Banner */}
+              <div className={`p-3 rounded-xl flex justify-between items-center ${
+                viewingDonation.is_posted 
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                  : 'bg-amber-50 text-amber-800 border border-amber-200'
+              }`}>
+                <div className="flex items-center gap-2 font-medium">
+                  {viewingDonation.is_posted ? <CheckCircle size={18} className="text-emerald-600" /> : <Clock size={18} className="text-amber-600" />}
+                  <span>{viewingDonation.is_posted ? 'Posted to General Ledger' : 'Draft / Pending G/L Posting'}</span>
+                </div>
+                {!viewingDonation.is_posted && (
+                  <button
+                    onClick={() => handlePostToGL(viewingDonation)}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-colors shadow-sm"
+                  >
+                    Post Now
+                  </button>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-xl">
                 <div>
                   <span className="text-xs text-gray-400 uppercase font-semibold block">Donor</span>
@@ -453,9 +524,7 @@ const Donations: React.FC = () => {
 
               <div className="pt-2 flex gap-3">
                 <button
-                  onClick={() => {
-                    handlePrintReceipt(viewingDonation);
-                  }}
+                  onClick={() => handlePrintReceipt(viewingDonation)}
                   className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 shadow-md shadow-indigo-100"
                 >
                   <Printer size={18} /> Print Official Receipt
@@ -613,6 +682,22 @@ const Donations: React.FC = () => {
 
                 <div className="space-y-4">
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Deposit Bank / Asset Account <span className="text-red-500">*</span></label>
+                    <select 
+                      className="w-full rounded-xl border-gray-300 focus:ring-emerald-500 focus:border-emerald-500 py-2 border font-medium text-gray-900"
+                      value={formData.payment_account_id || ''}
+                      onChange={(e) => setFormData({...formData, payment_account_id: e.target.value})}
+                      required
+                    >
+                      <option value="">-- Select Bank / Asset Account --</option>
+                      {accounts.filter(a => a.account_type === 'asset').map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
                     <select 
                       className="w-full rounded-xl border-gray-300 focus:ring-emerald-500 focus:border-emerald-500 py-2 border"
@@ -679,7 +764,7 @@ const Donations: React.FC = () => {
                   type="submit"
                   className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-100"
                 >
-                  {editingDonationId ? 'Update Contribution' : 'Record and Post to Ledger'}
+                  {editingDonationId ? 'Update Contribution Record' : 'Save Contribution (Draft)'}
                 </button>
                 <button 
                   type="button" 

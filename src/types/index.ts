@@ -627,12 +627,14 @@ export interface Donation {
   id: string;
   donor_id: string;
   fund_id?: string;
+  payment_account_id?: string;
   amount: number;
   currency: string;
   donation_date: string;
   payment_method: string;
   reference_number?: string;
   is_anonymous: boolean;
+  is_posted?: boolean;
   restricted_to_child_id?: string;
   notes?: string;
   created_at: string;

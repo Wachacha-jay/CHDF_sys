@@ -58,6 +58,7 @@ const ChildManagement: React.FC = () => {
     amount: '',
     payment_type: 'revenue', // 'revenue' (Guardian Pays NGO) or 'expense' (NGO Pays School)
     payment_method: 'mpesa', // 'mpesa' or 'cash'
+    payment_account_id: '',
     fund_id: '',
     department_id: '',
     notes: '',
@@ -369,11 +370,12 @@ const ChildManagement: React.FC = () => {
 
       const amt = Number(paymentFormData.amount);
       const lines: any[] = [];
+      const selectedBankAcc = paymentFormData.payment_account_id ? allFlatAccounts.find(a => a.id === paymentFormData.payment_account_id) : null;
 
       if (paymentFormData.payment_type === 'revenue') {
         // Guardian pays NGO
-        // Debit: Cash/Mpesa
-        const debitAcc = (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
+        // Debit: Cash/Bank/Mpesa
+        const debitAcc = selectedBankAcc || (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
         lines.push({
           account_id: debitAcc.id,
           description: `School Fee payment received from guardian ${guardianName} for child ${childFullName}`,
@@ -406,11 +408,13 @@ const ChildManagement: React.FC = () => {
           department_id: paymentFormData.department_id || undefined
         });
         // Credit: Bank/Mpesa, Cash, or Restricted Fund Cash
-        let creditAcc = cashAccount;
-        if (paymentFormData.fund_id) {
-          creditAcc = restrictedCashAccount || mpesaAccount || cashAccount;
-        } else {
-          creditAcc = (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
+        let creditAcc = selectedBankAcc;
+        if (!creditAcc) {
+          if (paymentFormData.fund_id) {
+            creditAcc = restrictedCashAccount || mpesaAccount || cashAccount;
+          } else {
+            creditAcc = (paymentFormData.payment_method === 'mpesa' ? mpesaAccount : cashAccount) || cashAccount;
+          }
         }
         
         lines.push({
@@ -1112,6 +1116,20 @@ const ChildManagement: React.FC = () => {
                     onChange={(e) => setPaymentFormData({ ...paymentFormData, entry_date: e.target.value })}
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Bank / Asset Account (Paid Into / From)</label>
+                <select
+                  className="mt-1 w-full rounded-xl border-gray-300 focus:ring-emerald-500 focus:border-emerald-500 font-medium text-gray-900"
+                  value={paymentFormData.payment_account_id}
+                  onChange={(e) => setPaymentFormData({ ...paymentFormData, payment_account_id: e.target.value })}
+                >
+                  <option value="">-- Default Cash/Bank Account --</option>
+                  {accounts.filter(a => a.account_type === 'asset').map(acc => (
+                    <option key={acc.id} value={acc.id}>[{acc.code}] {acc.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

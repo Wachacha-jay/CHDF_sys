@@ -161,19 +161,27 @@ export class FundAccountingService {
 
   // Donation Operations
   static async recordDonation(donation: Partial<Donation>): Promise<Donation | null> {
-    const response = await ApiService.create<Donation>('donations', donation);
-    if (response.success && response.data) {
-      // Post to GL
-      await this.postDonationToLedger(response.data);
-      return response.data;
+    const payload = {
+      ...donation,
+      is_posted: false
+    };
+    const response = await ApiService.create<Donation>('donations', payload);
+    return response.success ? response.data : null;
+  }
+
+  static async postDonationToGL(donation: Donation): Promise<boolean> {
+    const entry = await this.postDonationToLedger(donation);
+    if (entry) {
+      await ApiService.update('donations', donation.id, { is_posted: true });
+      return true;
     }
-    return null;
+    return false;
   }
 
   static async updateDonation(id: string, donation: Partial<Donation>): Promise<boolean> {
     const response = await ApiService.update<Donation>('donations', id, donation);
-    if (response.success && response.data) {
-      // Re-post updated donation details to Ledger
+    if (response.success && response.data && response.data.is_posted) {
+      // Re-post updated donation details to Ledger if it was already posted
       await this.postDonationToLedger(response.data);
       return true;
     }
@@ -185,7 +193,7 @@ export class FundAccountingService {
     return response.success;
   }
 
-  private static async postDonationToLedger(donation: Donation): Promise<void> {
+  private static async postDonationToLedger(donation: Donation): Promise<any> {
     const accounts = await AccountingService.getAccounts();
     const flattenAll = (accs: any[]): any[] => {
       return accs.reduce((prev, curr) => {
@@ -218,10 +226,17 @@ export class FundAccountingService {
       return;
     }
 
-    // Pick asset account to debit based on payment method
-    let debitAccount = cashAccount;
-    if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
-      debitAccount = mpesaAccount || cashAccount;
+    // Pick asset account to debit based on payment_account_id or payment_method
+    let debitAccount = null;
+    if (donation.payment_account_id) {
+      debitAccount = allFlatAccounts.find(a => a.id === donation.payment_account_id);
+    }
+    if (!debitAccount) {
+      if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
+        debitAccount = mpesaAccount || cashAccount;
+      } else {
+        debitAccount = cashAccount;
+      }
     }
     if (!debitAccount) {
       debitAccount = allFlatAccounts.find(a => a.account_type === 'asset');
@@ -242,7 +257,7 @@ export class FundAccountingService {
 
     const amt = Number(donation.amount || 0);
 
-    await AccountingService.createJournalEntry({
+    return await AccountingService.createJournalEntry({
       entry_date: donation.donation_date ? new Date(donation.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       description: `Donation: ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
