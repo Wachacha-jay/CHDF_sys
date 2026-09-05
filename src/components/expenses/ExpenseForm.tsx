@@ -3,6 +3,7 @@ import { X, Save, Upload, DollarSign, Calendar, FileText, User } from 'lucide-re
 import type { Expense, Account, Supplier, AccountCategory } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { DimensionSelector } from '../fund-accounting/DimensionSelector';
+import { AccountingService } from '../../services/accountingService';
 
 interface ExpenseFormProps {
   expense: Expense | null;
@@ -24,6 +25,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({
   loading
 }) => {
   const { settings } = useSettingsContext();
+  const flatAccounts = AccountingService.flattenAccounts(accounts);
   const [formData, setFormData] = useState({
     expense_number: '',
     account_id: '',
@@ -189,7 +191,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({
               >
                 <option value="">Select an account</option>
                 {categories.map((category) => {
-                  const categoryAccounts = accounts.filter(a => a.category_id === category.id);
+                  const categoryAccounts = flatAccounts.filter(a => a.category_id === category.id);
                   if (categoryAccounts.length === 0) return null;
                   return (
                     <optgroup key={category.id} label={category.name}>
@@ -202,9 +204,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({
                   );
                 })}
                 {/* Fallback for uncategorized accounts */}
-                {accounts.some(a => !a.category_id && a.account_type === 'expense') && (
+                {flatAccounts.some(a => !a.category_id && a.account_type === 'expense') && (
                   <optgroup label="Uncategorized">
-                    {accounts.filter(a => !a.category_id && a.account_type === 'expense').map((account) => (
+                    {flatAccounts.filter(a => !a.category_id && a.account_type === 'expense').map((account) => (
                       <option key={account.id} value={account.id}>
                         [{account.code}] {account.name}
                       </option>
@@ -224,7 +226,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({
                 required
               >
                 <option value="">Select payment account</option>
-                {accounts.filter(a => a.account_type === 'asset').map((account) => (
+                {flatAccounts.filter(a => a.account_type === 'asset').map((account) => (
                   <option key={account.id} value={account.id}>
                     [{account.code}] {account.name}
                   </option>

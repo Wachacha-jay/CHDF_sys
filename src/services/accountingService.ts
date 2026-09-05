@@ -594,4 +594,18 @@ export class AccountingService {
 
     return rootAccounts;
   }
+
+  static flattenAccounts(accounts: Account[]): Account[] {
+    const flat: Account[] = [];
+    const recurse = (list: Account[]) => {
+      for (const acc of list) {
+        flat.push(acc);
+        if (acc.children && acc.children.length > 0) {
+          recurse(acc.children);
+        }
+      }
+    };
+    recurse(accounts || []);
+    return flat;
+  }
 } 

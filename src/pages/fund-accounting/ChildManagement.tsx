@@ -78,7 +78,7 @@ const ChildManagement: React.FC = () => {
       ]);
       setChildren(childrenData);
       setGuardians(guardiansData);
-      setAccounts(accList);
+      setAccounts(accList ? AccountingService.flattenAccounts(accList) : []);
       setFunds(fundList);
       setDepartments(deptList);
       setBusinessSettings(settingsData);

@@ -65,7 +65,7 @@ const Donations: React.FC = () => {
     setChildren(chList);
     setDonations(donationList.success ? (donationList.data || []) : []);
     setClusters(cList);
-    setAccounts(accList || []);
+    setAccounts(accList ? AccountingService.flattenAccounts(accList) : []);
     setLoading(false);
   };
 

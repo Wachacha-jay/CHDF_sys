@@ -1,6 +1,7 @@
 import React from 'react';
 import { Filter, Calendar, DollarSign, Building2, Wallet, Users, Heart } from 'lucide-react';
 import type { Account, Supplier, Department, FundAccount, Child, Donor } from '../../types';
+import { AccountingService } from '../../services/accountingService';
 
 interface ExpenseFiltersProps {
   filters: {
@@ -163,7 +164,7 @@ const ExpenseFilters: React.FC<ExpenseFiltersProps> = ({
             className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm appearance-none bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
           >
             <option value="">All Accounts</option>
-            {accounts.filter(a => a.account_type === 'expense').map((a) => (
+            {AccountingService.flattenAccounts(accounts).filter(a => a.account_type === 'expense').map((a) => (
               <option key={a.id} value={a.id}>[{a.code}] {a.name}</option>
             ))}
           </select>
