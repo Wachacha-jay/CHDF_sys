@@ -105,6 +105,30 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  const handleSaveRole = async () => {
+    if (!roleForm.name) {
+      toast.error('Please enter a role name');
+      return;
+    }
+    try {
+      const response = await ApiService.create<Role>('roles', {
+        name: roleForm.name,
+        description: roleForm.description,
+        is_system: false
+      });
+      if (response.success) {
+        toast.success('New role created successfully');
+        setShowRoleModal(false);
+        setRoleForm({ name: '', description: '' });
+        loadData();
+      } else {
+        toast.error(response.error || 'Failed to create role');
+      }
+    } catch (error) {
+      toast.error('Error creating role');
+    }
+  };
+
   const handleSaveRolePermissions = async () => {
     if (!selectedRole) return;
     try {
@@ -138,9 +162,9 @@ const UserManagement: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center">
             <Shield className="mr-2 text-indigo-600" />
-            User Management & RBAC
+            User Management &amp; RBAC
           </h1>
-          <p className="text-gray-500 text-sm mt-1">Manage system access, roles, and granular technical permissions</p>
+          <p className="text-gray-500 text-sm mt-1">Manage system access, custom roles, and Maker-Checker permissions</p>
         </div>
       </div>
 
@@ -166,7 +190,7 @@ const UserManagement: React.FC = () => {
           }`}
         >
           <Key className="w-4 h-4 mr-2" />
-          Roles & Rights
+          Roles &amp; Rights
         </button>
       </div>
 
@@ -195,7 +219,7 @@ const UserManagement: React.FC = () => {
                 });
                 setShowUserModal(true);
               }}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center shadow-sm transition-colors"
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center shadow-sm transition-colors font-medium text-sm"
             >
               <UserPlus className="w-4 h-4 mr-2" />
               Add User Account
@@ -210,10 +234,10 @@ const UserManagement: React.FC = () => {
                 <th className="px-6 py-4">Username</th>
                 <th className="px-6 py-4">Role</th>
                 <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Actions</th>
+                <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-gray-200 text-sm">
               {users.map(user => {
                 const role = roles.find(r => r.id === (user as any).role_id);
                 return (
@@ -229,23 +253,25 @@ const UserManagement: React.FC = () => {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{user.username || '-'}</td>
+                    <td className="px-6 py-4 text-gray-600 font-mono">{user.username || '-'}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
                         role?.name === 'Super Admin' ? 'bg-purple-100 text-purple-700' :
-                        role?.name === 'Admin' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                        role?.name === 'Admin' ? 'bg-blue-100 text-blue-700' :
+                        role?.name === 'Finance Manager' ? 'bg-emerald-100 text-emerald-700' :
+                        role?.name === 'Data Entry Officer' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
                       }`}>
                         {role?.name || 'No Role Assigned'}
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="flex items-center text-xs text-green-600 font-medium">
-                        <CheckCircle className="w-3 h-3 mr-1" />
+                      <span className="flex items-center text-xs text-emerald-600 font-medium">
+                        <CheckCircle className="w-3.5 h-3.5 mr-1" />
                         Active
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex space-x-2">
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end space-x-2">
                         <button className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -266,10 +292,18 @@ const UserManagement: React.FC = () => {
           {/* Roles List */}
           <div className="col-span-12 lg:col-span-4 space-y-4">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-              <h3 className="font-bold text-gray-900 mb-4 flex items-center">
-                <ShieldCheck className="w-5 h-5 mr-2 text-indigo-600" />
-                Defined Roles
-              </h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-gray-900 flex items-center">
+                  <ShieldCheck className="w-5 h-5 mr-2 text-indigo-600" />
+                  Defined Roles
+                </h3>
+                <button 
+                  onClick={() => setShowRoleModal(true)}
+                  className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                >
+                  <Plus size={14} /> New Role
+                </button>
+              </div>
               <div className="space-y-2">
                 {roles.map(role => (
                   <button
@@ -290,7 +324,7 @@ const UserManagement: React.FC = () => {
                         <span className="bg-gray-100 text-gray-500 text-[10px] uppercase px-1.5 py-0.5 rounded font-bold">System</span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">{role.description}</p>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{role.description}</p>
                   </button>
                 ))}
               </div>
@@ -304,13 +338,13 @@ const UserManagement: React.FC = () => {
                 <div className="p-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                   <div>
                     <h3 className="font-bold text-gray-900 flex items-center">
-                      Permissions for: <span className="ml-2 text-indigo-600">{selectedRole.name}</span>
+                      Permissions for: <span className="ml-2 text-indigo-600 font-extrabold">{selectedRole.name}</span>
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1">Select the modules and actions this role is authorized to perform</p>
+                    <p className="text-xs text-gray-500 mt-1">Configure Maker (Create/Record) vs. Checker (Approve/Post G/L) rights</p>
                   </div>
                   <button 
                     onClick={handleSaveRolePermissions}
-                    className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 shadow-sm font-medium flex items-center transition-colors"
+                    className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-100 font-bold flex items-center transition-all text-sm"
                   >
                     <Lock className="w-4 h-4 mr-2" />
                     Save Rights
@@ -322,35 +356,54 @@ const UserManagement: React.FC = () => {
                     <div className="flex flex-col items-center justify-center p-12 bg-indigo-50 rounded-2xl border border-indigo-100">
                       <ShieldCheck className="w-16 h-16 text-indigo-600 mb-4" />
                       <h4 className="text-lg font-bold text-indigo-900">Total Access Override</h4>
-                      <p className="text-indigo-600/70 text-center mt-2 max-w-sm">
+                      <p className="text-indigo-600/70 text-center mt-2 max-w-sm text-sm">
                         Super Admin accounts have implicit access to all functions and tables in the system. Permissions cannot be restricted for this role.
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-8">
+                    <div className="space-y-6">
                       {Object.entries(groupedPermissions).map(([module, perms]) => (
-                        <div key={module} className="border border-gray-200 rounded-xl overflow-hidden">
-                          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 font-bold text-sm text-gray-700 uppercase tracking-tight">
-                            {module} Module
+                        <div key={module} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white">
+                          <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                            <span className="font-bold text-xs text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                              <Shield size={14} className="text-indigo-600" /> {module} Module
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-bold uppercase">{perms.length} Rights</span>
                           </div>
                           <div className="divide-y divide-gray-100">
-                            {perms.map(p => (
-                              <div key={p.id} className="flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition-colors">
-                                <div>
-                                  <p className="font-medium text-gray-900 capitalize">{p.name.split('_').join(' ')}</p>
-                                  <p className="text-xs text-gray-500">{p.description}</p>
+                            {perms.map(p => {
+                              const isMaker = p.action === 'create' || p.name.includes('_record') || p.name.includes('_create');
+                              const isChecker = p.action === 'approve' || p.name.includes('_post') || p.name.includes('_approve');
+                              return (
+                                <div key={p.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50/80 transition-colors">
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-semibold text-gray-900 text-sm capitalize">{p.name.split('_').join(' ')}</p>
+                                      {isMaker && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-100 text-blue-800 uppercase tracking-wider">
+                                          Maker (Record)
+                                        </span>
+                                      )}
+                                      {isChecker && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800 uppercase tracking-wider">
+                                          Checker (Approve)
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-gray-500">{p.description}</p>
+                                  </div>
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                    <input 
+                                      type="checkbox" 
+                                      className="sr-only peer"
+                                      checked={rolePerms.includes(p.id)}
+                                      onChange={() => togglePermission(p.id)}
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                  </label>
                                 </div>
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                  <input 
-                                    type="checkbox" 
-                                    className="sr-only peer"
-                                    checked={rolePerms.includes(p.id)}
-                                    onChange={() => togglePermission(p.id)}
-                                  />
-                                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                                </label>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       ))}
@@ -517,6 +570,65 @@ const UserManagement: React.FC = () => {
                 className="bg-indigo-600 text-white px-8 py-2 rounded-lg hover:bg-indigo-700 shadow-md font-bold transition-all transform active:scale-95"
               >
                 {selectedUser ? 'Save Updates' : 'Finish & Create Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Custom Role Modal */}
+      {showRoleModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center">
+                <Key className="w-5 h-5 mr-2 text-indigo-600" />
+                Create Custom System Role
+              </h2>
+              <button 
+                onClick={() => setShowRoleModal(false)}
+                className="p-1 hover:bg-gray-200 rounded-lg transition-colors text-gray-400 font-bold text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Role Title <span className="text-red-500">*</span></label>
+                <input 
+                  type="text" 
+                  required
+                  placeholder="e.g. Assistant Accountant, Operations Officer"
+                  value={roleForm.name}
+                  onChange={(e) => setRoleForm({ ...roleForm, name: e.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Description &amp; Scope</label>
+                <textarea 
+                  rows={3}
+                  placeholder="Describe the operational responsibilities and access boundaries for this role..."
+                  value={roleForm.description}
+                  onChange={(e) => setRoleForm({ ...roleForm, description: e.target.value })}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3">
+              <button 
+                onClick={() => setShowRoleModal(false)}
+                className="px-5 py-2 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-100 font-medium"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveRole}
+                className="bg-indigo-600 text-white px-6 py-2 rounded-xl hover:bg-indigo-700 shadow-md font-bold"
+              >
+                Create Role
               </button>
             </div>
           </div>

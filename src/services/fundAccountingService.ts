@@ -169,20 +169,29 @@ export class FundAccountingService {
     return response.success ? response.data : null;
   }
 
-  static async postDonationToGL(donation: Donation): Promise<boolean> {
-    const entry = await this.postDonationToLedger(donation);
-    if (entry) {
-      await ApiService.update('donations', donation.id, { is_posted: true });
-      return true;
+  static async postDonationToGL(donation: Donation): Promise<{ success: boolean; error?: string }> {
+    try {
+      const entry = await this.postDonationToLedger(donation);
+      if (entry) {
+        await ApiService.update('donations', donation.id, { is_posted: true });
+        return { success: true };
+      }
+      return { success: false, error: 'Could not create journal entry. Please verify Chart of Accounts.' };
+    } catch (error: any) {
+      console.error('Error in postDonationToGL:', error);
+      return { success: false, error: error.message || 'Failed to post donation to General Ledger.' };
     }
-    return false;
   }
 
   static async updateDonation(id: string, donation: Partial<Donation>): Promise<boolean> {
     const response = await ApiService.update<Donation>('donations', id, donation);
     if (response.success && response.data && response.data.is_posted) {
       // Re-post updated donation details to Ledger if it was already posted
-      await this.postDonationToLedger(response.data);
+      try {
+        await this.postDonationToLedger(response.data);
+      } catch (err) {
+        console.error('Failed to re-post updated donation to ledger:', err);
+      }
       return true;
     }
     return response.success;
@@ -195,19 +204,10 @@ export class FundAccountingService {
 
   private static async postDonationToLedger(donation: Donation): Promise<any> {
     const accounts = await AccountingService.getAccounts();
-    const flattenAll = (accs: any[]): any[] => {
-      return accs.reduce((prev, curr) => {
-        return prev.concat(curr).concat(curr.children ? flattenAll(curr.children) : []);
-      }, []);
-    };
-    const allFlatAccounts = flattenAll(accounts);
+    const allFlatAccounts = AccountingService.flattenAccounts(accounts);
     const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
 
-    // Asset Accounts: 1110 (Cash), 1111 (Bank/Mpesa), 1150 (Restricted Cash)
-    const cashAccount = findAccount('1110') || allFlatAccounts.find(a => a.account_type === 'asset' && (a.code.startsWith('11') || a.code.startsWith('10')));
-    const mpesaAccount = findAccount('1111') || cashAccount;
-
-    // Revenue Account Selection: specific NGO revenue codes (4210 Unrestricted, 4220 Temp Restricted, 4240 Child Sponsorship, 4200 Donation Revenue)
+    // Revenue Account Selection: specific NGO revenue codes or general revenue fallbacks
     let donationRevenueAccount = null;
     if (donation.restricted_to_child_id) {
       donationRevenueAccount = findAccount('4240') || findAccount('4220') || findAccount('4200');
@@ -218,15 +218,22 @@ export class FundAccountingService {
     }
 
     if (!donationRevenueAccount) {
-      donationRevenueAccount = findAccount('4200') || allFlatAccounts.find(a => a.account_type === 'revenue');
+      donationRevenueAccount = findAccount('4200') || 
+        findAccount('4000') || 
+        findAccount('4100') || 
+        findAccount('4300') || 
+        findAccount('4400') ||
+        allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'revenue' || a.account_type?.toLowerCase() === 'income' || a.code?.startsWith('4'));
     }
 
     if (!donationRevenueAccount) {
-      console.error('Revenue account not found for donation GL posting.');
-      return;
+      throw new Error('No Revenue account found in Chart of Accounts. Please create a Revenue account (e.g. Code 4200 Donation Revenue).');
     }
 
-    // Pick asset account to debit based on payment_account_id or payment_method
+    // Asset Account Selection (Cash / Bank)
+    const cashAccount = findAccount('1110') || findAccount('1000') || allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'asset' && (a.code?.startsWith('11') || a.code?.startsWith('10')));
+    const mpesaAccount = findAccount('1111') || cashAccount;
+
     let debitAccount = null;
     if (donation.payment_account_id) {
       debitAccount = allFlatAccounts.find(a => a.id === donation.payment_account_id);
@@ -239,12 +246,11 @@ export class FundAccountingService {
       }
     }
     if (!debitAccount) {
-      debitAccount = allFlatAccounts.find(a => a.account_type === 'asset');
+      debitAccount = allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'asset' || a.code?.startsWith('1'));
     }
 
     if (!debitAccount) {
-      console.error('Cash / Bank asset account not found for donation GL posting.');
-      return;
+      throw new Error('No Cash or Bank asset account found in Chart of Accounts. Please create an Asset account (e.g. Code 1110 Cash or 1111 Bank).');
     }
 
     // Build human-readable donor label & restriction note
@@ -257,7 +263,7 @@ export class FundAccountingService {
 
     const amt = Number(donation.amount || 0);
 
-    return await AccountingService.createJournalEntry({
+    const entry = await AccountingService.createJournalEntry({
       entry_date: donation.donation_date ? new Date(donation.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       description: `Donation: ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
@@ -285,6 +291,12 @@ export class FundAccountingService {
         }
       ]
     });
+
+    if (!entry) {
+      throw new Error('Journal Entry creation returned null. Check backend server logs or database constraints.');
+    }
+
+    return entry;
   }
 
   // Internal Transfers & Loans

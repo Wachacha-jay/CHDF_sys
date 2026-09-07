@@ -171,15 +171,15 @@ const Donations: React.FC = () => {
   const handlePostToGL = async (d: any) => {
     try {
       setLoading(true);
-      const ok = await FundAccountingService.postDonationToGL(d);
-      if (ok) {
+      const res = await FundAccountingService.postDonationToGL(d);
+      if (res.success) {
         toast.success(`Donation of KES ${Number(d.amount).toLocaleString()} posted to General Ledger!`);
         if (viewingDonation?.id === d.id) {
           setViewingDonation({ ...viewingDonation, is_posted: true });
         }
         loadData();
       } else {
-        toast.error('Failed to post donation to General Ledger. Please verify G/L setup.');
+        toast.error(res.error || 'Failed to post donation to General Ledger. Please verify G/L setup.');
       }
     } catch (error: any) {
       toast.error('Error posting to G/L: ' + (error.message || 'Unknown error'));
