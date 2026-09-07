@@ -238,7 +238,7 @@ export class AccountingService {
         entry_number: entryNumber,
         entry_date: entryData.entry_date,
         description: entryData.description,
-        reference: entryData.reference,
+        reference: entryData.reference || null,
         total_debit: totalDebits,
         total_credit: totalCredits,
         is_posted: entryData.is_posted ? true : false,
@@ -246,7 +246,7 @@ export class AccountingService {
       });
 
       if (!entryResponse.success || !entryResponse.data) {
-        throw new Error('Failed to create journal entry');
+        throw new Error(entryResponse.error || 'Failed to create journal entry in backend database');
       }
 
       const entry = entryResponse.data;
@@ -269,10 +269,11 @@ export class AccountingService {
         }
       }
 
-      return await this.getJournalEntryById(entry.id);
-    } catch (error) {
+      const reFetched = await this.getJournalEntryById(entry.id);
+      return reFetched || entry;
+    } catch (error: any) {
       console.error('Error creating journal entry:', error);
-      return null;
+      throw error;
     }
   }
 

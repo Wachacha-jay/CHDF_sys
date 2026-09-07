@@ -215,41 +215,36 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       try {
         await connection.beginTransaction();
 
-        // Ensure entry_number exists
-        if (!keys.includes('entry_number')) {
-          keys.push('entry_number');
-          values.push(`JNL${Date.now()}${Math.floor(Math.random() * 1000)}`);
-        }
+        // Build clean insert payload
+        const entryPayload: Record<string, any> = {
+          id: req.body.id || newId,
+          entry_number: req.body.entry_number || `JNL${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          entry_date: req.body.entry_date || new Date().toISOString().split('T')[0],
+          description: req.body.description || 'Journal Entry',
+          reference: req.body.reference || null,
+          total_debit: req.body.total_debit || 0,
+          total_credit: req.body.total_credit || 0,
+          is_posted: req.body.is_posted ? 1 : 0
+        };
 
-        // Respect provided is_posted flag if present
-        if (!keys.includes('is_posted')) {
-          keys.push('is_posted');
-          values.push(req.body.is_posted ? 1 : 0);
-        }
-
-        // Remove 'lines' from insert payload if present
-        const lineIndex = keys.indexOf('lines');
-        if (lineIndex !== -1) {
-          keys.splice(lineIndex, 1);
-          values.splice(lineIndex, 1);
-        }
-
-        const placeholders = keys.map(() => '?').join(', ');
-        const insertQuery = `INSERT INTO journal_entries (${keys.join(', ')}) VALUES (${placeholders})`;
-        await connection.query(insertQuery, values);
+        const entryKeys = Object.keys(entryPayload);
+        const entryValues = Object.values(entryPayload).map(v => v === undefined ? null : v);
+        const placeholders = entryKeys.map(() => '?').join(', ');
+        const insertQuery = `INSERT INTO journal_entries (${entryKeys.join(', ')}) VALUES (${placeholders})`;
+        await connection.query(insertQuery, entryValues);
 
         // Insert lines
         const lines = req.body.lines;
         for (const line of lines) {
-          const lineId = crypto.randomUUID();
+          const lineId = line.id || crypto.randomUUID();
           const lineKeys = [
             'id', 'journal_entry_id', 'account_id', 'description', 
             'debit_amount', 'credit_amount', 'department_id', 
             'child_id', 'donor_id', 'fund_id', 'sponsor_id'
           ];
           const lineValues = [
-            lineId, newId, line.account_id, line.description || null, 
-            line.debit_amount || 0, line.credit_amount || 0,
+            lineId, entryPayload.id, line.account_id, line.description || null, 
+            Number(line.debit_amount || 0), Number(line.credit_amount || 0),
             line.department_id || null, line.child_id || null, 
             line.donor_id || null, line.fund_id || null, line.sponsor_id || null
           ];
@@ -260,17 +255,17 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
 
         await connection.commit();
 
-        const [entryRows]: any = await connection.query(`SELECT * FROM journal_entries WHERE id = ?`, [newId]);
-        const [linesRows]: any = await connection.query(`SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?`, [newId]);
+        const [entryRows]: any = await connection.query(`SELECT * FROM journal_entries WHERE id = ?`, [entryPayload.id]);
+        const [linesRows]: any = await connection.query(`SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?`, [entryPayload.id]);
 
-        const result = entryRows[0];
-        result.lines = linesRows;
+        const result = entryRows[0] || entryPayload;
+        result.lines = linesRows || [];
 
         res.json({ success: true, data: result });
       } catch (error: any) {
         await connection.rollback();
         console.error(`Error inserting journal entry transactionally:`, error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: error.message || 'Database error creating journal entry' });
       } finally {
         connection.release();
       }
