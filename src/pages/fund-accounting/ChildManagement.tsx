@@ -338,25 +338,10 @@ const ChildManagement: React.FC = () => {
     try {
       setPaymentSubmitting(true);
 
-      const findAccount = (code: string) => {
-        const flatten = (accs: any[]): any[] => {
-          return accs.reduce((prev, curr) => {
-            return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-          }, []);
-        };
-        const flatList = flatten(accounts);
-        return flatList.find(a => a.code === code);
-      };
+      const allFlatAccounts = AccountingService.flattenAccounts(accounts);
+      const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
 
-      const flattenAll = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flattenAll(curr.children) : []);
-        }, []);
-      };
-
-      const allFlatAccounts = flattenAll(accounts);
-
-      const cashAccount = findAccount('1110') || allFlatAccounts.find(a => a.account_type === 'asset' && (a.code.startsWith('11') || a.code.startsWith('10')));
+      const cashAccount = findAccount('1110') || findAccount('1111') || allFlatAccounts.find(a => a.account_type === 'asset');
       const mpesaAccount = findAccount('1111') || cashAccount;
       const restrictedCashAccount = findAccount('1150') || mpesaAccount || cashAccount;
       const revenueAccount = findAccount('4300') || findAccount('4400') || findAccount('4240') || findAccount('4200') || allFlatAccounts.find(a => a.account_type === 'revenue');

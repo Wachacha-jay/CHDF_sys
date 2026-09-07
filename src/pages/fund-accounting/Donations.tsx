@@ -76,6 +76,7 @@ const Donations: React.FC = () => {
   const openRecordModal = () => {
     setEditingDonationId(null);
     const bankAccounts = accounts.filter(a => a.account_type === 'asset');
+    const defaultDonor = donors.length > 0 ? donors[0].id : '';
     setFormData({
       donation_date: new Date().toISOString().split('T')[0],
       amount: 0,
@@ -83,7 +84,7 @@ const Donations: React.FC = () => {
       payment_account_id: bankAccounts.length > 0 ? bankAccounts[0].id : '',
       is_anonymous: false
     });
-    setDimensions({});
+    setDimensions({ donor_id: defaultDonor });
     setShowModal(true);
   };
 
@@ -121,15 +122,21 @@ const Donations: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.amount || formData.amount <= 0 || !dimensions.donor_id) {
-      toast.error('Please enter amount and select a donor');
+    if (!formData.amount || formData.amount <= 0) {
+      toast.error('Please enter a valid donation amount');
+      return;
+    }
+
+    const targetDonorId = dimensions.donor_id || (donors.length > 0 ? donors[0].id : null);
+    if (!targetDonorId) {
+      toast.error('Please select or add a donor first');
       return;
     }
 
     const payload = {
       ...formData,
       payment_account_id: formData.payment_account_id || undefined,
-      donor_id: dimensions.donor_id,
+      donor_id: targetDonorId,
       fund_id: dimensions.fund_id || null,
       restricted_to_child_id: dimensions.child_id || null
     };
