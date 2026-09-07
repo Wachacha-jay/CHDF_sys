@@ -8,7 +8,7 @@ import { useSettingsContext } from '../../contexts/SettingsContext';
 import { printPaymentReceipt, ReceiptData } from '../../utils/receiptUtils';
 import { 
   Plus, HandCoins, Calendar, History, Receipt, 
-  Eye, Pencil, Trash2, Printer, CheckCircle, Clock, Send, AlertCircle, X, Building2 
+  Eye, Pencil, Trash2, Printer, CheckCircle, Clock, Send, AlertCircle, X, Building2, Shield 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -359,13 +359,13 @@ const Donations: React.FC = () => {
                 const isPosted = !!d.is_posted;
 
                 return (
-                  <tr key={d.id} className="hover:bg-gray-50/50 transition-colors text-sm">
+                  <tr key={d.id || Math.random()} className="hover:bg-gray-50/50 transition-colors text-sm">
                     <td className="px-6 py-4">
                       <div className="font-mono text-xs font-bold text-gray-700">
-                        {d.reference_number || `DON-${d.id.substring(0, 8).toUpperCase()}`}
+                        {d.reference_number || (d.id ? `DON-${d.id.substring(0, 8).toUpperCase()}` : 'DON-NEW')}
                       </div>
                       <div className="text-xs text-gray-400 mt-0.5">
-                        {new Date(d.donation_date).toLocaleDateString()}
+                        {d.donation_date ? new Date(d.donation_date).toLocaleDateString() : 'N/A'}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -378,7 +378,7 @@ const Donations: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs font-semibold text-gray-800">
-                        {bankObj ? `${bankObj.code} - ${bankObj.name}` : (d.payment_account_id ? `Account #${d.payment_account_id.substring(0, 6)}` : 'Default Cash/Bank Account')}
+                        {bankObj ? `${bankObj.code} - ${bankObj.name}` : (d.payment_account_id ? `Account #${String(d.payment_account_id).substring(0, 6)}` : 'Default Cash/Bank Account')}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -474,7 +474,7 @@ const Donations: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">Donation Details</h2>
-                  <p className="text-xs text-gray-500">Ref: {viewingDonation.reference_number || `DON-${viewingDonation.id.slice(0, 8).toUpperCase()}`}</p>
+                  <p className="text-xs text-gray-500">Ref: {viewingDonation.reference_number || (viewingDonation.id ? `DON-${viewingDonation.id.slice(0, 8).toUpperCase()}` : 'DON-NEW')}</p>
                 </div>
               </div>
               <button onClick={() => setViewingDonation(null)} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">&times;</button>
