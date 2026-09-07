@@ -215,10 +215,32 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       try {
         await connection.beginTransaction();
 
+        let entryNumber = req.body.entry_number || `JNL${Date.now()}${Math.floor(Math.random() * 1000)}`;
+        
+        // Ensure entry_number is unique in DB before insert
+        const [existingNumberRows]: any = await connection.query(`SELECT id FROM journal_entries WHERE entry_number = ?`, [entryNumber]);
+        if (existingNumberRows && existingNumberRows.length > 0) {
+          const prefix = `JE${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+          const [maxRows]: any = await connection.query(`SELECT entry_number FROM journal_entries WHERE entry_number LIKE ? ORDER BY id DESC LIMIT 10`, [`${prefix}%`]);
+          let maxSuffix = 0;
+          if (maxRows && maxRows.length > 0) {
+            for (const r of maxRows) {
+              const numPart = parseInt(r.entry_number.replace(prefix, ''), 10);
+              if (!isNaN(numPart) && numPart > maxSuffix) maxSuffix = numPart;
+            }
+          }
+          entryNumber = `${prefix}${String(maxSuffix + 1).padStart(4, '0')}`;
+          // Final fallback
+          const [checkAgain]: any = await connection.query(`SELECT id FROM journal_entries WHERE entry_number = ?`, [entryNumber]);
+          if (checkAgain && checkAgain.length > 0) {
+            entryNumber = `${prefix}${Date.now().toString().slice(-6)}`;
+          }
+        }
+
         // Build clean insert payload
         const entryPayload: Record<string, any> = {
           id: req.body.id || newId,
-          entry_number: req.body.entry_number || `JNL${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          entry_number: entryNumber,
           entry_date: req.body.entry_date || new Date().toISOString().split('T')[0],
           description: req.body.description || 'Journal Entry',
           reference: req.body.reference || null,

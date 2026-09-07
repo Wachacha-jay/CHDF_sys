@@ -258,7 +258,7 @@ const Donations: React.FC = () => {
       <div className="flex flex-wrap justify-between items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Donation Management</h1>
-          <p className="text-gray-500">Record contributions, verify details, and post to General Ledger</p>
+          <p className="text-gray-500">Record contributions, verify details, and post double-entry entries to General Ledger</p>
         </div>
         <div className="flex gap-3">
           <button 
@@ -278,167 +278,188 @@ const Donations: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Donations List */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <History size={18} className="text-indigo-600" />
-              Contributions History ({donations.length})
-            </h3>
+      {/* Top Stats & Protocol Banner */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Stat 1: Total Receipts */}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Receipts</p>
+            <p className="text-2xl font-black text-emerald-600 mt-1">
+              KES {donations.reduce((acc, d) => acc + Number(d.amount || 0), 0).toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">{donations.length} contribution records</p>
           </div>
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left min-w-[850px]">
-              <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="px-6 py-4 font-semibold">Donor / Date</th>
-                  <th className="px-6 py-4 font-semibold">Fund / Restriction</th>
-                  <th className="px-6 py-4 font-semibold">Amount</th>
-                  <th className="px-6 py-4 font-semibold">G/L Status</th>
-                  <th className="px-6 py-4 font-semibold text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {loading ? (
-                  <tr className="animate-pulse">
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-400">Loading history...</td>
-                  </tr>
-                ) : donations.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">No donations recorded yet</td>
-                  </tr>
-                ) : donations.map((d) => {
-                  const donorObj = donors.find(donor => donor.id === d.donor_id);
-                  const fundObj = funds.find(f => f.id === d.fund_id);
-                  const childObj = children.find(c => c.id === d.restricted_to_child_id);
-                  const isPosted = !!d.is_posted;
-
-                  return (
-                    <tr key={d.id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="font-semibold text-gray-900">
-                          {d.is_anonymous ? 'Anonymous Donor' : (donorObj?.name || 'Unknown Donor')}
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {new Date(d.donation_date).toLocaleDateString()} • {d.payment_method ? d.payment_method.toUpperCase() : 'BANK'}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {fundObj && (
-                            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-bold uppercase">
-                              {fundObj.name}
-                            </span>
-                          )}
-                          {childObj && (
-                            <span className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[10px] font-bold uppercase">
-                              Child: {childObj.first_name} {childObj.last_name}
-                            </span>
-                          )}
-                          {!d.fund_id && !d.restricted_to_child_id && (
-                            <span className="px-2 py-0.5 bg-gray-50 text-gray-600 rounded text-[10px] font-bold uppercase">
-                              Unrestricted
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 font-bold text-emerald-600">
-                        KES {Number(d.amount).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4">
-                        {isPosted ? (
-                          <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
-                            <CheckCircle size={13} /> Posted
-                          </span>
-                        ) : (
-                          <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
-                            <Clock size={13} /> Draft (Unposted)
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end items-center gap-1.5">
-                          {!isPosted && (
-                            <button
-                              onClick={() => handlePostToGL(d)}
-                              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm shadow-emerald-100 mr-1"
-                              title="Review & Post to General Ledger"
-                            >
-                              <Send size={13} /> Post to G/L
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setViewingDonation(d)}
-                            className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
-                            title="View Details"
-                          >
-                            <Eye size={16} />
-                          </button>
-                          <button
-                            onClick={() => handlePrintReceipt(d)}
-                            className="p-1.5 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
-                            title="Print Receipt"
-                          >
-                            <Printer size={16} />
-                          </button>
-                          <button
-                            onClick={() => openEditModal(d)}
-                            className="p-1.5 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-lg transition-colors"
-                            title="Edit Donation"
-                          >
-                            <Pencil size={16} />
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm(d)}
-                            className="p-1.5 hover:bg-rose-50 text-gray-400 hover:text-rose-600 rounded-lg transition-colors"
-                            title="Delete / Void"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center font-bold">
+            <HandCoins size={24} />
           </div>
         </div>
 
-        {/* Quick Insights Card */}
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <h3 className="font-bold text-gray-900 mb-4">Funding Insights</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl">
-                <div>
-                  <p className="text-xs text-emerald-600 font-bold uppercase">Total Receipts</p>
-                  <p className="text-lg font-bold text-emerald-700">
-                    KES {donations.reduce((acc, d) => acc + Number(d.amount || 0), 0).toLocaleString()}
-                  </p>
-                </div>
-                <HandCoins className="text-emerald-300" size={32} />
-              </div>
-              
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-gray-400 uppercase">Restricted Allocation</p>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 w-[65%]"></div>
-                </div>
-                <div className="flex justify-between text-[10px] text-gray-500">
-                  <span>Restricted (65%)</span>
-                  <span>Unrestricted (35%)</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-indigo-600 p-6 rounded-2xl shadow-lg shadow-indigo-100 text-white">
-            <h3 className="font-bold mb-2">Controlled G/L Posting</h3>
-            <p className="text-indigo-100 text-sm leading-relaxed">
-              Donations are saved as <strong>Drafts</strong> first. Review the amount, donor, and restriction tags, then click <strong>"Post to G/L"</strong> to generate the double-entry journal posting.
+        {/* Stat 2: Pending G/L Posting */}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pending G/L Drafts</p>
+            <p className="text-2xl font-black text-amber-600 mt-1">
+              {donations.filter(d => !d.is_posted).length} Drafts
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {donations.filter(d => d.is_posted).length} Posted to Ledger
             </p>
           </div>
+          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center font-bold">
+            <Clock size={24} />
+          </div>
+        </div>
+
+        {/* Protocol Banner */}
+        <div className="bg-indigo-600 p-5 rounded-2xl shadow-md text-white flex flex-col justify-center">
+          <h4 className="font-bold text-sm flex items-center gap-1.5 mb-1">
+            <Shield size={16} /> Controlled G/L Workflow
+          </h4>
+          <p className="text-indigo-100 text-xs leading-relaxed">
+            Donations are saved as <strong>Drafts</strong> first. Verify donor & restriction tags, then click <strong>"Post to G/L"</strong> to balance debits & credits.
+          </p>
+        </div>
+      </div>
+
+      {/* Full-Width Contributions History Table */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden w-full">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-bold text-gray-900 flex items-center gap-2">
+            <History size={18} className="text-indigo-600" />
+            Contributions History ({donations.length})
+          </h3>
+        </div>
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left min-w-[950px]">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+              <tr>
+                <th className="px-6 py-4 font-semibold">Ref # / Date</th>
+                <th className="px-6 py-4 font-semibold">Donor Name</th>
+                <th className="px-6 py-4 font-semibold">Deposit Bank Account</th>
+                <th className="px-6 py-4 font-semibold">Fund / Restriction</th>
+                <th className="px-6 py-4 font-semibold">Amount</th>
+                <th className="px-6 py-4 font-semibold">G/L Status</th>
+                <th className="px-6 py-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr className="animate-pulse">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-400">Loading history...</td>
+                </tr>
+              ) : donations.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">No donations recorded yet</td>
+                </tr>
+              ) : donations.map((d) => {
+                const donorObj = donors.find(donor => donor.id === d.donor_id);
+                const fundObj = funds.find(f => f.id === d.fund_id);
+                const childObj = children.find(c => c.id === d.restricted_to_child_id);
+                const bankObj = accounts.find(a => a.id === d.payment_account_id);
+                const isPosted = !!d.is_posted;
+
+                return (
+                  <tr key={d.id} className="hover:bg-gray-50/50 transition-colors text-sm">
+                    <td className="px-6 py-4">
+                      <div className="font-mono text-xs font-bold text-gray-700">
+                        {d.reference_number || `DON-${d.id.substring(0, 8).toUpperCase()}`}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {new Date(d.donation_date).toLocaleDateString()}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-gray-900">
+                        {d.is_anonymous ? 'Anonymous Donor' : (donorObj?.name || 'Unknown Donor')}
+                      </div>
+                      <div className="text-xs text-gray-400 capitalize">
+                        {d.payment_method ? d.payment_method.toUpperCase() : 'BANK'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-xs font-semibold text-gray-800">
+                        {bankObj ? `${bankObj.code} - ${bankObj.name}` : (d.payment_account_id ? `Account #${d.payment_account_id.substring(0, 6)}` : 'Default Cash/Bank Account')}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {fundObj && (
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-bold uppercase">
+                            {fundObj.name}
+                          </span>
+                        )}
+                        {childObj && (
+                          <span className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[10px] font-bold uppercase">
+                            Child: {childObj.first_name} {childObj.last_name}
+                          </span>
+                        )}
+                        {!d.fund_id && !d.restricted_to_child_id && (
+                          <span className="px-2 py-0.5 bg-gray-50 text-gray-600 rounded text-[10px] font-bold uppercase">
+                            Unrestricted
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 font-bold text-emerald-600">
+                      KES {Number(d.amount).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4">
+                      {isPosted ? (
+                        <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                          <CheckCircle size={13} /> Posted
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                          <Clock size={13} /> Draft (Unposted)
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end items-center gap-1.5">
+                        {!isPosted && (
+                          <button
+                            onClick={() => handlePostToGL(d)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm shadow-emerald-100 mr-1"
+                            title="Review & Post to General Ledger"
+                          >
+                            <Send size={13} /> Post to G/L
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setViewingDonation(d)}
+                          className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+                          title="View Details"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        <button
+                          onClick={() => handlePrintReceipt(d)}
+                          className="p-1.5 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+                          title="Print Receipt"
+                        >
+                          <Printer size={16} />
+                        </button>
+                        <button
+                          onClick={() => openEditModal(d)}
+                          className="p-1.5 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-lg transition-colors"
+                          title="Edit Donation"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm(d)}
+                          className="p-1.5 hover:bg-rose-50 text-gray-400 hover:text-rose-600 rounded-lg transition-colors"
+                          title="Delete / Void"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
 

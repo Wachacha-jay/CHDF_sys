@@ -532,19 +532,33 @@ export class AccountingService {
     const today = new Date();
     const year = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, '0');
+    const prefix = `JE${year}${month}`;
     
-    // Get the last entry number for today
-    const entries = await this.getJournalEntries({
-      start_date: today.toISOString().split('T')[0],
-      end_date: today.toISOString().split('T')[0]
-    });
+    // Fetch all journal entries to check existing entry numbers
+    const entries = await this.getJournalEntries();
 
-    const todayEntries = entries.filter(entry => 
-      entry.entry_number.startsWith(`JE${year}${month}`)
-    );
+    let maxSuffix = 0;
+    if (entries && entries.length > 0) {
+      for (const entry of entries) {
+        if (entry.entry_number && entry.entry_number.startsWith(prefix)) {
+          const suffixStr = entry.entry_number.substring(prefix.length);
+          const num = parseInt(suffixStr, 10);
+          if (!isNaN(num) && num > maxSuffix) {
+            maxSuffix = num;
+          }
+        }
+      }
+    }
 
-    const nextNumber = todayEntries.length + 1;
-    return `JE${year}${month}${String(nextNumber).padStart(4, '0')}`;
+    let nextNumber = maxSuffix + 1;
+    let candidate = `${prefix}${String(nextNumber).padStart(4, '0')}`;
+    
+    // If candidate still exists in entries, append timestamp fallback
+    if (entries.some(e => e.entry_number === candidate)) {
+      candidate = `${prefix}${Date.now().toString().slice(-6)}`;
+    }
+
+    return candidate;
   }
 
   private static async getAccountBalances(asOfDate: string): Promise<Map<string, number>> {
