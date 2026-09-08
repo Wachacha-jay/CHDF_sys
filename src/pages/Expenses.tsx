@@ -188,13 +188,18 @@ const Expenses: React.FC = () => {
         return;
       }
 
-      // 1. Fund Balance Validation (Only if fund is restricted)
+      // 1. Fund Balance Validation (Only strictly enforce caps for Restricted Funds)
       if (expense.fund_id) {
-        const currentBalance = await FundAccountingService.getFundBalance(expense.fund_id);
-        if (currentBalance < Number(expense.amount || 0)) {
-          const fundName = funds.find(f => f.id === expense.fund_id)?.name || 'Selected Fund';
-          toast.error(`Insufficient Funds: ${fundName} balance is KES ${currentBalance.toLocaleString()}, but expense amount is KES ${Number(expense.amount).toLocaleString()}`);
-          return;
+        const selectedFund = funds.find(f => f.id === expense.fund_id);
+        const isRestricted = selectedFund && (selectedFund.restriction_type === 'temporarily_restricted' || selectedFund.restriction_type === 'permanently_restricted');
+
+        if (isRestricted) {
+          const currentBalance = await FundAccountingService.getFundBalance(expense.fund_id);
+          if (currentBalance < Number(expense.amount || 0)) {
+            const fundName = selectedFund?.name || 'Restricted Fund';
+            toast.error(`Insufficient Restricted Funds: ${fundName} balance is KES ${currentBalance.toLocaleString()}, but expense amount is KES ${Number(expense.amount).toLocaleString()}`);
+            return;
+          }
         }
       }
 
