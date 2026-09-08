@@ -253,19 +253,48 @@ export class FundAccountingService {
       throw new Error('No Cash or Bank asset account found in Chart of Accounts. Please create an Asset account (e.g. Code 1110 Cash or 1111 Bank).');
     }
 
-    // Build human-readable donor label & restriction note
-    const donorLabel = donation.is_anonymous ? 'Anonymous Donor' : (donation.donor_id ? `Donor #${donation.donor_id}` : 'General Donor');
-    const restrictionNote = donation.restricted_to_child_id
-      ? ` [Child-Restricted: ${donation.restricted_to_child_id}]`
-      : donation.fund_id
-        ? ` [Fund-Restricted]`
-        : ' [Unrestricted]';
+    // Build human-readable donor label & restriction note for General Ledger
+    let donorName = 'General Donor';
+    if (donation.is_anonymous) {
+      donorName = 'Anonymous Donor';
+    } else if (donation.donor_id) {
+      try {
+        const donors = await this.getDonors();
+        const matchedDonor = donors.find(d => d.id === donation.donor_id);
+        if (matchedDonor) donorName = matchedDonor.name;
+      } catch (e) {
+        console.warn('Could not fetch donor name for GL description:', e);
+      }
+    }
+
+    let restrictionNote = ' [Unrestricted]';
+    if (donation.restricted_to_child_id) {
+      try {
+        const childrenList = await this.getChildren();
+        const matchedChild = childrenList.find(c => c.id === donation.restricted_to_child_id);
+        restrictionNote = matchedChild 
+          ? ` [Child: ${matchedChild.first_name} ${matchedChild.last_name}]`
+          : ` [Child-Restricted]`;
+      } catch (e) {
+        restrictionNote = ' [Child-Restricted]';
+      }
+    } else if (donation.fund_id) {
+      try {
+        const fundAccounts = await this.getFundAccounts();
+        const matchedFund = fundAccounts.find(f => f.id === donation.fund_id);
+        restrictionNote = matchedFund 
+          ? ` [Fund: ${matchedFund.name}]` 
+          : ` [Fund-Restricted]`;
+      } catch (e) {
+        restrictionNote = ' [Fund-Restricted]';
+      }
+    }
 
     const amt = Number(donation.amount || 0);
 
     const entry = await AccountingService.createJournalEntry({
       entry_date: donation.donation_date ? new Date(donation.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-      description: `Donation: ${donorLabel}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
+      description: `Donation: ${donorName}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
       is_posted: true,
       lines: [

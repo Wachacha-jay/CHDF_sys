@@ -132,18 +132,19 @@ const Expenses: React.FC = () => {
       setLoading(true);
       let response;
       
+      const payload = {
+        ...expenseData,
+        is_approved: false
+      };
+
       if (selectedExpense) {
-        response = await ApiService.update<Expense>('expenses', selectedExpense.id, expenseData);
+        response = await ApiService.update<Expense>('expenses', selectedExpense.id, payload);
       } else {
-        response = await ApiService.create<Expense>('expenses', expenseData);
+        response = await ApiService.create<Expense>('expenses', payload);
       }
 
       if (response.success && response.data) {
-        const savedExpense = response.data;
-        // Post directly to General Ledger upon saving
-        await DoubleEntryService.postExpense(savedExpense);
-
-        toast.success(selectedExpense ? 'Expense updated & posted to General Ledger' : 'Expense added & posted to General Ledger');
+        toast.success(selectedExpense ? 'Expense updated successfully (Pending Approval)' : 'Expense recorded as Pending (Awaiting Approval)');
         setShowForm(false);
         setSelectedExpense(null);
         loadExpenses();
@@ -182,17 +183,22 @@ const Expenses: React.FC = () => {
       const expense = expenses.find(e => e.id === expenseId);
       if (!expense) return;
 
-      // 1. Fund Validation (Fundamental to Fund Accounting)
+      if (expense.is_approved) {
+        toast.error('This expense is already approved and posted to the General Ledger.');
+        return;
+      }
+
+      // 1. Fund Balance Validation (Only if fund is restricted)
       if (expense.fund_id) {
         const currentBalance = await FundAccountingService.getFundBalance(expense.fund_id);
-        if (currentBalance < Number(expense.amount)) {
-          const fundName = funds.find(f => f.id === expense.fund_id)?.name || 'selected fund';
-          toast.error(`Insufficient Funds: ${fundName} balance is KES ${currentBalance.toLocaleString()}, but expense is KES ${Number(expense.amount).toLocaleString()}`);
+        if (currentBalance < Number(expense.amount || 0)) {
+          const fundName = funds.find(f => f.id === expense.fund_id)?.name || 'Selected Fund';
+          toast.error(`Insufficient Funds: ${fundName} balance is KES ${currentBalance.toLocaleString()}, but expense amount is KES ${Number(expense.amount).toLocaleString()}`);
           return;
         }
       }
 
-      // 2. Post to Ledger via DoubleEntryService
+      // 2. Post to General Ledger via DoubleEntryService
       const journalEntry = await DoubleEntryService.postExpense(expense);
 
       if (!journalEntry) {
@@ -200,21 +206,21 @@ const Expenses: React.FC = () => {
         return;
       }
 
-      // 3. Update Expense Status
+      // 3. Update Expense Status to Approved
       const response = await ApiService.update('expenses', expenseId, { 
         is_approved: true,
         approved_by: user?.id 
       });
 
       if (response.success) {
-        toast.success('Expense Approved: Posted to Ledger & Fund dimensions updated');
+        toast.success('Expense Approved & Posted to General Ledger!');
         loadExpenses();
       } else {
-        toast.error(response.error || 'Failed to update expense status');
+        toast.error(response.error || 'Failed to update expense approval status');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in approval workflow:', error);
-      toast.error('Financial approval workflow error');
+      toast.error(error.message || 'Financial approval workflow error');
     } finally {
       setLoading(false);
     }
