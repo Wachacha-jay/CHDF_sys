@@ -231,7 +231,7 @@ export class AccountingService {
       }
 
       // Generate entry number
-      const entryNumber = await this.generateEntryNumber();
+      const entryNumber = await this.generateEntryNumber(entryData.entry_date);
 
       // Create journal entry (allow caller to request posted state)
       const entryResponse = await ApiService.create<JournalEntry>('journal_entries', {
@@ -528,10 +528,10 @@ export class AccountingService {
   }
 
   // Helper methods
-  private static async generateEntryNumber(): Promise<string> {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
+  private static async generateEntryNumber(entryDate?: string): Promise<string> {
+    const ref = entryDate ? new Date(entryDate) : new Date();
+    const year = ref.getFullYear();
+    const month = String(ref.getMonth() + 1).padStart(2, '0');
     const prefix = `JE${year}${month}`;
     
     // Fetch all journal entries to check existing entry numbers

@@ -31,6 +31,7 @@ const PayrollDetailsModal: React.FC<PayrollDetailsModalProps> = ({
     Number(payrollRun.nssf_deduction || 0) +
     Number(payrollRun.nhif_deduction || 0) +
     Number(payrollRun.housing_levy_deduction || 0) +
+    Number(payrollRun.sacco_welfare_deduction || 0) +
     Number(payrollRun.other_deductions || 0) +
     deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
 
@@ -223,6 +224,12 @@ const PayrollDetailsModal: React.FC<PayrollDetailsModalProps> = ({
                     <td className="py-2 px-3 border border-gray-100 text-gray-700">Housing Levy</td>
                     <td className="py-2 px-3 border border-gray-100 text-right text-red-600 font-medium">{fmt(payrollRun.housing_levy_deduction)}</td>
                   </tr>
+                  {Number(payrollRun.sacco_welfare_deduction) > 0 && (
+                    <tr>
+                      <td className="py-2 px-3 border border-gray-100 text-gray-700">Sacco & Staff Welfare</td>
+                      <td className="py-2 px-3 border border-gray-100 text-right text-red-600 font-medium">{fmt(payrollRun.sacco_welfare_deduction)}</td>
+                    </tr>
+                  )}
                   {Number(payrollRun.other_deductions) > 0 && (
                     <tr>
                       <td className="py-2 px-3 border border-gray-100 text-gray-700">Other Deductions</td>

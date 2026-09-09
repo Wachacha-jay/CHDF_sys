@@ -335,44 +335,80 @@ export class FundAccountingService {
     return response.success ? response.data : null;
   }
 
-  static async approveTransfer(transferId: string, approverId: string): Promise<boolean> {
+  static async approveTransfer(transferId: string, approverId: string): Promise<{ success: boolean; error?: string }> {
     const response = await ApiService.update<InternalTransfer>('internal_transfers', transferId, {
         status: 'approved',
         approved_by: approverId
     });
-    
-    if (response.success && response.data) {
-        await this.postTransferToLedger(response.data);
-        return true;
+
+    if (!response.success || !response.data) {
+        return { success: false, error: 'Failed to update transfer status.' };
     }
-    return false;
+
+    try {
+        await this.postTransferToLedger(response.data);
+        return { success: true };
+    } catch (err: any) {
+        return { success: false, error: err?.message || 'GL posting failed. Transfer status updated but not posted to ledger.' };
+    }
   }
 
   private static async postTransferToLedger(transfer: InternalTransfer): Promise<void> {
-    const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-        const flatten = (accs: any[]): any[] => {
-          return accs.reduce((prev, curr) => {
-            return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-          }, []);
-        };
-        return flatten(accounts).find(a => a.code === code);
+    const [accounts, departments] = await Promise.all([
+        AccountingService.getAccounts(),
+        FundAccountingService.getDepartments()
+    ]);
+
+    const flattenAccounts = (accs: any[]): any[] =>
+        accs.reduce((prev, curr) =>
+            prev.concat(curr).concat(curr.children ? flattenAccounts(curr.children) : [])
+        , []);
+    const flat = flattenAccounts(accounts);
+    const findAccount = (code: string) => flat.find(a => a.code === code);
+
+    // Resolve human-readable department names
+    const deptName = (id: string | undefined) => {
+        if (!id) return 'Unknown';
+        const dept = departments.find(d => d.id === id);
+        return dept ? dept.name : id;
     };
 
-    // 1111 = Bank/M-Pesa (primary liquid account for inter-dept movement)
-    // Fall back to 1110 (Cash) if not found
-    const bankAccount         = findAccount('1111') || findAccount('1110');
-    const interDeptReceivable = findAccount('1300'); // Due From Other Departments
-    const interDeptPayable    = findAccount('2300'); // Due To Other Departments
-    const transferIn          = findAccount('4900'); // Transfer In
-    const transferOut         = findAccount('5900'); // Transfer Out
+    // Primary lookup; fallback to regex-matched accounts if migration 013 hasn't been run
+    const bankAccount =
+        findAccount('1111') || findAccount('1110');
 
-    if (!bankAccount || !interDeptReceivable || !interDeptPayable || !transferIn || !transferOut) {
-        console.error(
-          'Inter-departmental G/L accounts missing. Expected: 1111/1110, 1300, 2300, 4900, 5900.'
+    const interDeptReceivable =
+        findAccount('1300') ||
+        flat.find(a => /receivable|due.from/i.test(a.name) && a.account_type === 'asset');
+
+    const interDeptPayable =
+        findAccount('2300') ||
+        flat.find(a => /payable|due.to/i.test(a.name) && a.account_type === 'liability');
+
+    const transferIn =
+        findAccount('4900') ||
+        flat.find(a => /transfer.in|inter.?dept.+revenue/i.test(a.name));
+
+    const transferOut =
+        findAccount('5900') ||
+        flat.find(a => /transfer.out|inter.?dept.+expense/i.test(a.name));
+
+    const missing: string[] = [];
+    if (!bankAccount)         missing.push('Bank/Cash (1111 or 1110)');
+    if (!interDeptReceivable) missing.push('Inter-Dept Receivable (1300)');
+    if (!interDeptPayable)    missing.push('Inter-Dept Payable (2300)');
+    if (!transferIn)          missing.push('Transfer In (4900)');
+    if (!transferOut)         missing.push('Transfer Out (5900)');
+
+    if (missing.length > 0) {
+        throw new Error(
+            `Required G/L accounts not found: ${missing.join(', ')}. ` +
+            `Run migration 013_inter_departmental_accounting.sql to seed them.`
         );
-        return;
     }
+
+    const fromName = deptName(transfer.from_department_id);
+    const toName   = deptName(transfer.to_department_id);
 
     const lines: any[] = [];
 
@@ -380,20 +416,17 @@ export class FundAccountingService {
     const type = transfer.transfer_type || 'direct_transfer';
 
     if (type === 'direct_transfer') {
-        // DR: Transfer Out (expense-side) in Source Dept
-        // CR: Transfer In  (revenue-side) in Destination Dept
-        // These two clearing accounts net to zero at the org level.
         lines.push(
             {
                 account_id: transferOut.id,
-                description: `Direct Transfer Out → ${transfer.to_department_id}`,
+                description: `Direct Transfer Out → ${toName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
                 account_id: transferIn.id,
-                description: `Direct Transfer In ← ${transfer.from_department_id}`,
+                description: `Direct Transfer In ← ${fromName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id
@@ -404,14 +437,14 @@ export class FundAccountingService {
         lines.push(
             {
                 account_id: interDeptReceivable.id,
-                description: `Loan Receivable from Dept ${transfer.to_department_id}`,
+                description: `Loan Receivable from ${toName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
                 account_id: bankAccount.id,
-                description: `Funds disbursed to Dept ${transfer.to_department_id}`,
+                description: `Funds disbursed to ${toName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
@@ -421,14 +454,14 @@ export class FundAccountingService {
         lines.push(
             {
                 account_id: bankAccount.id,
-                description: `Loan received from Dept ${transfer.from_department_id}`,
+                description: `Loan received from ${fromName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.to_department_id
             },
             {
                 account_id: interDeptPayable.id,
-                description: `Loan Payable to Dept ${transfer.from_department_id}`,
+                description: `Loan Payable to ${fromName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id
@@ -439,14 +472,14 @@ export class FundAccountingService {
         lines.push(
             {
                 account_id: interDeptPayable.id,
-                description: `Loan Repayment to Dept ${transfer.to_department_id}`,
+                description: `Loan Repayment to ${toName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.from_department_id
             },
             {
                 account_id: bankAccount.id,
-                description: `Repayment funds sent to Dept ${transfer.to_department_id}`,
+                description: `Repayment funds sent to ${toName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
@@ -456,14 +489,14 @@ export class FundAccountingService {
         lines.push(
             {
                 account_id: bankAccount.id,
-                description: `Repayment received from Dept ${transfer.from_department_id}`,
+                description: `Repayment received from ${fromName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.to_department_id
             },
             {
                 account_id: interDeptReceivable.id,
-                description: `Loan Receivable settled from Dept ${transfer.from_department_id}`,
+                description: `Loan Receivable settled from ${fromName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.to_department_id
@@ -473,7 +506,7 @@ export class FundAccountingService {
 
     await AccountingService.createJournalEntry({
       entry_date: transfer.transfer_date,
-      description: `Interdepartmental ${type.replace('_', ' ')}: ${transfer.description}`,
+      description: `Interdepartmental ${type.replace(/_/g, ' ')} — ${fromName} → ${toName}: ${transfer.description}`,
       is_posted: true,
       lines: lines
     });

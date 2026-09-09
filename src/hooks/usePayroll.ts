@@ -147,18 +147,29 @@ export const usePayroll = () => {
     }
   }, [loadPayrollRuns, currentPeriod]);
 
-  const payPayrollRun = useCallback(async (runId: string) => {
+  const payPayrollRun = useCallback(async (
+    runId: string,
+    paymentData?: {
+      payment_account_id: string;
+      payment_date?: string;
+      payment_reference?: string;
+      notes?: string;
+    }
+  ) => {
     try {
       setLoading(true);
-      const result = await PayrollService.payPayrollRun(runId);
+      const result = await PayrollService.payPayrollRun(runId, paymentData);
       if (result.success) {
         toast.success('Run marked as paid and journal entry posted ✓');
         await loadPayrollRuns(currentPeriod?.id);
+        return true;
       } else {
         toast.error(result.error || 'Failed to mark run as paid');
+        return false;
       }
     } catch {
       toast.error('Failed to process payroll run');
+      return false;
     } finally {
       setLoading(false);
     }

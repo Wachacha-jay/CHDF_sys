@@ -31,6 +31,14 @@ const JournalEntryModal: React.FC<JournalEntryModalProps> = ({ isOpen, onClose, 
   useEffect(() => {
     if (isOpen) {
       fetchAccounts();
+      // Reset form to a clean state each time the modal opens
+      setEntryDate(new Date().toISOString().split('T')[0]);
+      setDescription('');
+      setReference('');
+      setLines([
+        { account_id: '', description: '', debit_amount: 0, credit_amount: 0 },
+        { account_id: '', description: '', debit_amount: 0, credit_amount: 0 }
+      ]);
     }
   }, [isOpen]);
 

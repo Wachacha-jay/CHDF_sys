@@ -117,9 +117,17 @@ export class PayrollService {
     }
   }
 
-  static async payPayrollRun(id: string): Promise<{ success: boolean; error?: string }> {
+  static async payPayrollRun(
+    id: string,
+    paymentData?: {
+      payment_account_id: string;
+      payment_date?: string;
+      payment_reference?: string;
+      notes?: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      await apiClient.put<any>(`/payroll/runs/${id}/pay`, {});
+      await apiClient.put<any>(`/payroll/runs/${id}/pay`, paymentData || {});
       return { success: true };
     } catch (error: any) {
       const msg = error?.response?.data?.error || 'Failed to mark as paid';
@@ -152,16 +160,36 @@ export class PayrollService {
     otherDeductions: number = 0,
     settings: PayrollSettings
   ) {
-    const overtimePay = overtimeHours * (basicSalary / 160) * settings.overtime_rate;
-    const holidayPay = holidayHours * (basicSalary / 160) * settings.holiday_pay_rate;
+    const overtimePay = overtimeHours * (basicSalary / 160) * (settings.overtime_rate || 1.5);
+    const holidayPay = holidayHours * (basicSalary / 160) * (settings.holiday_pay_rate || 2.0);
     const grossPay = basicSalary + overtimePay + holidayPay + allowances + bonuses;
-    const taxDeduction = grossPay * (settings.tax_deduction_rate / 100);
-    const nhifDeduction = grossPay * (settings.nhif_rate / 100);
-    const nssfDeduction = grossPay * (settings.nssf_rate / 100);
-    const housingLevyDeduction = grossPay * ((settings.housing_levy_rate || 0) / 100);
-    const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevyDeduction - otherDeductions;
 
-    return { overtimePay, holidayPay, grossPay, taxDeduction, nhifDeduction, nssfDeduction, housingLevyDeduction, netPay };
+    const taxRate = settings.tax_enabled !== false && settings.tax_enabled !== 0 ? (settings.tax_deduction_rate || 0) : 0;
+    const nhifRate = settings.nhif_enabled !== false && settings.nhif_enabled !== 0 ? (settings.nhif_rate || 0) : 0;
+    const nssfRate = settings.nssf_enabled !== false && settings.nssf_enabled !== 0 ? (settings.nssf_rate || 0) : 0;
+    const housingLevyRate = settings.housing_levy_enabled !== false && settings.housing_levy_enabled !== 0 ? (settings.housing_levy_rate || 0) : 0;
+    const saccoRate = settings.sacco_welfare_enabled ? (settings.sacco_welfare_rate || 0) : 0;
+    const saccoAmount = settings.sacco_welfare_enabled ? (settings.sacco_welfare_amount || 0) : 0;
+
+    const taxDeduction = (grossPay * taxRate) / 100;
+    const nhifDeduction = (grossPay * nhifRate) / 100;
+    const nssfDeduction = (grossPay * nssfRate) / 100;
+    const housingLevyDeduction = (grossPay * housingLevyRate) / 100;
+    const saccoWelfareDeduction = saccoAmount > 0 ? saccoAmount : (grossPay * saccoRate) / 100;
+
+    const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevyDeduction - saccoWelfareDeduction - otherDeductions;
+
+    return {
+      overtimePay,
+      holidayPay,
+      grossPay,
+      taxDeduction,
+      nhifDeduction,
+      nssfDeduction,
+      housingLevyDeduction,
+      saccoWelfareDeduction,
+      netPay
+    };
   }
 
   // ────────────────────────────────────────────────

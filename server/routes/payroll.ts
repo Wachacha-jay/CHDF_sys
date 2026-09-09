@@ -6,38 +6,133 @@ import crypto from 'crypto';
 const router = Router();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPER: fetch payroll settings (with defaults)
+// SELF-HEALING DATABASE SCHEMA INITIALIZER
+// ─────────────────────────────────────────────────────────────────────────────
+let schemaEnsured = false;
+async function ensurePayrollSchema() {
+  if (schemaEnsured) return;
+  try {
+    // 1. Ensure Sacco / Welfare Payable GL account (2126) exists
+    await pool.query(`
+      INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) 
+      VALUES (UUID(), '2126', 'Sacco / Welfare Payable', 'liability', 1)
+    `);
+
+    // 2. Ensure payroll_settings columns
+    const [settingsCols]: any = await pool.query('SHOW COLUMNS FROM payroll_settings');
+    const setColNames = new Set(settingsCols.map((c: any) => c.Field));
+    if (!setColNames.has('sacco_welfare_rate')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN sacco_welfare_rate DECIMAL(5,2) DEFAULT 0.00');
+    }
+    if (!setColNames.has('sacco_welfare_amount')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN sacco_welfare_amount DECIMAL(12,2) DEFAULT 0.00');
+    }
+    if (!setColNames.has('tax_enabled')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN tax_enabled TINYINT(1) DEFAULT 1');
+    }
+    if (!setColNames.has('nhif_enabled')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN nhif_enabled TINYINT(1) DEFAULT 1');
+    }
+    if (!setColNames.has('nssf_enabled')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN nssf_enabled TINYINT(1) DEFAULT 1');
+    }
+    if (!setColNames.has('housing_levy_enabled')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN housing_levy_enabled TINYINT(1) DEFAULT 1');
+    }
+    if (!setColNames.has('sacco_welfare_enabled')) {
+      await pool.query('ALTER TABLE payroll_settings ADD COLUMN sacco_welfare_enabled TINYINT(1) DEFAULT 0');
+    }
+
+    // 3. Ensure payroll_runs columns
+    const [runCols]: any = await pool.query('SHOW COLUMNS FROM payroll_runs');
+    const runColNames = new Set(runCols.map((c: any) => c.Field));
+    if (!runColNames.has('sacco_welfare_deduction')) {
+      await pool.query('ALTER TABLE payroll_runs ADD COLUMN sacco_welfare_deduction DECIMAL(12,2) DEFAULT 0.00');
+    }
+    if (!runColNames.has('payment_account_id')) {
+      await pool.query('ALTER TABLE payroll_runs ADD COLUMN payment_account_id CHAR(36) DEFAULT NULL');
+    }
+    if (!runColNames.has('payment_reference')) {
+      await pool.query('ALTER TABLE payroll_runs ADD COLUMN payment_reference VARCHAR(100) DEFAULT NULL');
+    }
+    if (!runColNames.has('payment_journal_entry_id')) {
+      await pool.query('ALTER TABLE payroll_runs ADD COLUMN payment_journal_entry_id CHAR(36) DEFAULT NULL');
+    }
+
+    // 4. Ensure payroll_periods columns
+    const [periodCols]: any = await pool.query('SHOW COLUMNS FROM payroll_periods');
+    const periodColNames = new Set(periodCols.map((c: any) => c.Field));
+    if (!periodColNames.has('total_sacco_welfare')) {
+      await pool.query('ALTER TABLE payroll_periods ADD COLUMN total_sacco_welfare DECIMAL(14,2) DEFAULT 0.00');
+    }
+
+    // 5. Ensure employees columns
+    const [empCols]: any = await pool.query('SHOW COLUMNS FROM employees');
+    const empColNames = new Set(empCols.map((c: any) => c.Field));
+    if (!empColNames.has('department_id')) {
+      await pool.query('ALTER TABLE employees ADD COLUMN department_id CHAR(36) DEFAULT NULL');
+    }
+
+    schemaEnsured = true;
+  } catch (err) {
+    console.error('Error in ensurePayrollSchema:', err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: fetch payroll settings (with defaults & non-mandatory checks)
 // ─────────────────────────────────────────────────────────────────────────────
 async function getSettings() {
+  await ensurePayrollSchema();
   const [rows]: any = await pool.query('SELECT * FROM payroll_settings LIMIT 1');
-  return rows[0] || {
-    overtime_rate: 1.5,
-    holiday_pay_rate: 2.0,
-    tax_deduction_rate: 30.0,
-    nhif_rate: 2.5,
-    nssf_rate: 6.0,
-    housing_levy_rate: 1.5
+  const s = rows[0] || {};
+  return {
+    id: s.id,
+    pay_period: s.pay_period || 'monthly',
+    pay_day: s.pay_day !== undefined ? Number(s.pay_day) : 25,
+    overtime_rate: s.overtime_rate !== undefined ? Number(s.overtime_rate) : 1.5,
+    holiday_pay_rate: s.holiday_pay_rate !== undefined ? Number(s.holiday_pay_rate) : 2.0,
+    tax_deduction_rate: s.tax_deduction_rate !== undefined ? Number(s.tax_deduction_rate) : 30.0,
+    nhif_rate: s.nhif_rate !== undefined ? Number(s.nhif_rate) : 2.5,
+    nssf_rate: s.nssf_rate !== undefined ? Number(s.nssf_rate) : 6.0,
+    housing_levy_rate: s.housing_levy_rate !== undefined ? Number(s.housing_levy_rate) : 1.5,
+    sacco_welfare_rate: s.sacco_welfare_rate !== undefined ? Number(s.sacco_welfare_rate) : 0.0,
+    sacco_welfare_amount: s.sacco_welfare_amount !== undefined ? Number(s.sacco_welfare_amount) : 0.0,
+    tax_enabled: s.tax_enabled !== undefined ? Boolean(s.tax_enabled) : true,
+    nhif_enabled: s.nhif_enabled !== undefined ? Boolean(s.nhif_enabled) : true,
+    nssf_enabled: s.nssf_enabled !== undefined ? Boolean(s.nssf_enabled) : true,
+    housing_levy_enabled: s.housing_levy_enabled !== undefined ? Boolean(s.housing_levy_enabled) : true,
+    sacco_welfare_enabled: s.sacco_welfare_enabled !== undefined ? Boolean(s.sacco_welfare_enabled) : false,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPER: create a payroll journal entry in the accounts system
+// HELPER: Post Payroll Accrual Journal Entry
+// Debit: Salary Expense (5210) [Gross Pay]
+// Credit: Net Salary Payable (2125) [Net Pay]
+// Credit: PAYE Payable (2121) [Tax]
+// Credit: NSSF Payable (2122) [NSSF]
+// Credit: NHIF/SHIF Payable (2123) [NHIF]
+// Credit: Housing Levy Payable (2124) [Housing Levy]
+// Credit: Sacco / Welfare Payable (2126) [Sacco / Welfare]
+// Credit: Accrued Deductions / Other (2120) [Other Deductions]
 // ─────────────────────────────────────────────────────────────────────────────
-async function postPayrollJournalEntry(
+async function postPayrollAccrualJournalEntry(
   connection: any,
-  periodId: string,
   periodName: string,
   payDate: string,
-  totalGross: number,
-  totalNet: number,
-  totalTax: number,
-  totalNSSF: number,
-  totalNHIF: number,
-  totalHousingLevy: number,
-  createdBy: string
+  gross: number,
+  net: number,
+  tax: number,
+  nssf: number,
+  nhif: number,
+  housingLevy: number,
+  saccoWelfare: number,
+  otherDeductions: number,
+  createdBy: string,
+  empLabel?: string
 ) {
-  // Find account IDs by code
-  const accountCodes = ['5210', '2125', '2121', '2122', '2123', '2124'];
+  const accountCodes = ['5210', '2125', '2121', '2122', '2123', '2124', '2126', '2120'];
   const [accountRows]: any = await connection.query(
     `SELECT id, code FROM accounts WHERE code IN (${accountCodes.map(() => '?').join(',')})`,
     accountCodes
@@ -54,39 +149,37 @@ async function postPayrollJournalEntry(
   const nssfId = accountMap['2122'];
   const nhifId = accountMap['2123'];
   const housingLevyId = accountMap['2124'];
+  const saccoId = accountMap['2126'];
+  const otherDedId = accountMap['2120'] || netSalaryPayableId;
 
   if (!salaryExpenseId || !netSalaryPayableId) {
-    console.warn('Payroll accounts (5210, 2125) not found — skipping journal entry');
+    console.warn('Essential payroll accounts (5210, 2125) not found — skipping accrual journal entry');
     return null;
   }
 
   const journalId = crypto.randomUUID();
-  const entryNumber = `PAY${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const entryNumber = `PAY-ACC-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000)}`;
+  const desc = empLabel 
+    ? `Payroll Accrual: ${empLabel} - ${periodName}` 
+    : `Payroll Accrual for ${periodName}`;
 
   await connection.query(
     `INSERT INTO journal_entries (id, entry_number, entry_date, description, reference, total_debit, total_credit, is_posted, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-    [
-      journalId,
-      entryNumber,
-      payDate,
-      `Payroll processing for ${periodName}`,
-      periodName,
-      totalGross,
-      totalGross,
-      createdBy
-    ]
+    [journalId, entryNumber, payDate, desc, periodName, gross, gross, createdBy]
   );
 
-  const lines = [
-    { account_id: salaryExpenseId,   description: `Gross Salary - ${periodName}`, debit: totalGross, credit: 0 },
-    { account_id: netSalaryPayableId, description: `Net Salary Payable - ${periodName}`, debit: 0, credit: totalNet },
+  const lines: Array<{ account_id: string; description: string; debit: number; credit: number }> = [
+    { account_id: salaryExpenseId, description: `Gross Salary - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: gross, credit: 0 },
+    { account_id: netSalaryPayableId, description: `Net Salary Payable - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: 0, credit: net },
   ];
 
-  if (totalTax > 0 && payeId)         lines.push({ account_id: payeId,          description: `PAYE - ${periodName}`,         debit: 0, credit: totalTax });
-  if (totalNSSF > 0 && nssfId)        lines.push({ account_id: nssfId,           description: `NSSF - ${periodName}`,         debit: 0, credit: totalNSSF });
-  if (totalNHIF > 0 && nhifId)        lines.push({ account_id: nhifId,           description: `NHIF/SHIF - ${periodName}`,    debit: 0, credit: totalNHIF });
-  if (totalHousingLevy > 0 && housingLevyId) lines.push({ account_id: housingLevyId, description: `Housing Levy - ${periodName}`, debit: 0, credit: totalHousingLevy });
+  if (tax > 0 && payeId) lines.push({ account_id: payeId, description: `PAYE Income Tax - ${periodName}`, debit: 0, credit: tax });
+  if (nssf > 0 && nssfId) lines.push({ account_id: nssfId, description: `NSSF Contribution - ${periodName}`, debit: 0, credit: nssf });
+  if (nhif > 0 && nhifId) lines.push({ account_id: nhifId, description: `NHIF/SHA Contribution - ${periodName}`, debit: 0, credit: nhif });
+  if (housingLevy > 0 && housingLevyId) lines.push({ account_id: housingLevyId, description: `Housing Levy - ${periodName}`, debit: 0, credit: housingLevy });
+  if (saccoWelfare > 0 && saccoId) lines.push({ account_id: saccoId, description: `Sacco & Welfare - ${periodName}`, debit: 0, credit: saccoWelfare });
+  if (otherDeductions > 0 && otherDedId) lines.push({ account_id: otherDedId, description: `Other Payroll Deductions - ${periodName}`, debit: 0, credit: otherDeductions });
 
   for (const line of lines) {
     const lineId = crypto.randomUUID();
@@ -101,18 +194,161 @@ async function postPayrollJournalEntry(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. GET payroll runs with employee info joined
+// HELPER: Post Payroll Disbursement Journal Entry (Individual Payment)
+// Debit: Net Salary Payable (2125) [Net Pay]
+// Credit: Paying Account (e.g., Bank / Cash Asset Account) [Net Pay]
+// ─────────────────────────────────────────────────────────────────────────────
+async function postPayrollDisbursementJournalEntry(
+  connection: any,
+  periodName: string,
+  payDate: string,
+  netPay: number,
+  paymentAccountId: string,
+  reference: string,
+  notes: string,
+  createdBy: string,
+  empLabel: string
+) {
+  // Find Net Salary Payable account (2125)
+  const [netSalaryRows]: any = await connection.query(
+    'SELECT id FROM accounts WHERE code = ? LIMIT 1',
+    ['2125']
+  );
+  if (netSalaryRows.length === 0) {
+    throw new Error('Account 2125 (Net Salary Payable) not found');
+  }
+  const netSalaryPayableId = netSalaryRows[0].id;
+
+  // Verify payment account is valid
+  const [payAccRows]: any = await connection.query(
+    'SELECT id, name, code, account_type FROM accounts WHERE id = ? LIMIT 1',
+    [paymentAccountId]
+  );
+  if (payAccRows.length === 0) {
+    throw new Error('Selected paying account not found');
+  }
+
+  const payAcc = payAccRows[0];
+  const journalId = crypto.randomUUID();
+  const entryNumber = `PAY-DISB-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000)}`;
+  const desc = `Salary payment to ${empLabel} for ${periodName}${notes ? ' - ' + notes : ''}`;
+
+  await connection.query(
+    `INSERT INTO journal_entries (id, entry_number, entry_date, description, reference, total_debit, total_credit, is_posted, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    [journalId, entryNumber, payDate, desc, reference || entryNumber, netPay, netPay, createdBy]
+  );
+
+  // Line 1: Debit Net Salary Payable (clearing the liability)
+  await connection.query(
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
+     VALUES (?, ?, ?, ?, ?, 0)`,
+    [crypto.randomUUID(), journalId, netSalaryPayableId, `Salary disbursement: ${empLabel}`, netPay]
+  );
+
+  // Line 2: Credit Bank / Cash Asset Account (money outflow)
+  await connection.query(
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
+     VALUES (?, ?, ?, ?, 0, ?)`,
+    [crypto.randomUUID(), journalId, paymentAccountId, `Paid from [${payAcc.code}] ${payAcc.name} to ${empLabel}`, netPay]
+  );
+
+  return journalId;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. GET payroll settings
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/settings', authenticate, async (req, res): Promise<void> => {
+  try {
+    const settings = await getSettings();
+    res.json({ success: true, data: settings });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. UPDATE payroll settings (all deduction rates editable & none mandatory)
+// ─────────────────────────────────────────────────────────────────────────────
+router.put('/settings', authenticate, async (req, res): Promise<void> => {
+  try {
+    await ensurePayrollSchema();
+    const {
+      pay_period = 'monthly',
+      pay_day = 25,
+      overtime_rate = 1.5,
+      holiday_pay_rate = 2.0,
+      tax_deduction_rate = 30.0,
+      nhif_rate = 2.5,
+      nssf_rate = 6.0,
+      housing_levy_rate = 1.5,
+      sacco_welfare_rate = 0.0,
+      sacco_welfare_amount = 0.0,
+      tax_enabled = 1,
+      nhif_enabled = 1,
+      nssf_enabled = 1,
+      housing_levy_enabled = 1,
+      sacco_welfare_enabled = 0,
+    } = req.body;
+
+    const [existing]: any = await pool.query('SELECT id FROM payroll_settings LIMIT 1');
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE payroll_settings SET
+          pay_period = ?, pay_day = ?, overtime_rate = ?, holiday_pay_rate = ?,
+          tax_deduction_rate = ?, nhif_rate = ?, nssf_rate = ?, housing_levy_rate = ?,
+          sacco_welfare_rate = ?, sacco_welfare_amount = ?,
+          tax_enabled = ?, nhif_enabled = ?, nssf_enabled = ?, housing_levy_enabled = ?, sacco_welfare_enabled = ?
+         WHERE id = ?`,
+        [
+          pay_period, pay_day, overtime_rate, holiday_pay_rate,
+          tax_deduction_rate, nhif_rate, nssf_rate, housing_levy_rate,
+          sacco_welfare_rate, sacco_welfare_amount,
+          tax_enabled ? 1 : 0, nhif_enabled ? 1 : 0, nssf_enabled ? 1 : 0, housing_levy_enabled ? 1 : 0, sacco_welfare_enabled ? 1 : 0,
+          existing[0].id
+        ]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO payroll_settings (
+          id, pay_period, pay_day, overtime_rate, holiday_pay_rate,
+          tax_deduction_rate, nhif_rate, nssf_rate, housing_levy_rate,
+          sacco_welfare_rate, sacco_welfare_amount,
+          tax_enabled, nhif_enabled, nssf_enabled, housing_levy_enabled, sacco_welfare_enabled
+        ) VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          pay_period, pay_day, overtime_rate, holiday_pay_rate,
+          tax_deduction_rate, nhif_rate, nssf_rate, housing_levy_rate,
+          sacco_welfare_rate, sacco_welfare_amount,
+          tax_enabled ? 1 : 0, nhif_enabled ? 1 : 0, nssf_enabled ? 1 : 0, housing_levy_enabled ? 1 : 0, sacco_welfare_enabled ? 1 : 0
+        ]
+      );
+    }
+
+    const updated = await getSettings();
+    res.json({ success: true, message: 'Payroll settings updated', data: updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. GET payroll runs with employee & payment account info joined
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/runs', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { payroll_period_id } = req.query;
   try {
     let query = `
       SELECT 
         pr.*,
         e.first_name, e.last_name, e.email, e.position, e.department, e.code as employee_code,
-        e.bank_name, e.bank_account, e.payment_method
+        e.bank_name, e.bank_account, e.payment_method,
+        pa.name as payment_account_name, pa.code as payment_account_code
       FROM payroll_runs pr
       LEFT JOIN employees e ON pr.employee_id = e.id
+      LEFT JOIN accounts pa ON pr.payment_account_id = pa.id
     `;
     const params: any[] = [];
 
@@ -125,7 +361,6 @@ router.get('/runs', authenticate, async (req, res): Promise<void> => {
 
     const [rows]: any = await pool.query(query, params);
 
-    // Shape each row so the frontend gets run + nested employee object
     const data = rows.map((row: any) => ({
       id: row.id,
       payroll_period_id: row.payroll_period_id,
@@ -142,12 +377,21 @@ router.get('/runs', authenticate, async (req, res): Promise<void> => {
       nhif_deduction: Number(row.nhif_deduction) || 0,
       nssf_deduction: Number(row.nssf_deduction) || 0,
       housing_levy_deduction: Number(row.housing_levy_deduction) || 0,
+      sacco_welfare_deduction: Number(row.sacco_welfare_deduction) || 0,
       other_deductions: Number(row.other_deductions) || 0,
       net_pay: Number(row.net_pay) || 0,
       notes: row.notes,
       status: row.status,
       paid_date: row.paid_date,
       journal_entry_id: row.journal_entry_id,
+      payment_account_id: row.payment_account_id,
+      payment_reference: row.payment_reference,
+      payment_journal_entry_id: row.payment_journal_entry_id,
+      payment_account: row.payment_account_id ? {
+        id: row.payment_account_id,
+        name: row.payment_account_name || 'Account',
+        code: row.payment_account_code || ''
+      } : null,
       created_at: row.created_at,
       updated_at: row.updated_at,
       employee: {
@@ -172,9 +416,10 @@ router.get('/runs', authenticate, async (req, res): Promise<void> => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. Generate Payroll for a period
+// 4. GENERATE Payroll for a period (honors editable, non-mandatory deductions + Sacco)
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/periods/:id/generate', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { id: periodId } = req.params;
   const createdBy = (req as any).user?.id;
 
@@ -182,16 +427,13 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
   try {
     await connection.beginTransaction();
 
-    // Check period exists
     const [periodRows]: any = await connection.query('SELECT * FROM payroll_periods WHERE id = ?', [periodId]);
     if (periodRows.length === 0) {
       await connection.rollback();
       res.status(404).json({ success: false, error: 'Payroll period not found' });
       return;
     }
-    const period = periodRows[0];
 
-    // Check not already generated
     const [existingRuns]: any = await connection.query('SELECT id FROM payroll_runs WHERE payroll_period_id = ?', [periodId]);
     if (existingRuns.length > 0) {
       await connection.rollback();
@@ -201,7 +443,14 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
 
     const settings = await getSettings();
 
-    // Get all active employees with a salary
+    // Rates: if disabled, 0. If enabled, respect rate exactly without forcing arbitrary non-zero defaults
+    const taxRate = settings.tax_enabled ? (Number(settings.tax_deduction_rate) || 0) : 0;
+    const nhifRate = settings.nhif_enabled ? (Number(settings.nhif_rate) || 0) : 0;
+    const nssfRate = settings.nssf_enabled ? (Number(settings.nssf_rate) || 0) : 0;
+    const housingLevyRate = settings.housing_levy_enabled ? (Number(settings.housing_levy_rate) || 0) : 0;
+    const saccoRate = settings.sacco_welfare_enabled ? (Number(settings.sacco_welfare_rate) || 0) : 0;
+    const saccoAmount = settings.sacco_welfare_enabled ? (Number(settings.sacco_welfare_amount) || 0) : 0;
+
     const [employees]: any = await connection.query(
       'SELECT * FROM employees WHERE is_active = 1'
     );
@@ -213,26 +462,34 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
     }
 
     let grandGross = 0, grandNet = 0, grandTax = 0;
-    let grandNHIF = 0, grandNSSF = 0, grandHousingLevy = 0;
+    let grandNHIF = 0, grandNSSF = 0, grandHousingLevy = 0, grandSacco = 0;
 
     for (const emp of employees) {
       const basicSalary = Number(emp.basic_salary) || 0;
       const grossPay = basicSalary;
-      const taxDeduction = (grossPay * (Number(settings.tax_deduction_rate) || 30)) / 100;
-      const nhifDeduction = (grossPay * (Number(settings.nhif_rate) || 2.5)) / 100;
-      const nssfDeduction = (grossPay * (Number(settings.nssf_rate) || 6.0)) / 100;
-      const housingLevy = (grossPay * (Number(settings.housing_levy_rate) || 1.5)) / 100;
-      const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevy;
+
+      const taxDeduction = (grossPay * taxRate) / 100;
+      const nhifDeduction = (grossPay * nhifRate) / 100;
+      const nssfDeduction = (grossPay * nssfRate) / 100;
+      const housingLevy = (grossPay * housingLevyRate) / 100;
+      const saccoDeduction = saccoAmount > 0 ? saccoAmount : (grossPay * saccoRate) / 100;
+
+      const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevy - saccoDeduction;
 
       const runId = crypto.randomUUID();
       await connection.query(
         `INSERT INTO payroll_runs (
           id, payroll_period_id, employee_id, basic_salary,
           overtime_hours, overtime_pay, holiday_hours, holiday_pay, allowances, bonuses,
-          gross_pay, tax_deduction, nhif_deduction, nssf_deduction, housing_levy_deduction, other_deductions,
+          gross_pay, tax_deduction, nhif_deduction, nssf_deduction, housing_levy_deduction,
+          sacco_welfare_deduction, other_deductions,
           net_pay, notes, status, created_by
-        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?, 0, ?, 'Auto-generated', 'draft', ?)`,
-        [runId, periodId, emp.id, basicSalary, grossPay, taxDeduction, nhifDeduction, nssfDeduction, housingLevy, netPay, createdBy]
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?, 'Auto-generated', 'draft', ?)`,
+        [
+          runId, periodId, emp.id, basicSalary,
+          grossPay, taxDeduction, nhifDeduction, nssfDeduction, housingLevy,
+          saccoDeduction, netPay, createdBy
+        ]
       );
 
       grandGross += grossPay;
@@ -241,16 +498,16 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
       grandNHIF += nhifDeduction;
       grandNSSF += nssfDeduction;
       grandHousingLevy += housingLevy;
+      grandSacco += saccoDeduction;
     }
 
-    // Update period totals & set to processing
     await connection.query(
       `UPDATE payroll_periods SET 
         total_gross_pay = ?, total_net_pay = ?, total_tax = ?,
-        total_nhif = ?, total_nssf = ?, total_housing_levy = ?,
+        total_nhif = ?, total_nssf = ?, total_housing_levy = ?, total_sacco_welfare = ?,
         status = 'processing'
       WHERE id = ?`,
-      [grandGross, grandNet, grandTax, grandNHIF, grandNSSF, grandHousingLevy, periodId]
+      [grandGross, grandNet, grandTax, grandNHIF, grandNSSF, grandHousingLevy, grandSacco, periodId]
     );
 
     await connection.commit();
@@ -259,7 +516,7 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
       success: true,
       message: `Payroll generated for ${employees.length} employee(s)`,
       generated: employees.length,
-      totals: { grandGross, grandNet, grandTax, grandNHIF, grandNSSF, grandHousingLevy }
+      totals: { grandGross, grandNet, grandTax, grandNHIF, grandNSSF, grandHousingLevy, grandSacco }
     });
   } catch (error: any) {
     await connection.rollback();
@@ -271,9 +528,10 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Update a single payroll run (OT, allowances, bonuses, deductions)
+// 5. UPDATE a single payroll run (edit hours, earnings, AND any deduction)
 // ─────────────────────────────────────────────────────────────────────────────
 router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { id } = req.params;
 
   try {
@@ -285,54 +543,83 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
     const run = runRows[0];
     const settings = await getSettings();
 
-    const otHours = req.body.overtime_hours !== undefined ? Number(req.body.overtime_hours) : Number(run.overtime_hours);
-    const holHours = req.body.holiday_hours !== undefined ? Number(req.body.holiday_hours) : Number(run.holiday_hours);
-    const allow = req.body.allowances !== undefined ? Number(req.body.allowances) : Number(run.allowances);
-    const bonus = req.body.bonuses !== undefined ? Number(req.body.bonuses) : Number(run.bonuses);
-    const otherDed = req.body.other_deductions !== undefined ? Number(req.body.other_deductions) : Number(run.other_deductions);
+    const otHours = req.body.overtime_hours !== undefined ? Number(req.body.overtime_hours) : Number(run.overtime_hours || 0);
+    const holHours = req.body.holiday_hours !== undefined ? Number(req.body.holiday_hours) : Number(run.holiday_hours || 0);
+    const allow = req.body.allowances !== undefined ? Number(req.body.allowances) : Number(run.allowances || 0);
+    const bonus = req.body.bonuses !== undefined ? Number(req.body.bonuses) : Number(run.bonuses || 0);
     const notes = req.body.notes !== undefined ? req.body.notes : run.notes;
     const basicSalary = Number(run.basic_salary) || 0;
 
     const hourlyRate = basicSalary / 160;
-    const overtimePay = otHours * hourlyRate * Number(settings.overtime_rate);
-    const holidayPay = holHours * hourlyRate * Number(settings.holiday_pay_rate);
+    const overtimePay = otHours * hourlyRate * (Number(settings.overtime_rate) || 1.5);
+    const holidayPay = holHours * hourlyRate * (Number(settings.holiday_pay_rate) || 2.0);
     const grossPay = basicSalary + overtimePay + holidayPay + allow + bonus;
-    const taxDeduction = (grossPay * Number(settings.tax_deduction_rate)) / 100;
-    const nhifDeduction = (grossPay * Number(settings.nhif_rate)) / 100;
-    const nssfDeduction = (grossPay * Number(settings.nssf_rate)) / 100;
-    const housingLevy = (grossPay * Number(settings.housing_levy_rate)) / 100;
-    const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevy - otherDed;
+
+    // Deductions: if explicitly passed in body, respect the value directly (none mandatory!)
+    // If not provided in body, keep run value or calculate from rates
+    const taxDeduction = req.body.tax_deduction !== undefined 
+      ? Number(req.body.tax_deduction) 
+      : (settings.tax_enabled ? (grossPay * (Number(settings.tax_deduction_rate) || 0)) / 100 : 0);
+
+    const nhifDeduction = req.body.nhif_deduction !== undefined 
+      ? Number(req.body.nhif_deduction) 
+      : (settings.nhif_enabled ? (grossPay * (Number(settings.nhif_rate) || 0)) / 100 : 0);
+
+    const nssfDeduction = req.body.nssf_deduction !== undefined 
+      ? Number(req.body.nssf_deduction) 
+      : (settings.nssf_enabled ? (grossPay * (Number(settings.nssf_rate) || 0)) / 100 : 0);
+
+    const housingLevy = req.body.housing_levy_deduction !== undefined 
+      ? Number(req.body.housing_levy_deduction) 
+      : (settings.housing_levy_enabled ? (grossPay * (Number(settings.housing_levy_rate) || 0)) / 100 : 0);
+
+    const saccoDeduction = req.body.sacco_welfare_deduction !== undefined
+      ? Number(req.body.sacco_welfare_deduction)
+      : (settings.sacco_welfare_enabled 
+          ? (settings.sacco_welfare_amount > 0 ? settings.sacco_welfare_amount : (grossPay * (Number(settings.sacco_welfare_rate) || 0)) / 100)
+          : 0);
+
+    const otherDed = req.body.other_deductions !== undefined ? Number(req.body.other_deductions) : Number(run.other_deductions || 0);
+
+    const netPay = grossPay - taxDeduction - nhifDeduction - nssfDeduction - housingLevy - saccoDeduction - otherDed;
 
     await pool.query(
       `UPDATE payroll_runs SET
         overtime_hours = ?, overtime_pay = ?, holiday_hours = ?, holiday_pay = ?,
         allowances = ?, bonuses = ?, gross_pay = ?, tax_deduction = ?,
         nhif_deduction = ?, nssf_deduction = ?, housing_levy_deduction = ?,
-        other_deductions = ?, net_pay = ?, notes = ?
+        sacco_welfare_deduction = ?, other_deductions = ?, net_pay = ?, notes = ?
       WHERE id = ?`,
-      [otHours, overtimePay, holHours, holidayPay, allow, bonus, grossPay, taxDeduction,
-       nhifDeduction, nssfDeduction, housingLevy, otherDed, netPay, notes, id]
+      [
+        otHours, overtimePay, holHours, holidayPay,
+        allow, bonus, grossPay, taxDeduction,
+        nhifDeduction, nssfDeduction, housingLevy,
+        saccoDeduction, otherDed, netPay, notes, id
+      ]
     );
 
     // Recalculate period totals
-    const [periodRuns]: any = await pool.query(
-      'SELECT payroll_period_id FROM payroll_runs WHERE id = ?', [id]
+    const pId = run.payroll_period_id;
+    const [totals]: any = await pool.query(
+      `SELECT 
+        SUM(gross_pay) as tg, SUM(net_pay) as tn, SUM(tax_deduction) as tt,
+        SUM(nhif_deduction) as tnhif, SUM(nssf_deduction) as tnssf,
+        SUM(housing_levy_deduction) as thl, SUM(sacco_welfare_deduction) as tsacco
+       FROM payroll_runs WHERE payroll_period_id = ?`, [pId]
     );
-    if (periodRuns.length > 0) {
-      const pId = periodRuns[0].payroll_period_id;
-      const [totals]: any = await pool.query(
-        `SELECT SUM(gross_pay) as tg, SUM(net_pay) as tn, SUM(tax_deduction) as tt,
-                SUM(nhif_deduction) as tnhif, SUM(nssf_deduction) as tnssf, SUM(housing_levy_deduction) as thl
-         FROM payroll_runs WHERE payroll_period_id = ?`, [pId]
+
+    if (totals.length > 0) {
+      await pool.query(
+        `UPDATE payroll_periods SET 
+          total_gross_pay=?, total_net_pay=?, total_tax=?,
+          total_nhif=?, total_nssf=?, total_housing_levy=?, total_sacco_welfare=? 
+         WHERE id=?`,
+        [
+          totals[0].tg || 0, totals[0].tn || 0, totals[0].tt || 0,
+          totals[0].tnhif || 0, totals[0].tnssf || 0, totals[0].thl || 0,
+          totals[0].tsacco || 0, pId
+        ]
       );
-      if (totals.length > 0) {
-        await pool.query(
-          `UPDATE payroll_periods SET total_gross_pay=?, total_net_pay=?, total_tax=?,
-           total_nhif=?, total_nssf=?, total_housing_levy=? WHERE id=?`,
-          [totals[0].tg||0, totals[0].tn||0, totals[0].tt||0,
-           totals[0].tnhif||0, totals[0].tnssf||0, totals[0].thl||0, pId]
-        );
-      }
     }
 
     const [updated]: any = await pool.query('SELECT * FROM payroll_runs WHERE id = ?', [id]);
@@ -344,7 +631,7 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. Approve a payroll run (draft → approved)
+// 6. APPROVE a payroll run (draft → approved)
 // ─────────────────────────────────────────────────────────────────────────────
 router.put('/runs/:id/approve', authenticate, async (req, res): Promise<void> => {
   const { id } = req.params;
@@ -366,58 +653,110 @@ router.put('/runs/:id/approve', authenticate, async (req, res): Promise<void> =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. Mark a payroll run as paid (approved → paid) — posts journal entry
+// 7. PAY an individual payroll run with Chosen Paying Account & Balanced GL Double-Entry
 // ─────────────────────────────────────────────────────────────────────────────
 router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { id } = req.params;
+  const { payment_account_id, payment_date, payment_reference, notes } = req.body;
   const createdBy = (req as any).user?.id;
+
+  if (!payment_account_id) {
+    res.status(400).json({ success: false, error: 'Please choose the paying account (Bank/Cash) to disburse salary' });
+    return;
+  }
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
     const [rows]: any = await connection.query(
-      `SELECT pr.*, pp.period_name, pp.pay_date
+      `SELECT pr.*, pp.period_name, pp.pay_date as period_pay_date,
+              e.first_name, e.last_name, e.code as employee_code
        FROM payroll_runs pr
        JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+       JOIN employees e ON pr.employee_id = e.id
        WHERE pr.id = ?`, [id]
     );
+
     if (rows.length === 0) {
       await connection.rollback();
       res.status(404).json({ success: false, error: 'Payroll run not found' });
       return;
     }
-    if (rows[0].status !== 'approved') {
+
+    const run = rows[0];
+    if (run.status === 'paid') {
       await connection.rollback();
-      res.status(400).json({ success: false, error: 'Only approved runs can be marked as paid' });
+      res.status(400).json({ success: false, error: 'This payroll run has already been paid' });
       return;
     }
 
-    const run = rows[0];
-    const payDate = run.pay_date || new Date().toISOString().split('T')[0];
+    const payDate = payment_date || run.period_pay_date || new Date().toISOString().split('T')[0];
+    const empLabel = `${run.first_name} ${run.last_name} (${run.employee_code})`;
 
-    // Create per-employee journal entry
-    const journalId = await postPayrollJournalEntry(
+    // 1. Post Accrual Journal Entry if not yet created
+    let accrualJournalId = run.journal_entry_id;
+    if (!accrualJournalId) {
+      accrualJournalId = await postPayrollAccrualJournalEntry(
+        connection,
+        run.period_name,
+        payDate,
+        Number(run.gross_pay),
+        Number(run.net_pay),
+        Number(run.tax_deduction),
+        Number(run.nssf_deduction),
+        Number(run.nhif_deduction),
+        Number(run.housing_levy_deduction),
+        Number(run.sacco_welfare_deduction || 0),
+        Number(run.other_deductions),
+        createdBy,
+        empLabel
+      );
+    }
+
+    // 2. Post Disbursement Journal Entry (Debit 2125 Net Salary Payable, Credit Paying Account)
+    const disbursementJournalId = await postPayrollDisbursementJournalEntry(
       connection,
-      run.payroll_period_id,
       run.period_name,
       payDate,
-      Number(run.gross_pay),
       Number(run.net_pay),
-      Number(run.tax_deduction),
-      Number(run.nssf_deduction),
-      Number(run.nhif_deduction),
-      Number(run.housing_levy_deduction),
-      createdBy
+      payment_account_id,
+      payment_reference,
+      notes || '',
+      createdBy,
+      empLabel
     );
 
+    // 3. Mark run as paid with paying account & journal linkages
     await connection.query(
-      'UPDATE payroll_runs SET status = ?, paid_date = NOW(), journal_entry_id = ? WHERE id = ?',
-      ['paid', journalId, id]
+      `UPDATE payroll_runs SET 
+        status = 'paid',
+        paid_date = ?,
+        payment_account_id = ?,
+        payment_reference = ?,
+        journal_entry_id = ?,
+        payment_journal_entry_id = ?,
+        notes = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE notes END
+       WHERE id = ?`,
+      [
+        payDate,
+        payment_account_id,
+        payment_reference || null,
+        accrualJournalId,
+        disbursementJournalId,
+        notes, notes, notes,
+        id
+      ]
     );
 
     await connection.commit();
-    res.json({ success: true, message: 'Payroll run marked as paid', journal_entry_id: journalId });
+    res.json({
+      success: true,
+      message: `Payroll payment disbursed and posted to General Ledger for ${empLabel}`,
+      journal_entry_id: accrualJournalId,
+      payment_journal_entry_id: disbursementJournalId
+    });
   } catch (error: any) {
     await connection.rollback();
     console.error('Error paying payroll run:', error);
@@ -428,9 +767,10 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. Close a payroll period — posts consolidated journal entry
+// 8. CLOSE a payroll period
 // ─────────────────────────────────────────────────────────────────────────────
 router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { id: periodId } = req.params;
   const createdBy = (req as any).user?.id;
 
@@ -446,7 +786,6 @@ router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> =
     }
     const period = periodRows[0];
 
-    // Get totals from all runs in this period
     const [runsRows]: any = await connection.query(
       'SELECT * FROM payroll_runs WHERE payroll_period_id = ?', [periodId]
     );
@@ -457,33 +796,26 @@ router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> =
       return;
     }
 
-    const totalGross = runsRows.reduce((s: number, r: any) => s + Number(r.gross_pay), 0);
-    const totalNet = runsRows.reduce((s: number, r: any) => s + Number(r.net_pay), 0);
-    const totalTax = runsRows.reduce((s: number, r: any) => s + Number(r.tax_deduction), 0);
-    const totalNSSF = runsRows.reduce((s: number, r: any) => s + Number(r.nssf_deduction), 0);
-    const totalNHIF = runsRows.reduce((s: number, r: any) => s + Number(r.nhif_deduction), 0);
-    const totalHousingLevy = runsRows.reduce((s: number, r: any) => s + Number(r.housing_levy_deduction), 0);
-
-    const payDate = period.pay_date || new Date().toISOString().split('T')[0];
-
-    // Post consolidated journal entry for the whole period
-    const journalId = await postPayrollJournalEntry(
-      connection, periodId, period.period_name, payDate,
-      totalGross, totalNet, totalTax, totalNSSF, totalNHIF, totalHousingLevy, createdBy
-    );
+    const totalGross = runsRows.reduce((s: number, r: any) => s + Number(r.gross_pay || 0), 0);
+    const totalNet = runsRows.reduce((s: number, r: any) => s + Number(r.net_pay || 0), 0);
+    const totalTax = runsRows.reduce((s: number, r: any) => s + Number(r.tax_deduction || 0), 0);
+    const totalNSSF = runsRows.reduce((s: number, r: any) => s + Number(r.nssf_deduction || 0), 0);
+    const totalNHIF = runsRows.reduce((s: number, r: any) => s + Number(r.nhif_deduction || 0), 0);
+    const totalHousingLevy = runsRows.reduce((s: number, r: any) => s + Number(r.housing_levy_deduction || 0), 0);
+    const totalSacco = runsRows.reduce((s: number, r: any) => s + Number(r.sacco_welfare_deduction || 0), 0);
 
     // Update period status and totals
     await connection.query(
       `UPDATE payroll_periods SET 
         status = 'closed',
         total_gross_pay = ?, total_net_pay = ?, total_tax = ?,
-        total_nhif = ?, total_nssf = ?, total_housing_levy = ?
+        total_nhif = ?, total_nssf = ?, total_housing_levy = ?, total_sacco_welfare = ?
       WHERE id = ?`,
-      [totalGross, totalNet, totalTax, totalNHIF, totalNSSF, totalHousingLevy, periodId]
+      [totalGross, totalNet, totalTax, totalNHIF, totalNSSF, totalHousingLevy, totalSacco, periodId]
     );
 
     await connection.commit();
-    res.json({ success: true, message: 'Payroll period closed and journal entry posted', journal_entry_id: journalId });
+    res.json({ success: true, message: 'Payroll period closed' });
   } catch (error: any) {
     await connection.rollback();
     console.error('Error closing payroll period:', error);
@@ -494,9 +826,10 @@ router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> =
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. Get payslip (single run with employee details)
+// 9. GET payslip (single run with employee, period & payment details)
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
   const { id } = req.params;
   try {
     const [rows]: any = await pool.query(
@@ -505,10 +838,12 @@ router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> =>
         e.first_name, e.last_name, e.email, e.position, e.department, e.code as employee_code,
         e.bank_name, e.bank_account, e.payment_method,
         e.nhif_number, e.nssf_number, e.tax_pin,
-        pp.period_name, pp.start_date, pp.end_date, pp.pay_date
+        pp.period_name, pp.start_date, pp.end_date, pp.pay_date as period_pay_date,
+        pa.name as payment_account_name, pa.code as payment_account_code
        FROM payroll_runs pr
        LEFT JOIN employees e ON pr.employee_id = e.id
        LEFT JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+       LEFT JOIN accounts pa ON pr.payment_account_id = pa.id
        WHERE pr.id = ?`, [id]
     );
 
@@ -520,6 +855,7 @@ router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> =>
     const row = rows[0];
     const payslip = {
       ...row,
+      sacco_welfare_deduction: Number(row.sacco_welfare_deduction) || 0,
       employee: {
         id: row.employee_id,
         first_name: row.first_name,
@@ -539,8 +875,13 @@ router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> =>
         period_name: row.period_name,
         start_date: row.start_date,
         end_date: row.end_date,
-        pay_date: row.pay_date,
-      }
+        pay_date: row.period_pay_date,
+      },
+      payment_account: row.payment_account_id ? {
+        id: row.payment_account_id,
+        name: row.payment_account_name,
+        code: row.payment_account_code
+      } : null
     };
 
     res.json({ success: true, data: payslip });
@@ -551,7 +892,7 @@ router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. Summary stats for dashboard
+// 10. Summary stats for dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/summary', authenticate, async (req, res): Promise<void> => {
   try {

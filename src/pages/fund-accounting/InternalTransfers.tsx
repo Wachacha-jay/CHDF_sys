@@ -58,15 +58,19 @@ const InternalTransfers: React.FC = () => {
             transfer_type: 'direct_transfer'
         });
         loadData();
+    } else {
+        toast.error('Failed to submit transfer request. Please try again.');
     }
   };
 
   const handleApprove = async (id: string) => {
     if (!user) return;
-    const success = await FundAccountingService.approveTransfer(id, user.id);
-    if (success) {
+    const result = await FundAccountingService.approveTransfer(id, user.id);
+    if (result.success) {
         toast.success('Transfer approved and posted to General Ledger');
         loadData();
+    } else {
+        toast.error(result.error || 'Approval failed. Please check the server logs.');
     }
   };
 
