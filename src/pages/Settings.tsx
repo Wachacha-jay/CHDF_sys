@@ -17,13 +17,21 @@ const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [uploading, setUploading] = useState(false);
 
-  const { register, handleSubmit, formState: { errors, isDirty } } = useForm<BusinessSettings>({
+  const { register, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<BusinessSettings>({
     defaultValues: settings || undefined,
     values: settings || undefined,
   });
 
+  const currentLogo = watch('logo_url') || settings?.logo_url;
+  const currentFavicon = watch('favicon_url') || settings?.favicon_url;
+
   const onSubmit = async (data: BusinessSettings) => {
-    const result = await updateSettings(data);
+    const payload = {
+      ...data,
+      logo_url: data.logo_url !== undefined ? data.logo_url : (settings?.logo_url || ''),
+      favicon_url: data.favicon_url !== undefined ? data.favicon_url : (settings?.favicon_url || '')
+    };
+    const result = await updateSettings(payload);
     if (!result.success) {
       toast.error('Failed to update settings');
     }
@@ -38,8 +46,17 @@ const Settings: React.FC = () => {
     }
     setUploading(true);
     const result = await uploadLogo(file);
-    if (result.success) toast.success('Logo uploaded successfully');
+    if (result.success && result.url) {
+      setValue('logo_url', result.url, { shouldDirty: true });
+      toast.success('Logo uploaded successfully');
+    }
     setUploading(false);
+  };
+
+  const handleRemoveLogo = async () => {
+    setValue('logo_url', '', { shouldDirty: true });
+    await updateSettings({ logo_url: '' });
+    toast.success('Logo removed');
   };
 
   const handleFaviconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,7 +68,10 @@ const Settings: React.FC = () => {
     }
     setUploading(true);
     const result = await uploadFavicon(file);
-    if (result.success) toast.success('Favicon uploaded successfully');
+    if (result.success && result.url) {
+      setValue('favicon_url', result.url, { shouldDirty: true });
+      toast.success('Favicon uploaded successfully');
+    }
     setUploading(false);
   };
 
@@ -135,27 +155,52 @@ const Settings: React.FC = () => {
 
                       <section>
                         <h2 className="text-lg font-bold text-gray-900 mb-4 border-b border-gray-100 pb-2">Branding</h2>
+                        <input type="hidden" {...register('logo_url')} />
+                        <input type="hidden" {...register('favicon_url')} />
+                        
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div className="flex items-center space-x-4">
-                            <div className="w-20 h-20 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden">
-                              {settings?.logo_url ? <img src={settings.logo_url} className="w-full h-full object-contain" /> : <Upload className="w-6 h-6 text-gray-300" />}
+                          <div className="flex items-start space-x-4 bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+                            <div className="w-24 h-24 bg-white rounded-2xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden p-2 shadow-sm flex-shrink-0">
+                              {currentLogo ? (
+                                <img src={currentLogo} alt="Business Logo" className="w-full h-full object-contain" />
+                              ) : (
+                                <Upload className="w-8 h-8 text-gray-300" />
+                              )}
                             </div>
-                            <div>
-                              <p className="text-sm font-bold text-gray-900">Main Logo</p>
-                              <label className="mt-1 cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-700 block">
-                                {uploading ? 'Uploading...' : 'Click to change logo'}
-                                <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
-                              </label>
+                            <div className="space-y-1.5 flex-1">
+                              <p className="text-sm font-bold text-gray-900">Business Logo</p>
+                              <p className="text-[11px] text-gray-500">Appears on invoices, sales receipts, and system navigation.</p>
+                              <div className="flex items-center gap-3 pt-1">
+                                <label className="cursor-pointer text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg transition-colors inline-block">
+                                  {uploading ? 'Uploading...' : currentLogo ? 'Change Logo' : 'Upload Logo'}
+                                  <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                                </label>
+                                {currentLogo && (
+                                  <button
+                                    type="button"
+                                    onClick={handleRemoveLogo}
+                                    className="text-xs font-semibold text-red-600 hover:text-red-700 hover:underline"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-4">
-                            <div className="w-12 h-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden">
-                              {settings?.favicon_url ? <img src={settings.favicon_url} className="w-full h-full object-contain" /> : <Upload className="w-4 h-4 text-gray-300" />}
+
+                          <div className="flex items-start space-x-4 bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+                            <div className="w-16 h-16 bg-white rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden p-1 shadow-sm flex-shrink-0">
+                              {currentFavicon ? (
+                                <img src={currentFavicon} alt="Browser Favicon" className="w-full h-full object-contain" />
+                              ) : (
+                                <Upload className="w-6 h-6 text-gray-300" />
+                              )}
                             </div>
-                            <div>
+                            <div className="space-y-1.5 flex-1">
                               <p className="text-sm font-bold text-gray-900">Browser Favicon</p>
-                              <label className="mt-1 cursor-pointer text-xs font-semibold text-indigo-600 hover:text-indigo-700 block">
-                                Change favicon
+                              <p className="text-[11px] text-gray-500">Small icon displayed in browser tab.</p>
+                              <label className="cursor-pointer text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors inline-block">
+                                Change Favicon
                                 <input type="file" accept="image/*" onChange={handleFaviconUpload} className="hidden" />
                               </label>
                             </div>

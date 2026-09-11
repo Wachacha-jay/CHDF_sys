@@ -59,7 +59,15 @@ async function ensureInKindSchema() {
       await pool.query('ALTER TABLE sales ADD COLUMN expense_account_id CHAR(36) NULL');
     }
 
-    // 5. Ensure donation_items table exists
+    // 5. Ensure business_settings logo_url and favicon_url are LONGTEXT for data/image URLs
+    try {
+      await pool.query('ALTER TABLE business_settings MODIFY COLUMN logo_url LONGTEXT');
+      await pool.query('ALTER TABLE business_settings MODIFY COLUMN favicon_url LONGTEXT');
+    } catch (err) {
+      // Ignore if already adjusted
+    }
+
+    // 6. Ensure donation_items table exists
     await pool.query(`
       CREATE TABLE IF NOT EXISTS donation_items (
         id CHAR(36) PRIMARY KEY DEFAULT (UUID()),

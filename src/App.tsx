@@ -84,6 +84,8 @@ const AppRoutes: React.FC = () => {
           <Route path="/funds/transfers" element={<InternalTransfers />} />
           <Route path="/funds/billing" element={<NGOBilling />} />
           <Route path="/funds/reports" element={<FundReports />} />
+          <Route path="/fund-accounting/donations" element={<Navigate to="/funds/donations" replace />} />
+          <Route path="/fund-accounting/*" element={<Navigate to="/funds" replace />} />
 
         </Route>
       </Routes>

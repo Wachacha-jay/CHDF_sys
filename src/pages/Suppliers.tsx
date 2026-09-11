@@ -5,8 +5,11 @@ import { ApiService } from '../services/api';
 import { SupplierService } from '../services/supplierService';
 import type { Supplier, Purchase } from '../types';
 import { FileText } from 'lucide-react';
+import { useSettingsContext } from '../contexts/SettingsContext';
 
 const Suppliers: React.FC = () => {
+  const { settings } = useSettingsContext();
+  const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -500,9 +503,9 @@ const Suppliers: React.FC = () => {
                           <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 font-medium text-gray-900">{order.purchase_number}</td>
                             <td className="px-4 py-3 text-gray-600">{new Date(order.purchase_date).toLocaleDateString()}</td>
-                            <td className="px-4 py-3 font-medium text-gray-900">${order.total_amount.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-600">${order.paid_amount.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-900">${balance.toLocaleString()}</td>
+                            <td className="px-4 py-3 font-medium text-gray-900">{currency} {order.total_amount.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-gray-600">{currency} {order.paid_amount.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-gray-900">{currency} {balance.toLocaleString()}</td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusColors[order.payment_status] || 'bg-gray-100 text-gray-700'}`}>
                                 {order.payment_status}

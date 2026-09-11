@@ -209,8 +209,8 @@ const PurchaseInvoiceDetail: React.FC = () => {
                 <tr key={item.id} className="text-sm">
                   <td className="p-3 text-gray-900 font-medium">{item.product?.name}</td>
                   <td className="p-3 text-right text-gray-600">{item.quantity}</td>
-                  <td className="p-3 text-right text-gray-600">${item.unit_cost.toFixed(2)}</td>
-                  <td className="p-3 text-right text-gray-900 font-medium">${item.total_amount.toFixed(2)}</td>
+                  <td className="p-3 text-right text-gray-600">{currency} {item.unit_cost.toFixed(2)}</td>
+                  <td className="p-3 text-right text-gray-900 font-medium">{currency} {item.total_amount.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
@@ -221,27 +221,27 @@ const PurchaseInvoiceDetail: React.FC = () => {
               <tbody className="space-y-2">
                 <tr>
                   <td className="pr-4 text-gray-500">Subtotal:</td>
-                  <td className="font-medium">${invoice.subtotal.toFixed(2)}</td>
+                  <td className="font-medium">{currency} {invoice.subtotal.toFixed(2)}</td>
                 </tr>
                 <tr>
                   <td className="pr-4 text-gray-500">Tax:</td>
-                  <td className="font-medium">${invoice.tax_amount.toFixed(2)}</td>
+                  <td className="font-medium">{currency} {invoice.tax_amount.toFixed(2)}</td>
                 </tr>
                 <tr className="border-b border-gray-200 pb-2">
                   <td className="pr-4 text-gray-500">Discount:</td>
-                  <td className="font-medium">-${invoice.discount_amount.toFixed(2)}</td>
+                  <td className="font-medium">-{currency} {invoice.discount_amount.toFixed(2)}</td>
                 </tr>
                 <tr className="pt-2">
                   <td className="pr-4 text-gray-900 font-bold text-lg">Total:</td>
-                  <td className="font-bold text-lg text-gray-900">${invoice.total_amount.toFixed(2)}</td>
+                  <td className="font-bold text-lg text-gray-900">{currency} {invoice.total_amount.toFixed(2)}</td>
                 </tr>
                 <tr>
                   <td className="pr-4 text-gray-500">Paid:</td>
-                  <td className="font-medium text-green-600">${invoice.paid_amount.toFixed(2)}</td>
+                  <td className="font-medium text-green-600">{currency} {invoice.paid_amount.toFixed(2)}</td>
                 </tr>
                 <tr className="pt-1">
                   <td className="pr-4 text-gray-900 font-bold">Balance:</td>
-                  <td className="font-bold text-red-600">${(invoice.total_amount - invoice.paid_amount).toFixed(2)}</td>
+                  <td className="font-bold text-red-600">{currency} {(invoice.total_amount - invoice.paid_amount).toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Donor, FundAccount, Donation, DonationItem, DonorCluster, Child, Account, Department, Product } from '../../types';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
@@ -83,9 +84,28 @@ const Donations: React.FC = () => {
     setLoading(false);
   };
 
+  const location = useLocation();
+
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (location.state?.openInKind) {
+      setEditingDonationId(null);
+      setDonationMode('in_kind');
+      setInKindItems([
+        { item_description: '', asset_class: 'consumable', fair_market_value: 0, quantity: 1, unit_of_measure: 'units', product_id: '', department_id: '', project_name: '', notes: '' }
+      ]);
+      setFormData({
+        donation_date: new Date().toISOString().split('T')[0],
+        amount: 0,
+        payment_method: 'in_kind',
+        is_anonymous: false
+      });
+      setShowModal(true);
+    }
+  }, [location.state]);
 
   const openRecordModal = () => {
     setEditingDonationId(null);

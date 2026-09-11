@@ -92,7 +92,7 @@ const Invoice: React.FC = () => {
           <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; color: #333; line-height: 1.6; }
             .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 30px; }
-            .logo { max-width: 120px; height: auto; margin-bottom: 10px; }
+            .logo { max-width: 180px; max-height: 80px; object-fit: contain; margin: 0 auto 12px auto; display: block; }
             .business-name { font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px 0; }
             .business-info { font-size: 14px; color: #6b7280; margin-bottom: 5px; }
             .invoice-title { font-size: 20px; font-weight: bold; color: #2563eb; margin: 15px 0; }
@@ -292,6 +292,16 @@ const Invoice: React.FC = () => {
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         {/* Header */}
         <div className="text-center border-b border-gray-200 pb-6 mb-6">
+          {businessSettings.logo_url && (
+            <div className="flex justify-center mb-3">
+              <img 
+                src={businessSettings.logo_url} 
+                alt={businessSettings.business_name} 
+                className="max-h-20 max-w-[220px] object-contain"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            </div>
+          )}
           <h2 className="text-2xl font-bold text-gray-900">{businessSettings.business_name}</h2>
           {businessSettings.business_address && (
             <p className="text-sm text-gray-600">{businessSettings.business_address}</p>

@@ -29,7 +29,7 @@ const PointOfSale: React.FC = () => {
   const [customerId, setCustomerId] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
   const [currentReceipt, setCurrentReceipt] = useState<ReceiptData | null>(null);
-  const [posMode, setPosMode] = useState<'retail' | 'distribution' | 'ngo'>('retail');
+  const [posMode, setPosMode] = useState<'retail' | 'distribution'>('retail');
   const [dimensions, setDimensions] = useState<{
     department_id?: string;
     child_id?: string;
@@ -305,47 +305,26 @@ const PointOfSale: React.FC = () => {
             </div>
           ), { duration: 5000 });
         } else {
-          // If NGO mode, we record specialized records
-          if (posMode === 'ngo') {
-              const isDonation = cart.some(i => i.product.name.toLowerCase().includes('donation'));
-              
-              // If it's a donation, record it in the donations table for tracking
-              if (isDonation) {
-                  const donationAmount = cart.filter(i => i.product.name.toLowerCase().includes('donation'))
-                                             .reduce((sum, i) => sum + (i.quantity * i.unitPrice), 0);
-                  
-                  await FundAccountingService.recordDonation({
-                      donor_id: dimensions.donor_id || 'WALK-IN',
-                      amount: donationAmount,
-                      donation_date: new Date().toISOString().split('T')[0],
-                      payment_method: paymentMethod,
-                      fund_id: dimensions.fund_id,
-                      restricted_to_child_id: dimensions.child_id,
-                      notes: `POS Donation #${response.sale_number}`
-                  });
-              }
-
-              // Extract names for the receipt
-              const receipt = generateReceipt(
-                  response.sale_number, 
-                  customerName || dimensionNames.donor || dimensionNames.child || 'Walk-in Beneficiary', 
-                  cart, 
-                  getTotal(), 
-                  paymentMethod,
-                  {
-                      type: isDonation ? 'donation' : 'school_fee',
-                      childName: dimensionNames.child,
-                      donorName: dimensionNames.donor,
-                      fundName: dimensionNames.fund
-                  }
-              );
-              setCurrentReceipt(receipt);
-          } else {
-              const receipt = generateReceipt(response.sale_number, customerName, cart, getTotal(), paymentMethod);
-              setCurrentReceipt(receipt);
-          }
+        if (paymentMethod === 'credit') {
+          toast((t) => (
+            <div className="flex flex-col gap-2">
+              <span className="font-medium text-green-600">Invoice generated successfully!</span>
+              <button 
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  navigate(`/invoice/${response.id}`);
+                }}
+                className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+              >
+                View Invoice
+              </button>
+            </div>
+          ), { duration: 5000 });
+        } else {
+          const receipt = generateReceipt(response.sale_number, customerName, cart, getTotal(), paymentMethod);
+          setCurrentReceipt(receipt);
           setShowReceipt(true);
-          toast.success('Transaction completed successfully!');
+          toast.success('Sale completed successfully!');
         }
 
         clearCart();
@@ -375,52 +354,39 @@ const PointOfSale: React.FC = () => {
               <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter uppercase">Command Center</h1>
               <div className="flex items-center space-x-2 mt-1">
                 <span className={`w-2 h-2 rounded-full animate-pulse ${
-                  posMode === 'distribution' ? 'bg-emerald-500' : posMode === 'ngo' ? 'bg-purple-500' : 'bg-indigo-500'
+                  posMode === 'distribution' ? 'bg-emerald-500' : 'bg-indigo-500'
                 }`} />
                 <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
                   {posMode === 'retail' 
                     ? 'Commercial Sales Mode (For-Profit Inventory)' 
-                    : posMode === 'distribution' 
-                      ? 'Donation Distribution Mode (In-Kind Consumables)' 
-                      : 'NGO Mission Mode (Sponsorship & Services)'}
+                    : 'Donation Distribution Mode (In-Kind Consumables)'}
                 </p>
               </div>
             </div>
 
-            {/* 3-Way Mode Switcher */}
+            {/* 2-Way Mode Switcher */}
             <div className="flex bg-gray-100 dark:bg-slate-800 p-1.5 rounded-2xl shadow-inner border border-gray-200 dark:border-slate-700">
               <button
                 onClick={() => { setPosMode('retail'); clearCart(); }}
-                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
                   posMode === 'retail' 
                     ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-md shadow-indigo-500/10' 
                     : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
                 }`}
               >
-                <ShoppingCart className="w-3.5 h-3.5" />
+                <ShoppingCart className="w-4 h-4" />
                 <span>Commercial Sales</span>
               </button>
               <button
                 onClick={() => { setPosMode('distribution'); clearCart(); }}
-                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
                   posMode === 'distribution' 
                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20' 
                     : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
                 }`}
               >
-                <Share2 className="w-3.5 h-3.5" />
+                <Share2 className="w-4 h-4" />
                 <span>Donation Distribution</span>
-              </button>
-              <button
-                onClick={() => { setPosMode('ngo'); clearCart(); }}
-                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
-                  posMode === 'ngo' 
-                    ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' 
-                    : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
-                }`}
-              >
-                <Gift className="w-3.5 h-3.5" />
-                <span>NGO Services</span>
               </button>
             </div>
           </div>
@@ -428,77 +394,24 @@ const PointOfSale: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
-          {posMode !== 'ngo' && (
-            <div className="mb-8 animate-in fade-in slide-in-from-left-4 duration-500">
-              <div className="relative group">
-                <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400 h-6 w-6 group-focus-within:text-indigo-500 transition-colors" />
-                <input
-                  type="text"
-                  placeholder={
-                    posMode === 'distribution'
-                      ? "Search in-kind relief items (food, supplies, medicine)..."
-                      : "Scan barcode or search commercial products..."
-                  }
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-16 pr-6 py-5 bg-white dark:bg-slate-900 border-none rounded-3xl text-lg font-black placeholder:text-gray-300 dark:placeholder:text-slate-700 focus:ring-4 focus:ring-indigo-500/10 dark:text-white transition-all shadow-xl shadow-indigo-500/5"
-                />
-              </div>
+          <div className="mb-8 animate-in fade-in slide-in-from-left-4 duration-500">
+            <div className="relative group">
+              <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400 h-6 w-6 group-focus-within:text-indigo-500 transition-colors" />
+              <input
+                type="text"
+                placeholder={
+                  posMode === 'distribution'
+                    ? "Search in-kind relief items (food, supplies, medicine)..."
+                    : "Scan barcode or search commercial products..."
+                }
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-16 pr-6 py-5 bg-white dark:bg-slate-900 border-none rounded-3xl text-lg font-black placeholder:text-gray-300 dark:placeholder:text-slate-700 focus:ring-4 focus:ring-indigo-500/10 dark:text-white transition-all shadow-xl shadow-indigo-500/5"
+              />
             </div>
-          )}
+          </div>
 
-          {posMode === 'ngo' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8 pb-12">
-              {[
-                { name: 'General Donation', desc: 'Direct financial support for organizational growth.', price: 1000, icon: Gift, color: 'emerald', gradient: 'from-emerald-500 to-teal-600' },
-                { name: 'School Fees', desc: 'Full-term tuition and learning materials support.', price: 5000, icon: GraduationCap, color: 'indigo', gradient: 'from-indigo-500 to-blue-600' },
-                { name: 'Uniform & Supplies', desc: 'Provides professional attire and school essentials.', price: 2500, icon: Package, color: 'amber', gradient: 'from-amber-500 to-orange-600' },
-                { name: 'Lunch Program', desc: 'Daily nutritious meals for supported children.', price: 500, icon: ShoppingCart, color: 'rose', gradient: 'from-rose-500 to-red-600' }
-              ].map(service => (
-                <div
-                  key={service.name}
-                  className="card flex flex-col group overflow-visible h-full hover:shadow-2xl hover:shadow-indigo-500/10 transition-all duration-500"
-                >
-                  <div className={`h-1.5 w-full bg-gradient-to-r ${service.gradient} rounded-t-3xl`} />
-                  <div className="p-8 flex-1 flex flex-col">
-                    <div className={`w-14 h-14 rounded-2xl bg-${service.color}-50 dark:bg-${service.color}-500/10 flex items-center justify-center mb-6 shadow-sm`}>
-                      <service.icon className={`w-7 h-7 text-${service.color}-600 dark:text-${service.color}-400`} />
-                    </div>
-                    <h3 className="text-lg font-black text-gray-900 dark:text-white uppercase tracking-tight leading-none mb-3">{service.name}</h3>
-                    <p className="text-xs font-bold text-gray-400 dark:text-slate-500 leading-relaxed flex-1">{service.desc}</p>
-                    
-                    <div className="mt-8 pt-6 border-t border-gray-100 dark:border-slate-800">
-                      <div className="flex items-center justify-between mb-4">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Base Rate</span>
-                        <span className="text-xl font-black text-gray-900 dark:text-white">KSh {service.price.toLocaleString()}</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                            if (!dimensions.fund_id) {
-                                toast.error('Please select a Fund/Project first');
-                                return;
-                            }
-                            addToCart({
-                              id: `svc-${service.name.toLowerCase().replace(' ', '-')}`,
-                              name: service.name,
-                              sale_price: service.price,
-                              cost_price: 0,
-                              current_stock: 999,
-                              is_service: true,
-                              is_active: true,
-                              code: 'SVC'
-                            } as any);
-                        }}
-                        className={`w-full py-4 rounded-xl font-black uppercase tracking-widest text-[10px] text-white shadow-lg transition-all active:scale-95 bg-gradient-to-r ${service.gradient} hover:brightness-110 shadow-indigo-200 dark:shadow-none`}
-                      >
-                        Add to Mission +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : posMode === 'distribution' && filteredProducts.length === 0 ? (
+          {posMode === 'distribution' && filteredProducts.length === 0 ? (
             <div className="card p-12 text-center max-w-lg mx-auto my-12 border-2 border-dashed border-emerald-300 dark:border-emerald-800">
               <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Package className="w-8 h-8" />
@@ -509,7 +422,7 @@ const PointOfSale: React.FC = () => {
               </p>
               <div className="flex flex-col sm:flex-row justify-center gap-3">
                 <button
-                  onClick={() => navigate('/fund-accounting/donations')}
+                  onClick={() => navigate('/funds/donations', { state: { openInKind: true } })}
                   className="btn-primary text-xs uppercase tracking-wider py-3 px-4 font-black flex items-center justify-center gap-1.5"
                 >
                   <Gift className="w-4 h-4" />
@@ -657,31 +570,21 @@ const PointOfSale: React.FC = () => {
                 setCustomerId={setCustomerId}
                 customers={customers}
                 onAddCustomer={() => setShowAddCustomer(true)}
-                posMode={posMode}
+                posMode="retail"
               />
               <div className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800">
-                {posMode === 'ngo' ? (
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Mission Tracking (Required)</label>
+                <details className="group">
+                  <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-indigo-500 transition-colors">
+                    <span>Optional Tracking Info</span>
+                    <span className="group-open:rotate-180 transition-transform">↓</span>
+                  </summary>
+                  <div className="mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
                     <DimensionSelector 
                       value={dimensions}
                       onChange={setDimensions}
                     />
                   </div>
-                ) : (
-                  <details className="group">
-                    <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-indigo-500 transition-colors">
-                      <span>Optional Tracking Info</span>
-                      <span className="group-open:rotate-180 transition-transform">↓</span>
-                    </summary>
-                    <div className="mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                      <DimensionSelector 
-                        value={dimensions}
-                        onChange={setDimensions}
-                      />
-                    </div>
-                  </details>
-                )}
+                </details>
               </div>
             </>
           )}
@@ -720,14 +623,14 @@ const PointOfSale: React.FC = () => {
           ) : (
             <button
               onClick={paymentMethod === 'mpesa' ? handleMpesaPayment : handleCheckout}
-              disabled={cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)}
+              disabled={cart.length === 0 || loading}
               className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 ${
-                cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)
+                cart.length === 0 || loading
                   ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
                   : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 dark:shadow-none'
               }`}
             >
-              {loading ? 'Processing...' : paymentMethod === 'mpesa' ? 'Initiate M-Pesa' : posMode === 'ngo' ? 'Confirm NGO Service' : 'Complete Purchase'}
+              {loading ? 'Processing...' : paymentMethod === 'mpesa' ? 'Initiate M-Pesa' : 'Complete Purchase'}
             </button>
           )}
         </div>
@@ -743,8 +646,8 @@ const PointOfSale: React.FC = () => {
           <div className="card w-full max-w-md p-8 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-8">
               <div>
-                <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Add New {posMode === 'ngo' ? 'Donor' : 'Customer'}</h3>
-                <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mt-1">Enroll into system registry</p>
+                <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Add New Customer</h3>
+                <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest mt-1">Enroll into customer registry</p>
               </div>
               <button onClick={() => setShowAddCustomer(false)} className="text-gray-400 hover:text-gray-600 transition-colors text-2xl font-black">×</button>
             </div>
