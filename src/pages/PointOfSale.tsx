@@ -305,22 +305,6 @@ const PointOfSale: React.FC = () => {
             </div>
           ), { duration: 5000 });
         } else {
-        if (paymentMethod === 'credit') {
-          toast((t) => (
-            <div className="flex flex-col gap-2">
-              <span className="font-medium text-green-600">Invoice generated successfully!</span>
-              <button 
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  navigate(`/invoice/${response.id}`);
-                }}
-                className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
-              >
-                View Invoice
-              </button>
-            </div>
-          ), { duration: 5000 });
-        } else {
           const receipt = generateReceipt(response.sale_number, customerName, cart, getTotal(), paymentMethod);
           setCurrentReceipt(receipt);
           setShowReceipt(true);
