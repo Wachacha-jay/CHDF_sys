@@ -30,6 +30,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
     sku: '',
     is_active: true,
     is_service: false,
+    is_in_kind: false,
     tax_rate: '0'
   });
 
@@ -53,6 +54,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
         sku: product.sku || '',
         is_active: product.is_active,
         is_service: product.is_service,
+        is_in_kind: !!product.is_in_kind,
         tax_rate: product.tax_rate.toString()
       });
       
@@ -125,7 +127,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
       minimum_stock: parseFloat(formData.minimum_stock) || 0,
       tax_rate: parseFloat(formData.tax_rate) || 0,
       category_id: formData.category_id || null,
-      subcategory_id: formData.subcategory_id || null
+      subcategory_id: formData.subcategory_id || null,
+      is_in_kind: formData.is_in_kind ? 1 : 0
     };
 
     const success = await onSubmit(productData);
@@ -335,25 +338,35 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
               />
             </div>
             
-            <div className="flex space-x-4">
-              <label className="flex items-center">
+            <div className="flex flex-wrap gap-4 pt-2">
+              <label className="flex items-center cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.is_active}
                   onChange={(e) => setFormData(prev => ({ ...prev, is_active: e.target.checked }))}
-                  className="mr-2"
+                  className="mr-2 h-4 w-4 text-blue-600 rounded"
                 />
-                <span className="text-sm text-gray-700">Active</span>
+                <span className="text-sm font-medium text-gray-700">Active</span>
               </label>
               
-              <label className="flex items-center">
+              <label className="flex items-center cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.is_service}
                   onChange={(e) => setFormData(prev => ({ ...prev, is_service: e.target.checked }))}
-                  className="mr-2"
+                  className="mr-2 h-4 w-4 text-blue-600 rounded"
                 />
-                <span className="text-sm text-gray-700">Service (No inventory)</span>
+                <span className="text-sm font-medium text-gray-700">Service (No inventory)</span>
+              </label>
+
+              <label className="flex items-center cursor-pointer px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+                <input
+                  type="checkbox"
+                  checked={formData.is_in_kind}
+                  onChange={(e) => setFormData(prev => ({ ...prev, is_in_kind: e.target.checked }))}
+                  className="mr-2 h-4 w-4 text-amber-600 rounded"
+                />
+                <span className="text-sm font-bold text-amber-900">In-Kind Consumable Item (For Donation Distribution)</span>
               </label>
             </div>
             

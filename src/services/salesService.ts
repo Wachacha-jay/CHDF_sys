@@ -24,9 +24,10 @@ export interface CreateSaleData {
   customer_id?: string;
   sale_date: string;
   due_date?: string;
-  sale_type?: 'standard' | 'school_fees' | 'child_support' | 'sponsorship';
+  sale_type?: 'standard' | 'school_fees' | 'child_support' | 'sponsorship' | 'donation_distribution';
   child_id?: string;
   department_id?: string;
+  expense_account_id?: string;
   fund_id?: string;
   donor_id?: string;
   items: Array<{
@@ -42,6 +43,21 @@ export interface CreateSaleData {
   total_amount?: number;
   payment_method?: string;
   notes?: string;
+}
+
+export interface DistributeDonationData {
+  department_id: string;
+  expense_account_id: string;
+  distribution_date?: string;
+  notes?: string;
+  recipient_name?: string;
+  child_id?: string;
+  items: Array<{
+    product_id: string;
+    product_name?: string;
+    quantity: number;
+    unit_cost?: number;
+  }>;
 }
 
 export class SalesService {
@@ -165,6 +181,86 @@ export class SalesService {
     } catch (error) {
       console.error('Error creating sale:', error);
       return null;
+    }
+  }
+
+  static async recordDonationDistribution(data: DistributeDonationData): Promise<{ success: boolean; sale?: Sale; error?: string }> {
+    try {
+      if (!data.items || data.items.length === 0) {
+        return { success: false, error: 'No items selected for distribution' };
+      }
+      if (!data.department_id) {
+        return { success: false, error: 'Destination Department is required' };
+      }
+      if (!data.expense_account_id) {
+        return { success: false, error: 'Expense Account is required' };
+      }
+
+      // Calculate total distribution valuation
+      let totalAmount = 0;
+      for (const item of data.items) {
+        const val = Number(item.unit_cost || 0) * Number(item.quantity || 1);
+        totalAmount += val;
+      }
+
+      const saleNumber = `DIST-${Date.now().toString().slice(-6)}`;
+      const distDate = data.distribution_date || new Date().toISOString().split('T')[0];
+
+      const salePayload: any = {
+        sale_number: saleNumber,
+        sale_date: distDate,
+        sale_type: 'donation_distribution',
+        department_id: data.department_id,
+        expense_account_id: data.expense_account_id,
+        child_id: data.child_id || null,
+        subtotal: totalAmount,
+        tax_amount: 0,
+        discount_amount: 0,
+        total_amount: totalAmount,
+        paid_amount: totalAmount,
+        payment_status: 'paid',
+        payment_method: 'in_kind_distribution',
+        notes: `In-Kind Distribution${data.recipient_name ? ` (Recipient: ${data.recipient_name})` : ''}. ${data.notes || ''}`.trim()
+      };
+
+      const response = await ApiService.post<any>('sales', salePayload);
+      if (!response.success || !response.data) {
+        return { success: false, error: response.error || 'Failed to create distribution record' };
+      }
+
+      const saleId = response.data.id;
+
+      // Create sale_items and decrement product stock
+      for (const item of data.items) {
+        await ApiService.post('sale_items', {
+          sale_id: saleId,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_cost || 0,
+          discount_amount: 0,
+          tax_amount: 0,
+          total_amount: (item.quantity * (item.unit_cost || 0))
+        });
+
+        // Decrement product inventory stock
+        await this.updateProductStock(item.product_id, item.quantity, 'out');
+      }
+
+      const sale = await this.getSaleById(saleId);
+      if (sale) {
+        // Tag additional fields for DoubleEntryService
+        (sale as any).sale_type = 'donation_distribution';
+        (sale as any).expense_account_id = data.expense_account_id;
+        (sale as any).department_id = data.department_id;
+        (sale as any).child_id = data.child_id;
+        await DoubleEntryService.postSale(sale);
+        return { success: true, sale };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error recording donation distribution:', err);
+      return { success: false, error: err.message || 'Failed to distribute items' };
     }
   }
 

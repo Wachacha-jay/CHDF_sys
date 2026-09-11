@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Edit, Trash2, User, Mail, Phone, Calendar, 
-  DollarSign, Settings, FileText, Users, Building2, Layers, CheckCircle, Clock
+  DollarSign, Settings, FileText, Users, Building2, Layers, CheckCircle, Clock, X
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useSettingsContext } from '../contexts/SettingsContext';

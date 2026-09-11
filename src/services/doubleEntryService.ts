@@ -7,14 +7,59 @@ export class DoubleEntryService {
    */
   static async postSale(sale: Sale): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
+    const allFlatAccounts = accounts.reduce((prev: any[], curr: any) => {
       const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
+        return accs.reduce((p, c) => p.concat(c).concat(c.children ? flatten(c.children) : []), []);
       };
-      return flatten(accounts).find(a => a.code === code);
-    };
+      return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
+    }, []);
+    const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
+
+    // If this is an In-Kind Donation Distribution, post DR Expense, CR In-Kind Inventory
+    if ((sale as any).sale_type === 'donation_distribution') {
+      const expenseAccountId = (sale as any).expense_account_id;
+      const expenseAccount = allFlatAccounts.find(a => a.id === expenseAccountId) || 
+        findAccount('5335') || 
+        findAccount('5300') || 
+        allFlatAccounts.find(a => a.account_type === 'expense');
+      
+      const inKindInventory = findAccount('1135') || findAccount('1130') || allFlatAccounts.find(a => a.account_type === 'asset' && a.code?.startsWith('11'));
+
+      if (!expenseAccount || !inKindInventory) {
+        console.error('Required accounts for In-Kind distribution not found (Expense or In-Kind Inventory).');
+        return;
+      }
+
+      const distAmount = Number(sale.total_amount || 0);
+      const lines = [
+        // Debit: Destination Program Expense
+        {
+          account_id: expenseAccount.id,
+          description: `Donation Distribution Voucher #${sale.sale_number} [Expense]`,
+          debit_amount: distAmount,
+          credit_amount: 0,
+          department_id: (sale as any).department_id || undefined,
+          child_id: (sale as any).child_id || undefined
+        },
+        // Credit: In-Kind Inventory
+        {
+          account_id: inKindInventory.id,
+          description: `In-Kind Inventory Disbursed #${sale.sale_number}`,
+          debit_amount: 0,
+          credit_amount: distAmount,
+          department_id: (sale as any).department_id || undefined
+        }
+      ];
+
+      await AccountingService.createJournalEntry({
+        entry_date: sale.sale_date,
+        description: `In-Kind Distribution: #${sale.sale_number}`,
+        reference: sale.sale_number,
+        lines,
+        is_posted: true
+      });
+      return;
+    }
 
     const arAccount = findAccount('1120'); // Accounts Receivable
     const cashAccount = findAccount('1110'); // Cash

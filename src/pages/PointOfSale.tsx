@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Heart, Baby, Package, ShoppingCart, Users, GraduationCap, Gift, Plus } from 'lucide-react';
+import { Search, Heart, Baby, Package, ShoppingCart, Users, GraduationCap, Gift, Plus, Share2, Building2, BookOpen, AlertCircle } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { ProductService } from '../services/productService';
 import { SalesService } from '../services/salesService';
 import { FundAccountingService } from '../services/fundAccountingService';
-import type { Product, Customer, Child, FundAccount, Donor } from '../types';
+import { AccountingService } from '../services/accountingService';
+import type { Product, Customer, Child, FundAccount, Donor, Department, Account } from '../types';
 import { useCart } from '../hooks/useCart';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import ProductGrid from '../components/pos/ProductGrid';
@@ -28,7 +29,7 @@ const PointOfSale: React.FC = () => {
   const [customerId, setCustomerId] = useState('');
   const [showReceipt, setShowReceipt] = useState(false);
   const [currentReceipt, setCurrentReceipt] = useState<ReceiptData | null>(null);
-  const [posMode, setPosMode] = useState<'retail' | 'ngo'>('retail');
+  const [posMode, setPosMode] = useState<'retail' | 'distribution' | 'ngo'>('retail');
   const [dimensions, setDimensions] = useState<{
     department_id?: string;
     child_id?: string;
@@ -44,6 +45,16 @@ const PointOfSale: React.FC = () => {
   const [children, setChildren] = useState<Child[]>([]);
   const [donors, setDonors] = useState<Donor[]>([]);
   const [funds, setFunds] = useState<FundAccount[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
+
+  // Distribution form state
+  const [destDepartmentId, setDestDepartmentId] = useState('');
+  const [destExpenseAccountId, setDestExpenseAccountId] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [destChildId, setDestChildId] = useState('');
+  const [distributionDate, setDistributionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [distributionNotes, setDistributionNotes] = useState('');
 
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '' });
@@ -61,7 +72,30 @@ const PointOfSale: React.FC = () => {
     loadProducts();
     loadCustomers();
     loadNGODimensions();
+    loadDistributionData();
   }, []);
+
+  const loadDistributionData = async () => {
+    try {
+      const [deptList, accList] = await Promise.all([
+        FundAccountingService.getDepartments(),
+        AccountingService.getAccounts({ account_type: 'expense' })
+      ]);
+      setDepartments(deptList || []);
+      setExpenseAccounts(accList || []);
+      if (deptList && deptList.length > 0) {
+        setDestDepartmentId(deptList[0].id);
+      }
+      if (accList && accList.length > 0) {
+        const defaultExp = accList.find(a => a.code === '5335' || a.name.toLowerCase().includes('distribution')) || accList[0];
+        if (defaultExp) {
+          setDestExpenseAccountId(defaultExp.id);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading distribution departments and accounts:', err);
+    }
+  };
 
   const loadNGODimensions = async () => {
       const [childList, donorList, fundList] = await Promise.all([
@@ -125,10 +159,83 @@ const PointOfSale: React.FC = () => {
     }
   };
 
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.code.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredProducts = products.filter(product => {
+    // Mode isolation: ring-fence in-kind items to distribution mode only
+    if (posMode === 'retail' && product.is_in_kind) return false;
+    if (posMode === 'distribution' && !product.is_in_kind) return false;
+
+    return (
+      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.code.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  });
+
+  const handleDistributionCheckout = async () => {
+    if (cart.length === 0) {
+      toast.error('Distribution cart is empty');
+      return;
+    }
+    if (!destDepartmentId) {
+      toast.error('Please select a Destination Department');
+      return;
+    }
+    if (!destExpenseAccountId) {
+      toast.error('Please select an Expense Account for debit allocation');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await SalesService.recordDonationDistribution({
+        department_id: destDepartmentId,
+        expense_account_id: destExpenseAccountId,
+        distribution_date: distributionDate,
+        recipient_name: recipientName,
+        child_id: destChildId || undefined,
+        notes: distributionNotes,
+        items: cart.map(item => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+          unit_cost: item.product.cost_price || item.unitPrice || 0
+        }))
+      });
+
+      if (res.success && res.sale) {
+        const dept = departments.find(d => d.id === destDepartmentId);
+        const expAcc = expenseAccounts.find(a => a.id === destExpenseAccountId);
+        const child = children.find(c => c.id === destChildId);
+
+        const receipt = generateReceipt(
+          res.sale.sale_number,
+          recipientName || dept?.name || 'Internal Distribution',
+          cart,
+          getTotal(),
+          'in_kind_distribution',
+          {
+            type: 'distribution',
+            departmentName: dept?.name,
+            expenseAccountName: expAcc ? `${expAcc.code} - ${expAcc.name}` : undefined,
+            childName: child ? `${child.first_name} ${child.last_name}` : undefined
+          }
+        );
+        setCurrentReceipt(receipt);
+        setShowReceipt(true);
+        toast.success('Donation items distributed & posted to General Ledger (DR Expense / CR In-Kind Inventory)!');
+        clearCart();
+        setRecipientName('');
+        setDestChildId('');
+        setDistributionNotes('');
+        await loadProducts();
+      } else {
+        toast.error(res.error || 'Failed to record distribution');
+      }
+    } catch (error: any) {
+      console.error('Error distributing donation items:', error);
+      toast.error(error.message || 'Failed to record distribution');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleMpesaPayment = async () => {
     if (!phoneNumber) {
@@ -267,42 +374,53 @@ const PointOfSale: React.FC = () => {
             <div>
               <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter uppercase">Command Center</h1>
               <div className="flex items-center space-x-2 mt-1">
-                <span className={`w-2 h-2 rounded-full animate-pulse ${posMode === 'ngo' ? 'bg-emerald-500' : 'bg-indigo-500'}`} />
+                <span className={`w-2 h-2 rounded-full animate-pulse ${
+                  posMode === 'distribution' ? 'bg-emerald-500' : posMode === 'ngo' ? 'bg-purple-500' : 'bg-indigo-500'
+                }`} />
                 <p className="text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
-                  {posMode === 'retail' ? 'Standard Retail Mode' : 'NGO Mission Mode'}
+                  {posMode === 'retail' 
+                    ? 'Commercial Sales Mode (For-Profit Inventory)' 
+                    : posMode === 'distribution' 
+                      ? 'Donation Distribution Mode (In-Kind Consumables)' 
+                      : 'NGO Mission Mode (Sponsorship & Services)'}
                 </p>
               </div>
             </div>
 
-            <div className="relative grid grid-cols-2 p-1 bg-gray-100 dark:bg-slate-800 rounded-2xl w-80 h-14 shadow-inner">
-              {/* Simplified Sliding Background */}
-              <div 
-                className={`absolute inset-y-1 transition-all duration-500 ease-in-out rounded-xl shadow-lg w-[calc(50%-4px)] ${
-                    posMode === 'retail' 
-                    ? 'left-1 bg-white dark:bg-slate-700 shadow-indigo-500/10' 
-                    : 'left-1 translate-x-full bg-emerald-500 dark:bg-emerald-600 shadow-emerald-500/20'
-                }`}
-              />
-              
+            {/* 3-Way Mode Switcher */}
+            <div className="flex bg-gray-100 dark:bg-slate-800 p-1.5 rounded-2xl shadow-inner border border-gray-200 dark:border-slate-700">
               <button
-                onClick={() => setPosMode('retail')}
-                className={`relative z-10 flex items-center justify-center text-[10px] font-black uppercase tracking-widest transition-all duration-500 ${
-                    posMode === 'retail' 
-                    ? 'text-indigo-600 dark:text-white' 
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'
+                onClick={() => { setPosMode('retail'); clearCart(); }}
+                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
+                  posMode === 'retail' 
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-md shadow-indigo-500/10' 
+                    : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
                 }`}
               >
-                Retail
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Commercial Sales</span>
               </button>
               <button
-                onClick={() => setPosMode('ngo')}
-                className={`relative z-10 flex items-center justify-center text-[10px] font-black uppercase tracking-widest transition-all duration-500 ${
-                    posMode === 'ngo' 
-                    ? 'text-white' 
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'
+                onClick={() => { setPosMode('distribution'); clearCart(); }}
+                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
+                  posMode === 'distribution' 
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20' 
+                    : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
                 }`}
               >
-                NGO Services
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Donation Distribution</span>
+              </button>
+              <button
+                onClick={() => { setPosMode('ngo'); clearCart(); }}
+                className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center space-x-2 ${
+                  posMode === 'ngo' 
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' 
+                    : 'text-gray-500 hover:text-gray-900 dark:hover:text-slate-300'
+                }`}
+              >
+                <Gift className="w-3.5 h-3.5" />
+                <span>NGO Services</span>
               </button>
             </div>
           </div>
@@ -310,13 +428,17 @@ const PointOfSale: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
-          {posMode === 'retail' && (
+          {posMode !== 'ngo' && (
             <div className="mb-8 animate-in fade-in slide-in-from-left-4 duration-500">
               <div className="relative group">
                 <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400 h-6 w-6 group-focus-within:text-indigo-500 transition-colors" />
                 <input
                   type="text"
-                  placeholder="Scan barcode or search premium products..."
+                  placeholder={
+                    posMode === 'distribution'
+                      ? "Search in-kind relief items (food, supplies, medicine)..."
+                      : "Scan barcode or search commercial products..."
+                  }
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-16 pr-6 py-5 bg-white dark:bg-slate-900 border-none rounded-3xl text-lg font-black placeholder:text-gray-300 dark:placeholder:text-slate-700 focus:ring-4 focus:ring-indigo-500/10 dark:text-white transition-all shadow-xl shadow-indigo-500/5"
@@ -376,75 +498,238 @@ const PointOfSale: React.FC = () => {
                 </div>
               ))}
             </div>
+          ) : posMode === 'distribution' && filteredProducts.length === 0 ? (
+            <div className="card p-12 text-center max-w-lg mx-auto my-12 border-2 border-dashed border-emerald-300 dark:border-emerald-800">
+              <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Package className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tight">No In-Kind Consumables In Stock</h3>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-2 mb-6 leading-relaxed">
+                In-kind items (like food sacks, medicine, hygiene supplies) are received through <strong>Fund Accounting &gt; Donations</strong> under "In-Kind Donation", or can be marked as "In-Kind" in the <strong>Inventory</strong> catalog.
+              </p>
+              <div className="flex flex-col sm:flex-row justify-center gap-3">
+                <button
+                  onClick={() => navigate('/fund-accounting/donations')}
+                  className="btn-primary text-xs uppercase tracking-wider py-3 px-4 font-black flex items-center justify-center gap-1.5"
+                >
+                  <Gift className="w-4 h-4" />
+                  <span>Receive In-Kind Donation</span>
+                </button>
+                <button
+                  onClick={() => navigate('/inventory')}
+                  className="btn-secondary text-xs uppercase tracking-wider py-3 px-4 font-black"
+                >
+                  Manage Inventory
+                </button>
+              </div>
+            </div>
           ) : (
             <ProductGrid products={filteredProducts} loading={loading} onAddToCart={addToCart} />
           )}
         </div>
       </div>
+
       {/* Cart Section */}
       <div className="w-96 bg-gray-50 dark:bg-slate-950 border-l border-gray-200 dark:border-slate-800 flex flex-col">
         <div className="p-6 border-b border-gray-200 dark:border-slate-800">
-          <h2 className="text-xl font-black text-gray-900 dark:text-white mb-4">Cart</h2>
-          <PaymentForm
-            paymentMethod={paymentMethod}
-            setPaymentMethod={setPaymentMethod}
-            customerName={customerName}
-            setCustomerName={setCustomerName}
-            phoneNumber={phoneNumber}
-            setPhoneNumber={setPhoneNumber}
-            customerId={customerId}
-            setCustomerId={setCustomerId}
-            customers={customers}
-            onAddCustomer={() => setShowAddCustomer(true)}
-            posMode={posMode}
-          />
-          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800">
-            {posMode === 'ngo' ? (
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Mission Tracking (Required)</label>
-                <DimensionSelector 
-                  value={dimensions}
-                  onChange={setDimensions}
+          <h2 className="text-xl font-black text-gray-900 dark:text-white mb-4">
+            {posMode === 'distribution' ? 'Distribution Cart' : 'Cart'}
+          </h2>
+
+          {posMode === 'distribution' ? (
+            /* Distribution Dedicated Destination & Allocation Panel */
+            <div className="space-y-4">
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 rounded-xl">
+                <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-black text-[11px] uppercase tracking-wider">
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Distribution Requisition</span>
+                </div>
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 leading-relaxed">
+                  Dispatched items reduce In-Kind Inventory (1135) and post as an Expense against the selected department.
+                </p>
+              </div>
+
+              {/* Destination Department (Required) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Destination Department *
+                </label>
+                <select
+                  value={destDepartmentId}
+                  onChange={(e) => setDestDepartmentId(e.target.value)}
+                  required
+                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
+                >
+                  <option value="">-- Select Destination Department --</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Expense Account (Required) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                  <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                  Expense Account (Debit) *
+                </label>
+                <select
+                  value={destExpenseAccountId}
+                  onChange={(e) => setDestExpenseAccountId(e.target.value)}
+                  required
+                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
+                >
+                  <option value="">-- Select Expense G/L Account --</option>
+                  {expenseAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>{acc.code} - {acc.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Recipient / Beneficiary (Optional) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-emerald-600" />
+                  Recipient / Beneficiary (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={recipientName}
+                  onChange={(e) => setRecipientName(e.target.value)}
+                  placeholder="e.g. School Kitchen, Dormitory A, John"
+                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
                 />
               </div>
-            ) : (
-              <details className="group">
-                <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-indigo-500 transition-colors">
-                  <span>Optional Tracking Info</span>
-                  <span className="group-open:rotate-180 transition-transform">↓</span>
-                </summary>
-                <div className="mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <DimensionSelector 
-                    value={dimensions}
-                    onChange={setDimensions}
+
+              {/* Beneficiary Child (Optional) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                  <Baby className="w-3.5 h-3.5 text-emerald-600" />
+                  Beneficiary Child (Optional)
+                </label>
+                <select
+                  value={destChildId}
+                  onChange={(e) => setDestChildId(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
+                >
+                  <option value="">-- None (General Distribution) --</option>
+                  {children.map((c) => (
+                    <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date & Notes */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest">Date</label>
+                  <input
+                    type="date"
+                    value={distributionDate}
+                    onChange={(e) => setDistributionDate(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-1.5 px-2.5 dark:text-white"
                   />
                 </div>
-              </details>
-            )}
-          </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest">Requisition / Ref</label>
+                  <input
+                    type="text"
+                    value={distributionNotes}
+                    onChange={(e) => setDistributionNotes(e.target.value)}
+                    placeholder="e.g. Weekly supply"
+                    className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-1.5 px-2.5 dark:text-white"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Standard Commercial or NGO Payment Form */
+            <>
+              <PaymentForm
+                paymentMethod={paymentMethod}
+                setPaymentMethod={setPaymentMethod}
+                customerName={customerName}
+                setCustomerName={setCustomerName}
+                phoneNumber={phoneNumber}
+                setPhoneNumber={setPhoneNumber}
+                customerId={customerId}
+                setCustomerId={setCustomerId}
+                customers={customers}
+                onAddCustomer={() => setShowAddCustomer(true)}
+                posMode={posMode}
+              />
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800">
+                {posMode === 'ngo' ? (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Mission Tracking (Required)</label>
+                    <DimensionSelector 
+                      value={dimensions}
+                      onChange={setDimensions}
+                    />
+                  </div>
+                ) : (
+                  <details className="group">
+                    <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-indigo-500 transition-colors">
+                      <span>Optional Tracking Info</span>
+                      <span className="group-open:rotate-180 transition-transform">↓</span>
+                    </summary>
+                    <div className="mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <DimensionSelector 
+                        value={dimensions}
+                        onChange={setDimensions}
+                      />
+                    </div>
+                  </details>
+                )}
+              </div>
+            </>
+          )}
         </div>
+
         <div className="flex-1 overflow-auto bg-white/50 dark:bg-transparent">
-            <Cart cart={cart} updateQuantity={updateQuantity} removeFromCart={removeFromCart} />
+          <Cart cart={cart} updateQuantity={updateQuantity} removeFromCart={removeFromCart} />
         </div>
-        {/* Checkout */}
+
+        {/* Checkout Footer */}
         <div className="p-6 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
           <div className="flex justify-between items-center mb-6">
-            <span className="text-sm font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">Grand Total</span>
-            <span className="text-3xl font-black text-indigo-600 dark:text-indigo-400">
+            <span className="text-sm font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
+              {posMode === 'distribution' ? 'Total Valuation' : 'Grand Total'}
+            </span>
+            <span className={`text-3xl font-black ${
+              posMode === 'distribution' ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'
+            }`}>
               KSh {getTotal().toLocaleString()}
             </span>
           </div>
-          <button
-            onClick={paymentMethod === 'mpesa' ? handleMpesaPayment : handleCheckout}
-            disabled={cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)}
-            className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 ${
-              cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)
-                ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
-                : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 dark:shadow-none'
-            }`}
-          >
-            {loading ? 'Processing...' : paymentMethod === 'mpesa' ? 'Initiate M-Pesa' : posMode === 'ngo' ? 'Confirm NGO Service' : 'Complete Purchase'}
-          </button>
+
+          {posMode === 'distribution' ? (
+            <button
+              onClick={handleDistributionCheckout}
+              disabled={cart.length === 0 || loading || !destDepartmentId || !destExpenseAccountId}
+              className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 flex items-center justify-center space-x-2 ${
+                cart.length === 0 || loading || !destDepartmentId || !destExpenseAccountId
+                  ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+              }`}
+            >
+              <Share2 className="w-4 h-4 mr-2" />
+              <span>{loading ? 'Posting Distribution...' : 'Distribute Items'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={paymentMethod === 'mpesa' ? handleMpesaPayment : handleCheckout}
+              disabled={cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)}
+              className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 ${
+                cart.length === 0 || loading || (posMode === 'ngo' && !dimensions.fund_id)
+                  ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 dark:shadow-none'
+              }`}
+            >
+              {loading ? 'Processing...' : paymentMethod === 'mpesa' ? 'Initiate M-Pesa' : posMode === 'ngo' ? 'Confirm NGO Service' : 'Complete Purchase'}
+            </button>
+          )}
         </div>
       </div>
       {/* Receipt Modal */}

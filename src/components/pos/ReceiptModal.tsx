@@ -48,6 +48,20 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) => {
             <span className="text-sm font-black text-gray-900 dark:text-white truncate max-w-[200px]">{receipt.customerName}</span>
           </div>
           
+          {receipt.departmentName && (
+            <div className="flex justify-between items-center pt-2 border-t border-gray-200/50 dark:border-slate-700/50">
+              <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Destination Dept</span>
+              <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">{receipt.departmentName}</span>
+            </div>
+          )}
+
+          {receipt.expenseAccountName && (
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-widest">Expense Account</span>
+              <span className="text-xs font-black text-purple-600 dark:text-purple-400 truncate max-w-[200px]">{receipt.expenseAccountName}</span>
+            </div>
+          )}
+
           {receipt.childName && (
             <div className="flex justify-between items-center pt-2 border-t border-gray-200/50 dark:border-slate-700/50">
               <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Beneficiary</span>

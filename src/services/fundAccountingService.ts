@@ -6,6 +6,7 @@ import {
   Child, 
   FundAccount, 
   Donation, 
+  DonationItem,
   InternalTransfer, 
   Sponsor,
   JournalEntryLine,
@@ -13,6 +14,8 @@ import {
   Sponsorship
 } from '../types';
 import { AccountingService } from './accountingService';
+import { FixedAssetService } from './fixedAssetService';
+import { ProductService } from './productService';
 
 export class FundAccountingService {
   // Sponsorship Operations
@@ -160,13 +163,58 @@ export class FundAccountingService {
   }
 
   // Donation Operations
+  static async getDonationItems(donationId: string): Promise<DonationItem[]> {
+    try {
+      const response = await ApiService.get<DonationItem>('donation_items', {
+        filters: { donation_id: donationId }
+      });
+      return response.success && response.data ? response.data : [];
+    } catch (err) {
+      console.error('Failed to get donation items:', err);
+      return [];
+    }
+  }
+
   static async recordDonation(donation: Partial<Donation>): Promise<Donation | null> {
-    const payload = {
-      ...donation,
+    const { items, ...donationData } = donation;
+    
+    // If in-kind items provided, compute total fair market value
+    let totalFMV = Number(donationData.amount || 0);
+    if (items && items.length > 0) {
+      totalFMV = items.reduce((sum, it) => sum + Number(it.fair_market_value || 0), 0);
+    }
+
+    const payload: any = {
+      ...donationData,
+      amount: totalFMV,
+      total_fair_market_value: totalFMV,
+      is_in_kind: donation.is_in_kind ? 1 : 0,
       is_posted: false
     };
+
     const response = await ApiService.create<Donation>('donations', payload);
-    return response.success ? response.data : null;
+    if (response.success && response.data) {
+      const savedDonation = response.data;
+      if (items && items.length > 0) {
+        for (const item of items) {
+          await ApiService.create('donation_items', {
+            donation_id: savedDonation.id,
+            item_description: item.item_description,
+            asset_class: item.asset_class,
+            fair_market_value: Number(item.fair_market_value || 0),
+            quantity: Number(item.quantity || 1),
+            unit_of_measure: item.unit_of_measure || 'units',
+            product_id: item.product_id || null,
+            department_id: item.department_id || null,
+            fixed_asset_id: item.fixed_asset_id || null,
+            project_name: item.project_name || null,
+            notes: item.notes || null
+          });
+        }
+      }
+      return savedDonation;
+    }
+    return null;
   }
 
   static async postDonationToGL(donation: Donation): Promise<{ success: boolean; error?: string }> {
@@ -184,17 +232,60 @@ export class FundAccountingService {
   }
 
   static async updateDonation(id: string, donation: Partial<Donation>): Promise<boolean> {
-    const response = await ApiService.update<Donation>('donations', id, donation);
-    if (response.success && response.data && response.data.is_posted) {
-      // Re-post updated donation details to Ledger if it was already posted
-      try {
-        await this.postDonationToLedger(response.data);
-      } catch (err) {
-        console.error('Failed to re-post updated donation to ledger:', err);
+    const { items, ...donationData } = donation;
+    
+    let totalFMV = Number(donationData.amount || 0);
+    if (items && items.length > 0) {
+      totalFMV = items.reduce((sum, it) => sum + Number(it.fair_market_value || 0), 0);
+    }
+
+    const payload: any = {
+      ...donationData,
+      amount: totalFMV,
+      total_fair_market_value: totalFMV
+    };
+    if (donation.is_in_kind !== undefined) {
+      payload.is_in_kind = donation.is_in_kind ? 1 : 0;
+    }
+
+    const response = await ApiService.update<Donation>('donations', id, payload);
+    if (response.success) {
+      if (items !== undefined) {
+        try {
+          const existingItems = await this.getDonationItems(id);
+          for (const ex of existingItems) {
+            if (ex.id) await ApiService.delete('donation_items', ex.id);
+          }
+          for (const item of items) {
+            await ApiService.create('donation_items', {
+              donation_id: id,
+              item_description: item.item_description,
+              asset_class: item.asset_class,
+              fair_market_value: Number(item.fair_market_value || 0),
+              quantity: Number(item.quantity || 1),
+              unit_of_measure: item.unit_of_measure || 'units',
+              product_id: item.product_id || null,
+              department_id: item.department_id || null,
+              fixed_asset_id: item.fixed_asset_id || null,
+              project_name: item.project_name || null,
+              notes: item.notes || null
+            });
+          }
+        } catch (itemErr) {
+          console.error('Failed to sync donation items during update:', itemErr);
+        }
+      }
+
+      if (response.data && response.data.is_posted) {
+        try {
+          await this.postDonationToLedger(response.data);
+        } catch (err) {
+          console.error('Failed to re-post updated donation to ledger:', err);
+        }
       }
       return true;
     }
-    return response.success;
+    return false;
   }
 
   static async deleteDonation(id: string): Promise<boolean> {
@@ -206,52 +297,6 @@ export class FundAccountingService {
     const accounts = await AccountingService.getAccounts();
     const allFlatAccounts = AccountingService.flattenAccounts(accounts);
     const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
-
-    // Revenue Account Selection: specific NGO revenue codes or general revenue fallbacks
-    let donationRevenueAccount = null;
-    if (donation.restricted_to_child_id) {
-      donationRevenueAccount = findAccount('4240') || findAccount('4220') || findAccount('4200');
-    } else if (donation.fund_id) {
-      donationRevenueAccount = findAccount('4220') || findAccount('4200');
-    } else {
-      donationRevenueAccount = findAccount('4210') || findAccount('4200');
-    }
-
-    if (!donationRevenueAccount) {
-      donationRevenueAccount = findAccount('4200') || 
-        findAccount('4000') || 
-        findAccount('4100') || 
-        findAccount('4300') || 
-        findAccount('4400') ||
-        allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'revenue' || a.account_type?.toLowerCase() === 'income' || a.code?.startsWith('4'));
-    }
-
-    if (!donationRevenueAccount) {
-      throw new Error('No Revenue account found in Chart of Accounts. Please create a Revenue account (e.g. Code 4200 Donation Revenue).');
-    }
-
-    // Asset Account Selection (Cash / Bank)
-    const cashAccount = findAccount('1110') || findAccount('1000') || allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'asset' && (a.code?.startsWith('11') || a.code?.startsWith('10')));
-    const mpesaAccount = findAccount('1111') || cashAccount;
-
-    let debitAccount = null;
-    if (donation.payment_account_id) {
-      debitAccount = allFlatAccounts.find(a => a.id === donation.payment_account_id);
-    }
-    if (!debitAccount) {
-      if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
-        debitAccount = mpesaAccount || cashAccount;
-      } else {
-        debitAccount = cashAccount;
-      }
-    }
-    if (!debitAccount) {
-      debitAccount = allFlatAccounts.find(a => a.account_type?.toLowerCase() === 'asset' || a.code?.startsWith('1'));
-    }
-
-    if (!debitAccount) {
-      throw new Error('No Cash or Bank asset account found in Chart of Accounts. Please create an Asset account (e.g. Code 1110 Cash or 1111 Bank).');
-    }
 
     // Build human-readable donor label & restriction note for General Ledger
     let donorName = 'General Donor';
@@ -290,10 +335,204 @@ export class FundAccountingService {
       }
     }
 
+    const entryDate = donation.donation_date 
+      ? new Date(donation.donation_date).toISOString().split('T')[0] 
+      : new Date().toISOString().split('T')[0];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CASE 1: IN-KIND MULTI-CLASS DONATION ROUTING
+    // ─────────────────────────────────────────────────────────────────────────
+    if (donation.is_in_kind) {
+      // 1. In-Kind Revenue Account
+      const inKindRevenueAccount = findAccount('4260') || 
+        findAccount('4200') || 
+        allFlatAccounts.find(a => a.account_type === 'revenue' && a.code?.startsWith('4'));
+
+      if (!inKindRevenueAccount) {
+        throw new Error('In-Kind Donation Revenue account (Code 4260) not found in Chart of Accounts.');
+      }
+
+      // 2. Destination Asset Accounts
+      const inKindInventoryAccount = findAccount('1135') || findAccount('1130') || allFlatAccounts.find(a => a.account_type === 'asset' && a.code?.startsWith('11'));
+      const equipmentAccount = findAccount('1210') || findAccount('1200') || allFlatAccounts.find(a => a.account_type === 'asset' && a.code?.startsWith('12'));
+      const buildingAccount = findAccount('1230') || findAccount('1200') || equipmentAccount;
+
+      if (!inKindInventoryAccount || !equipmentAccount || !buildingAccount) {
+        throw new Error('Required Asset accounts (1135 In-Kind Inventory, 1210 Equipment, 1230 Buildings) not found in Chart of Accounts.');
+      }
+
+      // Fetch items if not already on the donation object
+      const items = (donation.items && donation.items.length > 0)
+        ? donation.items 
+        : await this.getDonationItems(donation.id);
+
+      if (items.length === 0) {
+        throw new Error('In-Kind donation contains no line items to post.');
+      }
+
+      const lines: any[] = [];
+      let totalFMV = 0;
+
+      for (const item of items) {
+        const lineVal = Number(item.fair_market_value || 0);
+        totalFMV += lineVal;
+
+        if (item.asset_class === 'consumable') {
+          // A. Consumable Inventory: Debit 1135 In-Kind Inventory
+          lines.push({
+            account_id: inKindInventoryAccount.id,
+            description: `In-Kind Consumable: ${item.item_description} (${item.quantity} ${item.unit_of_measure || 'units'})`,
+            debit_amount: lineVal,
+            credit_amount: 0,
+            donor_id: donation.donor_id || undefined,
+            fund_id: donation.fund_id || undefined,
+            child_id: donation.restricted_to_child_id || undefined
+          });
+
+          // Increment Product Inventory Stock
+          if (item.product_id) {
+            try {
+              await ProductService.updateProductStock(item.product_id, Number(item.quantity || 1), 'in');
+            } catch (stockErr) {
+              console.warn(`Failed to update stock for product ${item.product_id}:`, stockErr);
+            }
+          }
+
+        } else if (item.asset_class === 'fixed_asset') {
+          // B. Fixed Asset (Equipment/Furniture): Debit 1210 Equipment
+          lines.push({
+            account_id: equipmentAccount.id,
+            description: `In-Kind Equipment: ${item.item_description}`,
+            debit_amount: lineVal,
+            credit_amount: 0,
+            department_id: item.department_id || undefined,
+            donor_id: donation.donor_id || undefined,
+            fund_id: donation.fund_id || undefined
+          });
+
+          // Log in Fixed Asset Register
+          try {
+            await FixedAssetService.create({
+              asset_name: item.item_description,
+              description: `In-Kind donation from ${donorName}. ${item.notes || ''}`.trim(),
+              asset_type: 'Equipment & Machinery',
+              purchase_date: entryDate,
+              purchase_cost: lineVal,
+              current_value: lineVal,
+              salvage_value: 0,
+              useful_life_years: 5,
+              department_id: item.department_id || undefined,
+              status: 'Active'
+            });
+          } catch (assetErr) {
+            console.warn('Failed to auto-register fixed asset:', assetErr);
+          }
+
+        } else if (item.asset_class === 'construction') {
+          // C. Construction / Infrastructure: Debit 1230 Buildings & Infrastructure
+          lines.push({
+            account_id: buildingAccount.id,
+            description: `In-Kind Infrastructure: ${item.item_description}${item.project_name ? ` (${item.project_name})` : ''}`,
+            debit_amount: lineVal,
+            credit_amount: 0,
+            donor_id: donation.donor_id || undefined,
+            fund_id: donation.fund_id || undefined
+          });
+
+          // Log in Fixed Asset Register under Buildings & Infrastructure
+          try {
+            await FixedAssetService.create({
+              asset_name: `${item.item_description}${item.project_name ? ` - ${item.project_name}` : ''}`,
+              description: `In-Kind construction/materials for ${item.project_name || 'infrastructure project'} from ${donorName}. ${item.notes || ''}`.trim(),
+              asset_type: 'Buildings & Infrastructure',
+              purchase_date: entryDate,
+              purchase_cost: lineVal,
+              current_value: lineVal,
+              salvage_value: 0,
+              useful_life_years: 25,
+              department_id: item.department_id || undefined,
+              status: 'Active'
+            });
+          } catch (assetErr) {
+            console.warn('Failed to auto-register construction fixed asset:', assetErr);
+          }
+        }
+      }
+
+      // Credit: In-Kind Donation Revenue
+      lines.push({
+        account_id: inKindRevenueAccount.id,
+        description: `In-Kind Donation Revenue recognised: ${donorName}${restrictionNote}`,
+        debit_amount: 0,
+        credit_amount: totalFMV,
+        donor_id: donation.donor_id || undefined,
+        fund_id: donation.fund_id || undefined,
+        child_id: donation.restricted_to_child_id || undefined
+      });
+
+      const entry = await AccountingService.createJournalEntry({
+        entry_date: entryDate,
+        description: `In-Kind Donation: ${donorName}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
+        reference: donation.reference_number || undefined,
+        is_posted: true,
+        lines
+      });
+
+      if (!entry) {
+        throw new Error('Journal Entry creation returned null.');
+      }
+      return entry;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CASE 2: STANDARD MONETARY (CASH / BANK / M-PESA) DONATION ROUTING
+    // ─────────────────────────────────────────────────────────────────────────
+    let donationRevenueAccount = null;
+    if (donation.restricted_to_child_id) {
+      donationRevenueAccount = findAccount('4240') || findAccount('4220') || findAccount('4200');
+    } else if (donation.fund_id) {
+      donationRevenueAccount = findAccount('4220') || findAccount('4200');
+    } else {
+      donationRevenueAccount = findAccount('4210') || findAccount('4200');
+    }
+
+    if (!donationRevenueAccount) {
+      donationRevenueAccount = findAccount('4200') || 
+        findAccount('4000') || 
+        findAccount('4100') || 
+        allFlatAccounts.find(a => a.account_type === 'revenue' || a.code?.startsWith('4'));
+    }
+
+    if (!donationRevenueAccount) {
+      throw new Error('No Revenue account found in Chart of Accounts. Please create a Revenue account (e.g. Code 4200 Donation Revenue).');
+    }
+
+    const cashAccount = findAccount('1110') || findAccount('1000') || allFlatAccounts.find(a => a.account_type === 'asset' && (a.code?.startsWith('11') || a.code?.startsWith('10')));
+    const mpesaAccount = findAccount('1111') || cashAccount;
+
+    let debitAccount = null;
+    if (donation.payment_account_id) {
+      debitAccount = allFlatAccounts.find(a => a.id === donation.payment_account_id);
+    }
+    if (!debitAccount) {
+      if (donation.payment_method === 'mpesa' || donation.payment_method === 'bank' || donation.payment_method === 'cheque') {
+        debitAccount = mpesaAccount || cashAccount;
+      } else {
+        debitAccount = cashAccount;
+      }
+    }
+    if (!debitAccount) {
+      debitAccount = allFlatAccounts.find(a => a.account_type === 'asset' || a.code?.startsWith('1'));
+    }
+
+    if (!debitAccount) {
+      throw new Error('No Cash or Bank asset account found in Chart of Accounts. Please create an Asset account (e.g. Code 1110 Cash or 1111 Bank).');
+    }
+
     const amt = Number(donation.amount || 0);
 
     const entry = await AccountingService.createJournalEntry({
-      entry_date: donation.donation_date ? new Date(donation.donation_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      entry_date: entryDate,
       description: `Donation: ${donorName}${restrictionNote}${donation.notes ? ' — ' + donation.notes : ''}`,
       reference: donation.reference_number || undefined,
       is_posted: true,
@@ -322,9 +561,8 @@ export class FundAccountingService {
     });
 
     if (!entry) {
-      throw new Error('Journal Entry creation returned null. Check backend server logs or database constraints.');
+      throw new Error('Journal Entry creation returned null.');
     }
-
     return entry;
   }
 

@@ -83,6 +83,7 @@ export interface Product {
   image_url?: string;
   is_active: boolean;
   is_service: boolean;
+  is_in_kind?: boolean;
   tax_rate: number;
   created_by?: string;
   created_at: string;
@@ -257,7 +258,7 @@ export interface Designation {
 export interface Sale {
   id: string;
   sale_number: string;
-  sale_type?: 'standard' | 'school_fees' | 'child_support' | 'sponsorship';
+  sale_type?: 'standard' | 'school_fees' | 'child_support' | 'sponsorship' | 'donation_distribution';
   customer_id?: string;
   sale_date: string;
   due_date?: string;
@@ -275,6 +276,7 @@ export interface Sale {
   customer?: Customer;
   items?: SaleItem[];
   department_id?: string;
+  expense_account_id?: string;
   child_id?: string;
   donor_id?: string;
   fund_id?: string;
@@ -636,6 +638,23 @@ export interface Sponsorship {
   sponsor?: Sponsor;
 }
 
+export interface DonationItem {
+  id?: string;
+  donation_id?: string;
+  item_description: string;
+  asset_class: 'consumable' | 'fixed_asset' | 'construction';
+  fair_market_value: number;
+  quantity: number;
+  unit_of_measure?: string;
+  product_id?: string;
+  department_id?: string;
+  fixed_asset_id?: string;
+  project_name?: string;
+  notes?: string;
+  product?: Product;
+  department?: Department;
+}
+
 export interface Donation {
   id: string;
   donor_id: string;
@@ -647,6 +666,8 @@ export interface Donation {
   payment_method: string;
   reference_number?: string;
   is_anonymous: boolean;
+  is_in_kind?: boolean;
+  total_fair_market_value?: number;
   is_posted?: boolean;
   restricted_to_child_id?: string;
   notes?: string;
@@ -655,6 +676,7 @@ export interface Donation {
   donor?: Donor;
   fund?: FundAccount;
   child?: Child;
+  items?: DonationItem[];
 }
 
 export interface InternalTransfer {

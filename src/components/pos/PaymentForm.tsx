@@ -15,7 +15,7 @@ interface PaymentFormProps {
   setCustomerId: (id: string) => void;
   customers: Customer[];
   onAddCustomer?: () => void;
-  posMode?: 'retail' | 'ngo';
+  posMode?: 'retail' | 'ngo' | 'distribution';
 }
 
 const PaymentForm: React.FC<PaymentFormProps> = ({

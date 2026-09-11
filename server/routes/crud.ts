@@ -15,9 +15,83 @@ const VALID_TABLES = [
   'bank_reconciliations', 'journal_entries', 'journal_entry_lines',
   // NGO / Fund Accounting tables
   'departments', 'children', 'guardians', 'donors', 'sponsors', 'donor_clusters',
-  'fund_accounts', 'donations', 'sponsorships', 'internal_transfers', 'audit_logs',
+  'fund_accounts', 'donations', 'donation_items', 'sponsorships', 'internal_transfers', 'audit_logs',
   'fixed_assets'
 ];
+
+// Self-healing schema for in-kind donations & distribution
+let inKindSchemaEnsured = false;
+async function ensureInKindSchema() {
+  if (inKindSchemaEnsured) return;
+  try {
+    // 1. Ensure accounts exist
+    await pool.query(`
+      INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
+        (UUID(), '1135', 'In-Kind Inventory', 'asset', 1),
+        (UUID(), '1210', 'Fixed Assets - Equipment & Machinery', 'asset', 1),
+        (UUID(), '1220', 'Fixed Assets - Furniture & Fixtures', 'asset', 1),
+        (UUID(), '1230', 'Fixed Assets - Buildings & Infrastructure', 'asset', 1),
+        (UUID(), '4260', 'In-Kind Donations', 'revenue', 1),
+        (UUID(), '5335', 'Food & Consumables Distribution Expense', 'expense', 1)
+    `);
+
+    // 2. Ensure products.is_in_kind
+    const [prodCols]: any = await pool.query('SHOW COLUMNS FROM products');
+    const prodColNames = new Set(prodCols.map((c: any) => c.Field));
+    if (!prodColNames.has('is_in_kind')) {
+      await pool.query('ALTER TABLE products ADD COLUMN is_in_kind TINYINT(1) NOT NULL DEFAULT 0');
+    }
+
+    // 3. Ensure donations.is_in_kind & total_fair_market_value
+    const [donCols]: any = await pool.query('SHOW COLUMNS FROM donations');
+    const donColNames = new Set(donCols.map((c: any) => c.Field));
+    if (!donColNames.has('is_in_kind')) {
+      await pool.query('ALTER TABLE donations ADD COLUMN is_in_kind TINYINT(1) NOT NULL DEFAULT 0');
+    }
+    if (!donColNames.has('total_fair_market_value')) {
+      await pool.query('ALTER TABLE donations ADD COLUMN total_fair_market_value DECIMAL(12,4) DEFAULT 0');
+    }
+
+    // 4. Ensure sales.expense_account_id
+    const [saleCols]: any = await pool.query('SHOW COLUMNS FROM sales');
+    const saleColNames = new Set(saleCols.map((c: any) => c.Field));
+    if (!saleColNames.has('expense_account_id')) {
+      await pool.query('ALTER TABLE sales ADD COLUMN expense_account_id CHAR(36) NULL');
+    }
+
+    // 5. Ensure donation_items table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS donation_items (
+        id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        donation_id CHAR(36) NOT NULL,
+        item_description VARCHAR(255) NOT NULL,
+        asset_class ENUM('consumable', 'fixed_asset', 'construction') NOT NULL,
+        fair_market_value DECIMAL(12,4) NOT NULL DEFAULT 0,
+        quantity DECIMAL(12,4) NOT NULL DEFAULT 1,
+        unit_of_measure VARCHAR(50) DEFAULT 'units',
+        product_id CHAR(36) NULL,
+        department_id CHAR(36) NULL,
+        fixed_asset_id CHAR(36) NULL,
+        project_name VARCHAR(255) NULL,
+        notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_donation_id (donation_id),
+        INDEX idx_product_id (product_id),
+        INDEX idx_dept_id (department_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    inKindSchemaEnsured = true;
+  } catch (err) {
+    console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
+  }
+}
+
+// Attach ensureInKindSchema middleware to router
+router.use(async (_req, _res, next) => {
+  await ensureInKindSchema();
+  next();
+});
 
 // GET list
 router.get('/:table', authenticate, async (req, res): Promise<void> => {

@@ -1,6 +1,6 @@
 import type { CartItem } from '../hooks/useCart';
 
-type PaymentMethod = 'cash' | 'mpesa' | 'card';
+type PaymentMethod = 'cash' | 'mpesa' | 'card' | 'credit' | 'in_kind_distribution' | string;
 
 export interface ReceiptBusinessDetails {
   businessName?: string;
@@ -23,10 +23,12 @@ export interface ReceiptData {
   paymentMethod: string;
   date: string;
   time: string;
-  type?: 'sale' | 'payment' | 'donation' | 'school_fee';
+  type?: 'sale' | 'payment' | 'donation' | 'school_fee' | 'distribution';
   childName?: string;
   donorName?: string;
   fundName?: string;
+  departmentName?: string;
+  expenseAccountName?: string;
 }
 
 export function generateReceipt(
@@ -36,10 +38,12 @@ export function generateReceipt(
   total: number, 
   paymentMethod: PaymentMethod,
   options?: {
-    type?: 'sale' | 'payment' | 'donation' | 'school_fee';
+    type?: 'sale' | 'payment' | 'donation' | 'school_fee' | 'distribution';
     childName?: string;
     donorName?: string;
     fundName?: string;
+    departmentName?: string;
+    expenseAccountName?: string;
   }
 ): ReceiptData {
   const now = new Date();
@@ -64,8 +68,13 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
   const logoUrl = businessDetails?.logoUrl || '';
   const currency = (businessDetails?.currency && businessDetails.currency !== 'USD') ? businessDetails.currency : 'KES';
   const isSchoolFee = receipt.type === 'school_fee';
-  const receiptTitle = isSchoolFee ? 'SCHOOL FEE PAYMENT RECEIPT' : 'PAYMENT RECEIPT';
-  const accentColor = isSchoolFee ? '#4f46e5' : '#2563eb';
+  const isDistribution = receipt.type === 'distribution';
+  const receiptTitle = isDistribution
+    ? 'DONATION DISTRIBUTION VOUCHER'
+    : isSchoolFee
+      ? 'SCHOOL FEE PAYMENT RECEIPT'
+      : 'PAYMENT RECEIPT';
+  const accentColor = isDistribution ? '#059669' : isSchoolFee ? '#4f46e5' : '#2563eb';
 
   if (receiptWindow) {
     receiptWindow.document.write(`
@@ -291,17 +300,19 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
         <!-- INFO GRID -->
         <div class="info-grid">
           <div class="info-box">
-            <h4>${isSchoolFee ? 'Guardian / Payer' : 'Customer'}</h4>
+            <h4>${isDistribution ? 'Recipient / Destination' : isSchoolFee ? 'Guardian / Payer' : 'Customer'}</h4>
             <p><strong>${receipt.customerName || 'N/A'}</strong></p>
+            ${receipt.departmentName ? `<p style="margin-top: 6px; font-size: 12px; color: #64748b;">Destination Department</p><p><strong>${receipt.departmentName}</strong></p>` : ''}
             ${receipt.childName ? `<p style="margin-top: 6px; font-size: 12px; color: #64748b;">Beneficiary Child</p><p><strong>${receipt.childName}</strong></p>` : ''}
           </div>
           <div class="info-box">
-            <h4>Program Details</h4>
+            <h4>${isDistribution ? 'Accounting Allocation' : 'Program Details'}</h4>
+            ${receipt.expenseAccountName ? `<p><strong>Expense Account:</strong> ${receipt.expenseAccountName}</p>` : ''}
             ${receipt.fundName ? `<p><strong>Fund:</strong> ${receipt.fundName}</p>` : ''}
-            <p><strong>Payment Method:</strong> ${receipt.paymentMethod.toUpperCase()}</p>
+            <p><strong>Payment / Transfer Method:</strong> ${receipt.paymentMethod.toUpperCase()}</p>
             <p><strong>Transaction Type:</strong>
-              <span class="type-badge ${receipt.paymentMethod.includes('Fund') ? 'type-outflow' : 'type-inflow'}">
-                ${isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}
+              <span class="type-badge ${receipt.paymentMethod.includes('Fund') || isDistribution ? 'type-outflow' : 'type-inflow'}">
+                ${isDistribution ? 'Donation Stock Distribution' : isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}
               </span>
             </p>
           </div>
