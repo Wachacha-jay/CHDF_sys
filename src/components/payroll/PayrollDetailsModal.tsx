@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Printer } from 'lucide-react';
 import type { PayrollRun, PayrollDeduction, PayrollAllowance } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
+import { useAuthContext } from '../../contexts/useAuthContext';
 
 interface PayrollDetailsModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ const PayrollDetailsModal: React.FC<PayrollDetailsModalProps> = ({
   allowances,
 }) => {
   const { settings } = useSettingsContext();
+  const { user } = useAuthContext();
   if (!isOpen || !payrollRun) return null;
 
   const currency = settings?.default_currency || 'KES';
@@ -61,11 +63,11 @@ const PayrollDetailsModal: React.FC<PayrollDetailsModalProps> = ({
             td { padding: 8px 10px; border: 1px solid #e2e8f0; }
             .total td { font-weight: 700; background: #f8fafc; }
             .net td { font-weight: 800; background: #2563eb; color: white; font-size: 15px; }
-            .footer { border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 11px; color: #94a3b8; text-align: center; margin-top: 20px; }
+            .footer { border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 11px; color: #64748b; text-align: center; margin-top: 20px; }
           </style>
         </head><body>
           ${printArea.innerHTML}
-          <div class="footer">This is a computer-generated payslip and does not require a signature. · ${new Date().toLocaleDateString()}</div>
+          <div class="footer">Prepared by: <strong>${user?.name || user?.email || 'System'}</strong> &nbsp;&middot;&nbsp; Printed on: ${new Date().toLocaleDateString()} &nbsp;&middot;&nbsp; Computer-generated payslip — no signature required.</div>
         </body></html>`);
       w.document.close();
       w.focus();
@@ -267,6 +269,11 @@ const PayrollDetailsModal: React.FC<PayrollDetailsModalProps> = ({
           {payrollRun.notes && payrollRun.notes !== 'Auto-generated' && (
             <p className="mt-4 text-sm text-gray-500 italic">Notes: {payrollRun.notes}</p>
           )}
+
+          <div className="mt-5 pt-4 border-t border-gray-200 text-xs text-gray-500 flex justify-between items-center">
+            <span>Computer-generated payslip — no signature required</span>
+            <span>Prepared by: <strong className="text-gray-700">{user?.name || user?.email || 'System'}</strong></span>
+          </div>
         </div>
 
         {/* Footer actions */}

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Edit, Trash2, User, Mail, Phone, Calendar, 
-  DollarSign, Settings, FileText, Users, Building2, Layers, CheckCircle, Clock, X
+  DollarSign, Settings, FileText, Users, Building2, Layers, CheckCircle, Clock, X,
+  FileSpreadsheet
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import { ApiService } from '../services/api';
+import { apiClient } from '../lib/api-client';
 import { usePayroll } from '../hooks/usePayroll';
 import { PayrollService } from '../services/payrollService';
 import { FundAccountingService } from '../services/fundAccountingService';
@@ -15,6 +17,7 @@ import PayrollRuns from '../components/payroll/PayrollRuns';
 import PayrollDetailsModal from '../components/payroll/PayrollDetailsModal';
 import PayrollRunModal from '../components/payroll/PayrollRunModal';
 import EmployeePayrollForm from '../components/payroll/EmployeePayrollForm';
+import P9Form from '../components/payroll/P9Form';
 import type { 
   Employee, PayrollRun, PayrollDeduction, PayrollAllowance, 
   Designation, Department 
@@ -62,6 +65,14 @@ const Employees: React.FC = () => {
   const [payrollAllowances, setPayrollAllowances] = useState<PayrollAllowance[]>([]);
   const [editingRun, setEditingRun] = useState<PayrollRun | null>(null);
   const [showRunModal, setShowRunModal] = useState(false);
+
+  // P9 Form state
+  const [showP9Modal, setShowP9Modal] = useState(false);
+  const [p9Data, setP9Data] = useState<any>(null);
+  const [p9Loading, setP9Loading] = useState(false);
+  const [p9Employee, setP9Employee] = useState<Employee | null>(null);
+  const [p9Year, setP9Year] = useState(new Date().getFullYear() - 1);
+  const [showP9YearPicker, setShowP9YearPicker] = useState(false);
 
   const {
     payrollSettings,
@@ -171,6 +182,20 @@ const Employees: React.FC = () => {
     } catch (error) {
       toast.error('Failed to update employee payroll information');
       return false;
+    }
+  };
+
+  const handleGenerateP9 = async (employee: Employee, year: number) => {
+    setP9Loading(true);
+    try {
+      const data = await apiClient.get<any>(`/payroll/employees/${employee.id}/p9?year=${year}`);
+      setP9Data(data);
+      setShowP9Modal(true);
+      setShowP9YearPicker(false);
+    } catch (error) {
+      toast.error('Failed to generate P9 form. Ensure payroll has been processed for this employee.');
+    } finally {
+      setP9Loading(false);
     }
   };
 
@@ -450,6 +475,17 @@ const Employees: React.FC = () => {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <div className="flex items-center justify-end space-x-2">
+                              <button
+                                onClick={() => {
+                                  setP9Employee(employee);
+                                  setP9Year(new Date().getFullYear() - 1);
+                                  setShowP9YearPicker(true);
+                                }}
+                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg"
+                                title="Generate P9 Tax Form"
+                              >
+                                <FileSpreadsheet className="h-4 w-4" />
+                              </button>
                               <button
                                 onClick={() => {
                                   setSelectedEmployee(employee);
@@ -968,6 +1004,55 @@ const Employees: React.FC = () => {
             />
           </div>
         </div>
+      )}
+
+      {/* P9 Year Picker Modal */}
+      {showP9YearPicker && p9Employee && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Generate P9 Form</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              {p9Employee.first_name} {p9Employee.last_name} ({p9Employee.code || 'No code'})
+            </p>
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Tax Year</label>
+              <select
+                value={p9Year}
+                onChange={e => setP9Year(Number(e.target.value))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+              >
+                {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowP9YearPicker(false)}
+                className="px-4 py-2 text-sm text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGenerateP9(p9Employee, p9Year)}
+                disabled={p9Loading}
+                className="px-4 py-2 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium"
+              >
+                {p9Loading ? 'Generating...' : 'Generate P9'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* P9 Form Modal */}
+      {showP9Modal && p9Data && (
+        <P9Form
+          data={p9Data}
+          onClose={() => { setShowP9Modal(false); setP9Data(null); }}
+        />
       )}
 
     </div>

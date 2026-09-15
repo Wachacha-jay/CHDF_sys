@@ -8,6 +8,7 @@ import uploadRoutes from './routes/upload';
 import purchasesRoutes from './routes/purchases';
 import salesRoutes from './routes/sales';
 import payrollRoutes from './routes/payroll';
+import auditRoutes from './routes/audit';
 import path from 'path';
 
 dotenv.config();
@@ -31,6 +32,7 @@ app.use('/api/roles', rolesRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/purchases', purchasesRoutes);
 app.use('/api/sales', salesRoutes);
+app.use('/api/audit', auditRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Node Server is Running' });

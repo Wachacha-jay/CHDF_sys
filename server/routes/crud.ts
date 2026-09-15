@@ -101,6 +101,21 @@ router.use(async (_req, _res, next) => {
   next();
 });
 
+async function logCrudActivity(req: any, action: string, table: any, entityId: any, entityLabel?: string) {
+  try {
+    const user = req.user;
+    const userName = user?.name || user?.email || 'System';
+    const auditId = crypto.randomUUID();
+    const strTable = String(table || '');
+    const moduleName = strTable.charAt(0).toUpperCase() + strTable.slice(1).replace(/_/g, ' ');
+    await pool.query(
+      `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [auditId, user?.id || null, userName, action, moduleName, entityId ? String(entityId) : null, entityLabel || `${action} ${moduleName}`, req.ip || '']
+    );
+  } catch (_) {}
+}
+
 // GET list
 router.get('/:table', authenticate, async (req, res): Promise<void> => {
   const { table } = req.params;
@@ -365,6 +380,8 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
         const result = entryRows[0] || entryPayload;
         result.lines = linesRows || [];
 
+        logCrudActivity(req, 'CREATE', 'journal_entries', entryPayload.id, `Created journal entry ${result.entry_number || entryPayload.id}`);
+
         res.json({ success: true, data: result });
       } catch (error: any) {
         await connection.rollback();
@@ -389,6 +406,8 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
     await pool.query(query, sanitizedValues);
     
     const [rows]: any = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [newId]);
+    const label = rows[0]?.name || rows[0]?.title || rows[0]?.code || rows[0]?.entry_number || (rows[0]?.first_name ? `${rows[0].first_name} ${rows[0].last_name || ''}`.trim() : newId);
+    logCrudActivity(req, 'CREATE', table, newId, `Created ${table}: ${label}`);
     
     res.json({ success: true, data: rows[0] });
   } catch (error: any) {
@@ -423,6 +442,8 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
     await pool.query(query, [...values, id]);
     
     const [rows]: any = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+    const label = rows[0]?.name || rows[0]?.title || rows[0]?.code || rows[0]?.entry_number || (rows[0]?.first_name ? `${rows[0].first_name} ${rows[0].last_name || ''}`.trim() : id);
+    logCrudActivity(req, 'UPDATE', table, id, `Updated ${table}: ${label}`);
     res.json({ success: true, data: rows[0] });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -439,6 +460,7 @@ router.delete('/:table/:id', authenticate, async (req, res): Promise<void> => {
 
   try {
     await pool.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
+    logCrudActivity(req, 'DELETE', table, id, `Deleted ${table} record`);
     res.json({ success: true, data: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

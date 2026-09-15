@@ -21,7 +21,8 @@ import {
   X,
   HeartHandshake,
   Heart,
-  Baby
+  Baby,
+  Activity
 } from 'lucide-react';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { useSettingsContext } from '../../contexts/SettingsContext';
@@ -80,6 +81,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     { name: 'Employees', href: '/employees', icon: UserCheck },
     { name: 'Suppliers', href: '/suppliers', icon: Truck },
     { name: 'User Management', href: '/users', icon: Shield, permission: 'user_management_manage' },
+    { name: 'Audit Log', href: '/audit-log', icon: Activity },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 

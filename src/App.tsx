@@ -26,6 +26,7 @@ import InvoiceList from './pages/InvoiceList';
 import PurchaseInvoiceDetail from './pages/PurchaseInvoiceDetail';
 import SalesReports from './pages/SalesReports';
 import UserManagement from './pages/UserManagement';
+import AuditLog from './pages/AuditLog';
 
 import BankReconciliation from './pages/accounting/BankReconciliation';
 import IncomeStatement from './pages/accounting/IncomeStatement';
@@ -75,6 +76,7 @@ const AppRoutes: React.FC = () => {
           <Route path="/purchase-invoice/:id" element={<PurchaseInvoiceDetail />} />
           <Route path="/reports/sales" element={<SalesReports />} />
           <Route path="/users" element={<UserManagement />} />
+          <Route path="/audit-log" element={<AuditLog />} />
           
           {/* Fund Accounting & Child Support */}
           <Route path="/funds" element={<FundDashboard />} />

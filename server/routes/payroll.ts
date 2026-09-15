@@ -512,6 +512,17 @@ router.post('/periods/:id/generate', authenticate, async (req, res): Promise<voi
 
     await connection.commit();
 
+    // Audit log
+    try {
+      const createdByName = (req as any).user?.name || (req as any).user?.email || 'System';
+      const auditId = crypto.randomUUID();
+      const periodRow = periodRows[0];
+      await pool.query(
+        `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'GENERATE', 'Payroll', ?, ?, ?, '')`,
+        [auditId, createdBy, createdByName, periodId, `Payroll generated for ${periodRow.period_name}`, JSON.stringify({ period_name: periodRow.period_name, runs_created: employees.length })]
+      );
+    } catch (_) {}
+
     res.json({
       success: true,
       message: `Payroll generated for ${employees.length} employee(s)`,
@@ -645,7 +656,19 @@ router.put('/runs/:id/approve', authenticate, async (req, res): Promise<void> =>
       res.status(400).json({ success: false, error: 'Only draft runs can be approved' });
       return;
     }
+    const [approveRows]: any = await pool.query('SELECT pr.*, e.first_name, e.last_name, e.code as employee_code FROM payroll_runs pr JOIN employees e ON pr.employee_id = e.id WHERE pr.id = ?', [id]);
     await pool.query('UPDATE payroll_runs SET status = ? WHERE id = ?', ['approved', id]);
+    // Audit log
+    try {
+      const approvedBy = (req as any).user?.id;
+      const approvedByName = (req as any).user?.name || (req as any).user?.email || 'System';
+      const auditId = crypto.randomUUID();
+      const empLabel = approveRows[0] ? approveRows[0].first_name + ' ' + approveRows[0].last_name + ' (' + approveRows[0].employee_code + ')' : id;
+      await pool.query(
+        `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'APPROVE', 'Payroll', ?, ?, ?, '')`,
+        [auditId, approvedBy, approvedByName, id, `Approved payroll for ${empLabel}`, JSON.stringify({ run_id: id, emp: empLabel })]
+      );
+    } catch (_) {}
     res.json({ success: true, message: 'Payroll run approved' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -751,6 +774,15 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
     );
 
     await connection.commit();
+    // Audit log
+    try {
+      const paidByName = (req as any).user?.name || (req as any).user?.email || 'System';
+      const auditId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'PAY', 'Payroll', ?, ?, ?, '')`,
+        [auditId, createdBy, paidByName, id, `Paid salary to ${empLabel}`, JSON.stringify({ run_id: id, net_pay: run.net_pay, emp: empLabel })]
+      );
+    } catch (_) {}
     res.json({
       success: true,
       message: `Payroll payment disbursed and posted to General Ledger for ${empLabel}`,
@@ -920,6 +952,93 @@ router.get('/summary', authenticate, async (req, res): Promise<void> => {
       data: { periods: periodStats[0], runs: runStats[0] }
     });
   } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P9 FORM - Annual tax deduction summary for an employee
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/employees/:id/p9', authenticate, async (req, res): Promise<void> => {
+  const { id: employee_id } = req.params;
+  const year = req.query.year ? Number(req.query.year) : new Date().getFullYear() - 1;
+  try {
+    const [empRows]: any = await pool.query('SELECT * FROM employees WHERE id = ?', [employee_id]);
+    if (empRows.length === 0) {
+      res.status(404).json({ success: false, error: 'Employee not found' });
+      return;
+    }
+    const emp = empRows[0];
+
+    const [bizRows]: any = await pool.query('SELECT * FROM business_settings LIMIT 1');
+    const biz = bizRows[0] || {};
+
+    const [runs]: any = await pool.query(`
+      SELECT
+        pr.gross_pay, pr.tax_deduction, pr.nhif_deduction, pr.nssf_deduction,
+        pr.housing_levy_deduction, pr.sacco_welfare_deduction, pr.other_deductions, pr.net_pay,
+        pp.period_name, pp.start_date
+      FROM payroll_runs pr
+      JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+      WHERE pr.employee_id = ?
+        AND pp.start_date >= ?
+        AND pp.end_date <= ?
+      ORDER BY pp.start_date ASC
+    `, [employee_id, year + '-01-01', year + '-12-31']);
+
+    const MONTHS = ['January','February','March','April','May','June',
+                    'July','August','September','October','November','December'];
+
+    const monthly_data = runs.map((r: any) => {
+      const d = new Date(r.start_date);
+      return {
+        month: d.getMonth() + 1,
+        month_name: MONTHS[d.getMonth()],
+        gross_pay: Number(r.gross_pay) || 0,
+        tax_deduction: Number(r.tax_deduction) || 0,
+        nhif_deduction: Number(r.nhif_deduction) || 0,
+        nssf_deduction: Number(r.nssf_deduction) || 0,
+        housing_levy_deduction: Number(r.housing_levy_deduction) || 0,
+        sacco_welfare_deduction: Number(r.sacco_welfare_deduction) || 0,
+        other_deductions: Number(r.other_deductions) || 0,
+        net_pay: Number(r.net_pay) || 0,
+        period_name: r.period_name,
+      };
+    });
+
+    const totals = monthly_data.reduce((acc: any, m: any) => {
+      acc.total_gross += m.gross_pay;
+      acc.total_tax += m.tax_deduction;
+      acc.total_nhif += m.nhif_deduction;
+      acc.total_nssf += m.nssf_deduction;
+      acc.total_housing_levy += m.housing_levy_deduction;
+      acc.total_sacco_welfare += m.sacco_welfare_deduction;
+      acc.total_net += m.net_pay;
+      return acc;
+    }, { total_gross: 0, total_tax: 0, total_nhif: 0, total_nssf: 0, total_housing_levy: 0, total_sacco_welfare: 0, total_net: 0 });
+
+    res.json({
+      success: true,
+      year,
+      employee_id,
+      employee: {
+        name: (emp.first_name + ' ' + emp.last_name).trim(),
+        tax_pin: emp.tax_pin || '',
+        nssf_number: emp.nssf_number || '',
+        nhif_number: emp.nhif_number || '',
+        department: emp.department || '',
+        position: emp.position || '',
+        code: emp.code || emp.employee_code || '',
+      },
+      business: {
+        business_name: biz.business_name || '',
+        kra_pin: biz.kra_pin || '',
+      },
+      monthly_data,
+      totals,
+    });
+  } catch (error: any) {
+    console.error('Error fetching P9 data:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
