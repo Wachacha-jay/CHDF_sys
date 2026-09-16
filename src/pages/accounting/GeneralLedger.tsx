@@ -1,22 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Search, Filter, Download, Plus } from 'lucide-react';
+import { BookOpen, Search, Filter, Download, Plus, Printer, FileSpreadsheet, RotateCcw } from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
 import { JournalEntry, Account } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
+import { useAuthContext } from '../../contexts/useAuthContext';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import JournalEntryModal from '../../components/accounting/JournalEntryModal';
 
 const GeneralLedger: React.FC = () => {
   const { settings } = useSettingsContext();
+  const { user } = useAuthContext();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const currentYear = new Date().getFullYear();
+  const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
+  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
   const [showModal, setShowModal] = useState(false);
+
+  const businessName = settings?.business_name || 'Organization';
+  const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
 
   useEffect(() => {
     fetchData();
@@ -26,10 +32,10 @@ const GeneralLedger: React.FC = () => {
     try {
       setLoading(true);
 
-      // Fetch accounts and journal entries via AccountingService
+      // Fetch accounts and all journal entries
       const [accountsData, entriesData] = await Promise.all([
         AccountingService.getAccounts({ is_active: true }),
-        AccountingService.getJournalEntries({ is_posted: true })
+        AccountingService.getJournalEntries()
       ]);
 
       setAccounts(accountsData || []);
@@ -43,21 +49,225 @@ const GeneralLedger: React.FC = () => {
   };
 
   const filteredEntries = entries.filter(entry => {
-    const matchesSearch = entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.entry_number.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = !searchTerm || 
+      (entry.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (entry.entry_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (entry.reference || '').toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesAccount = !selectedAccount ||
       entry.lines?.some(line => line.account_id === selectedAccount);
 
-    const matchesDateFrom = !dateFrom || entry.entry_date >= dateFrom;
-    const matchesDateTo = !dateTo || entry.entry_date <= dateTo;
+    const entryDate = String(entry.entry_date || '').slice(0, 10);
+    const matchesDateFrom = !dateFrom || entryDate >= dateFrom;
+    const matchesDateTo = !dateTo || entryDate <= dateTo;
 
     return matchesSearch && matchesAccount && matchesDateFrom && matchesDateTo;
   });
 
-  const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
-  const totalDebits = filteredEntries.reduce((sum, entry) => sum + entry.total_debit, 0);
-  const totalCredits = filteredEntries.reduce((sum, entry) => sum + entry.total_credit, 0);
+  const totalDebits = filteredEntries.reduce((sum, entry) => sum + Number(entry.total_debit || 0), 0);
+  const totalCredits = filteredEntries.reduce((sum, entry) => sum + Number(entry.total_credit || 0), 0);
+
+  const setDatePreset = (preset: 'this_month' | 'this_year' | 'last_30' | 'all') => {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    if (preset === 'this_month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+      setDateFrom(start);
+      setDateTo(todayStr);
+    } else if (preset === 'this_year') {
+      setDateFrom(`${today.getFullYear()}-01-01`);
+      setDateTo(todayStr);
+    } else if (preset === 'last_30') {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      setDateFrom(d.toISOString().split('T')[0]);
+      setDateTo(todayStr);
+    } else if (preset === 'all') {
+      setDateFrom('');
+      setDateTo('');
+    }
+  };
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setSelectedAccount('');
+    setDateFrom('');
+    setDateTo('');
+  };
+
+  const handleExportCSV = () => {
+    if (filteredEntries.length === 0) {
+      toast.error('No journal entries to export');
+      return;
+    }
+
+    const rows: (string | number)[][] = [
+      [`${businessName} - General Ledger Report`],
+      [`Period: ${dateFrom || 'All'} to ${dateTo || 'All'}`],
+      [`Currency: ${currency}`],
+      [],
+      ['Entry Number', 'Date', 'Reference', 'Entry Description', 'Account Code', 'Account Name', 'Line Memo', `Debit (${currency})`, `Credit (${currency})`, 'Status']
+    ];
+
+    filteredEntries.forEach(entry => {
+      const dateStr = String(entry.entry_date || '').slice(0, 10);
+      const status = entry.is_posted ? 'Posted' : 'Draft';
+      const ref = `"${(entry.reference || '').replace(/"/g, '""')}"`;
+      const desc = `"${(entry.description || '').replace(/"/g, '""')}"`;
+
+      if (entry.lines && entry.lines.length > 0) {
+        entry.lines.forEach(line => {
+          const accCode = line.account?.code || '';
+          const accName = `"${(line.account?.name || '').replace(/"/g, '""')}"`;
+          const lineMemo = `"${(line.description || '').replace(/"/g, '""')}"`;
+          rows.push([
+            entry.entry_number,
+            dateStr,
+            ref,
+            desc,
+            accCode,
+            accName,
+            lineMemo,
+            Number(line.debit_amount || 0).toFixed(2),
+            Number(line.credit_amount || 0).toFixed(2),
+            status
+          ]);
+        });
+      } else {
+        rows.push([
+          entry.entry_number,
+          dateStr,
+          ref,
+          desc,
+          '',
+          '',
+          '',
+          Number(entry.total_debit || 0).toFixed(2),
+          Number(entry.total_credit || 0).toFixed(2),
+          status
+        ]);
+      }
+    });
+
+    rows.push([]);
+    rows.push(['TOTALS', '', '', '', '', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), '']);
+
+    const csvContent = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `General_Ledger_${dateFrom || 'start'}_to_${dateTo || 'end'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('General ledger exported to CSV');
+  };
+
+  const handlePrint = () => {
+    if (filteredEntries.length === 0) {
+      toast.error('No entries to print');
+      return;
+    }
+    const logoHtml = settings?.logo_url ? `<img src="${settings.logo_url}" style="max-height: 55px; margin-bottom: 8px; object-fit: contain;" />` : '';
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Unable to open print window. Please allow popups.');
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>General Ledger - ${businessName}</title>
+        <style>
+          @page { margin: 12mm; size: auto; }
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 20px; font-size: 11px; line-height: 1.4; }
+          .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; }
+          .header h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 800; text-transform: uppercase; color: #0f172a; }
+          .header h2 { margin: 0 0 4px 0; font-size: 13px; font-weight: 700; color: #475569; }
+          .header p { margin: 0; color: #64748b; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+          thead { display: table-header-group; }
+          tr { page-break-inside: avoid; }
+          th { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: #f1f5f9; text-align: left; }
+          th.right, td.right { text-align: right; }
+          th.center, td.center { text-align: center; }
+          td { border: 1px solid #e2e8f0; padding: 5px 8px; font-size: 11px; }
+          tr.entry-header { background: #f8fafc; font-weight: 600; }
+          tr.line-item td { color: #475569; font-size: 10.5px; }
+          tr.totals-row td { font-weight: 800; background: #0f172a; color: #fff; border-color: #0f172a; font-size: 12px; }
+          .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          ${logoHtml}
+          <h1>${businessName}</h1>
+          <h2>GENERAL LEDGER REPORT</h2>
+          <p>Period: <strong>${dateFrom || 'Beginning'}</strong> to <strong>${dateTo || 'Present'}</strong> &bull; Currency: <strong>${currency}</strong> &bull; Total Entries: <strong>${filteredEntries.length}</strong></p>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 12%;">Entry / Date</th>
+              <th style="width: 15%;">Reference</th>
+              <th style="width: 43%;">Account / Description</th>
+              <th class="right" style="width: 15%;">Debit (${currency})</th>
+              <th class="right" style="width: 15%;">Credit (${currency})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredEntries.map(entry => {
+              const entryDate = String(entry.entry_date || '').slice(0, 10);
+              const headerRow = `
+                <tr class="entry-header">
+                  <td><strong>${entry.entry_number}</strong><br/><span style="color:#64748b; font-size:9.5px;">${entryDate}</span></td>
+                  <td>${entry.reference || '—'}</td>
+                  <td><strong>${entry.description || '—'}</strong></td>
+                  <td class="right"><strong>${currency} ${Number(entry.total_debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></td>
+                  <td class="right"><strong>${currency} ${Number(entry.total_credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></td>
+                </tr>
+              `;
+              const linesRows = (entry.lines || []).map(line => `
+                <tr class="line-item">
+                  <td></td>
+                  <td></td>
+                  <td style="padding-left: 20px;">
+                    &bull; <strong>${line.account?.code || ''}</strong> - ${line.account?.name || ''}
+                    ${line.description ? `<div style="font-size:9.5px; color:#64748b;">${line.description}</div>` : ''}
+                  </td>
+                  <td class="right">${Number(line.debit_amount || 0) > 0 ? `${currency} ${Number(line.debit_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
+                  <td class="right">${Number(line.credit_amount || 0) > 0 ? `${currency} ${Number(line.credit_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
+                </tr>
+              `).join('');
+              return headerRow + linesRows;
+            }).join('')}
+            <tr class="totals-row">
+              <td colspan="3">ANNUAL GRAND TOTALS (${filteredEntries.length} entries)</td>
+              <td class="right">${currency} ${totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td class="right">${currency} ${totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <span>Prepared by: ${user?.name || user?.email || 'Authorized User'}</span>
+          <span>Printed on: ${new Date().toLocaleString()}</span>
+        </div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 400);
+  };
 
   if (loading) {
     return (
@@ -69,21 +279,37 @@ const GeneralLedger: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center">
-            <BookOpen className="w-6 h-6 mr-2" />
+            <BookOpen className="w-6 h-6 mr-2 text-indigo-600" />
             General Ledger
           </h1>
-          <p className="text-gray-600 mt-1">View and manage all journal entries</p>
+          <p className="text-gray-600 mt-1">View and export all financial journal entries for {businessName}</p>
         </div>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New Entry
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={handlePrint}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors flex items-center text-sm font-medium shadow-sm"
+          >
+            <Printer className="w-4 h-4 mr-2 text-gray-600" />
+            Print / PDF
+          </button>
+          <button 
+            onClick={handleExportCSV}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors flex items-center text-sm font-medium shadow-sm"
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            Export CSV
+          </button>
+          <button 
+            onClick={() => setShowModal(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center text-sm font-medium shadow-sm ml-2"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            New Entry
+          </button>
+        </div>
       </div>
 
       <JournalEntryModal 
@@ -96,28 +322,28 @@ const GeneralLedger: React.FC = () => {
       />
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">Search</label>
             <div className="relative">
               <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Search entries..."
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="Entry #, description, ref..."
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Account</label>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">Account</label>
             <select
               value={selectedAccount}
               onChange={(e) => setSelectedAccount(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
             >
               <option value="">All Accounts</option>
               {accounts.map(account => (
@@ -129,31 +355,62 @@ const GeneralLedger: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">From Date</label>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">From Date</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">To Date</label>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">To Date</label>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
             />
           </div>
+        </div>
 
-          <div className="flex items-end">
-            <button className="w-full bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center">
-              <Download className="w-4 h-4 mr-2" />
-              Export
+        {/* Date Presets & Reset */}
+        <div className="flex flex-wrap items-center justify-between pt-2 border-t border-gray-100 gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-400 uppercase font-semibold mr-1">Presets:</span>
+            <button
+              onClick={() => setDatePreset('this_month')}
+              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              This Month
+            </button>
+            <button
+              onClick={() => setDatePreset('this_year')}
+              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              This Year
+            </button>
+            <button
+              onClick={() => setDatePreset('last_30')}
+              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              Last 30 Days
+            </button>
+            <button
+              onClick={() => setDatePreset('all')}
+              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              All Records
             </button>
           </div>
+
+          <button
+            onClick={resetFilters}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-800"
+          >
+            <RotateCcw className="w-3 h-3" /> Reset Filters
+          </button>
         </div>
       </div>
 

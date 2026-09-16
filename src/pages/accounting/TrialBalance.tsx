@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Filter, Calendar, TrendingUp, DollarSign } from 'lucide-react';
+import { Download, Filter, Calendar, TrendingUp, DollarSign, Printer, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { AccountingService } from '../../services/accountingService';
 import type { Account, JournalEntry, AccountCategory } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
+import { useAuthContext } from '../../contexts/useAuthContext';
 
 interface TrialBalanceEntry {
   account: Account;
@@ -22,7 +23,9 @@ interface TrialBalanceData {
 
 const TrialBalance: React.FC = () => {
   const { settings } = useSettingsContext();
+  const { user } = useAuthContext();
   const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
+  const businessName = settings?.business_name || 'Organization';
   const [trialBalance, setTrialBalance] = useState<TrialBalanceData | null>(null);
   const [categories, setCategories] = useState<AccountCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,10 +48,9 @@ const TrialBalance: React.FC = () => {
       
       setCategories(categoriesData);
 
-      // Get journal entries up to the selected date
+      // Get all journal entries up to the selected date
       const journalEntries = await AccountingService.getJournalEntries({
-        end_date: asOfDate,
-        is_posted: true
+        end_date: asOfDate
       });
 
       // Calculate trial balance
@@ -114,104 +116,151 @@ const TrialBalance: React.FC = () => {
     };
   };
 
-  const exportTrialBalance = () => {
-    if (!trialBalance) return;
+  const filteredEntries = trialBalance?.entries.filter(entry => {
+    if (showUnbalanced) {
+      return entry.debitBalance !== entry.creditBalance;
+    }
+    return true;
+  }) || [];
 
-    const csvContent = [
-      ['Account Code', 'Account Name', 'Account Type', 'Debit Balance', 'Credit Balance', 'Net Balance'],
-      ...trialBalance.entries.map(entry => [
+  const exportTrialBalance = () => {
+    if (!trialBalance || filteredEntries.length === 0) {
+      toast.error('No trial balance data to export');
+      return;
+    }
+
+    const totalDebits = filteredEntries.reduce((sum, e) => sum + e.debitBalance, 0);
+    const totalCredits = filteredEntries.reduce((sum, e) => sum + e.creditBalance, 0);
+    const diff = totalDebits - totalCredits;
+
+    const rows: (string | number)[][] = [
+      [`${businessName} - Trial Balance Report`],
+      [`As of: ${asOfDate}`],
+      [`Currency: ${currency}`],
+      [],
+      ['Account Code', 'Account Name', 'Account Type', `Debit Balance (${currency})`, `Credit Balance (${currency})`, `Net Balance (${currency})`],
+      ...filteredEntries.map(entry => [
         entry.account.code,
-        entry.account.name,
+        `"${entry.account.name.replace(/"/g, '""')}"`,
         entry.account.account_type,
         entry.debitBalance.toFixed(2),
         entry.creditBalance.toFixed(2),
         entry.netBalance.toFixed(2)
       ]),
-      ['', '', 'TOTALS', trialBalance.totalDebits.toFixed(2), trialBalance.totalCredits.toFixed(2), trialBalance.difference.toFixed(2)]
-    ].map(row => row.join(',')).join('\n');
+      [],
+      ['TOTALS', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), diff.toFixed(2)]
+    ];
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const csvContent = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `trial-balance-${asOfDate}.csv`;
+    a.download = `Trial_Balance_As_Of_${asOfDate}.csv`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
     
-    toast.success('Trial balance exported successfully');
+    toast.success('Trial balance exported to CSV');
   };
 
   const printTrialBalance = () => {
-    if (!trialBalance) return;
+    if (!trialBalance || filteredEntries.length === 0) {
+      toast.error('No data to print');
+      return;
+    }
 
-    const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
+    const totalDebits = filteredEntries.reduce((sum, e) => sum + e.debitBalance, 0);
+    const totalCredits = filteredEntries.reduce((sum, e) => sum + e.creditBalance, 0);
+    const diff = totalDebits - totalCredits;
+    const isBalanced = Math.abs(diff) < 0.01;
+    const logoHtml = settings?.logo_url ? `<img src="${settings.logo_url}" style="max-height: 55px; margin-bottom: 8px; object-fit: contain;" />` : '';
+
     const printWindow = window.open('', '_blank');
     if (printWindow) {
       printWindow.document.write(`
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Trial Balance - ${asOfDate}</title>
+          <title>Trial Balance - ${businessName}</title>
           <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-            .date { text-align: center; margin-bottom: 20px; font-weight: bold; }
+            @page { margin: 12mm; size: auto; }
+            * { box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 20px; font-size: 11px; line-height: 1.4; }
+            .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; }
+            .header h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 800; text-transform: uppercase; color: #0f172a; }
+            .header h2 { margin: 0 0 4px 0; font-size: 13px; font-weight: 700; color: #475569; }
+            .header p { margin: 0; color: #64748b; font-size: 11px; }
             table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background-color: #f2f2f2; font-weight: bold; }
-            .totals { font-weight: bold; background-color: #f8f9fa; }
-            .difference { color: ${trialBalance.difference === 0 ? 'green' : 'red'}; }
-            @media print { body { margin: 0; } }
+            thead { display: table-header-group; }
+            tr { page-break-inside: avoid; }
+            th { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: #f1f5f9; text-align: left; }
+            th.right, td.right { text-align: right; }
+            td { border: 1px solid #e2e8f0; padding: 5px 8px; font-size: 11px; }
+            tr.totals td { font-weight: 800; background: #0f172a; color: #fff; border-color: #0f172a; font-size: 11.5px; }
+            .status-box { text-align: center; margin: 25px 0; padding: 12px; border-radius: 6px; background: #f8fafc; border: 1px solid #e2e8f0; }
+            .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; }
           </style>
         </head>
         <body>
           <div class="header">
-            <h1>Trial Balance</h1>
-            <p>As of ${new Date(asOfDate).toLocaleDateString()}</p>
+            ${logoHtml}
+            <h1>${businessName}</h1>
+            <h2>TRIAL BALANCE REPORT</h2>
+            <p>As of: <strong>${new Date(asOfDate).toLocaleDateString()}</strong> &bull; Currency: <strong>${currency}</strong> &bull; Accounts: <strong>${filteredEntries.length}</strong></p>
           </div>
           
           <table>
             <thead>
               <tr>
-                <th>Account Code</th>
-                <th>Account Name</th>
-                <th>Account Type</th>
-                <th>Debit Balance (${currency})</th>
-                <th>Credit Balance (${currency})</th>
-                <th>Net Balance (${currency})</th>
+                <th style="width: 15%;">Account Code</th>
+                <th style="width: 35%;">Account Name</th>
+                <th style="width: 14%;">Account Type</th>
+                <th class="right" style="width: 12%;">Debit (${currency})</th>
+                <th class="right" style="width: 12%;">Credit (${currency})</th>
+                <th class="right" style="width: 12%;">Net Balance (${currency})</th>
               </tr>
             </thead>
             <tbody>
-              ${trialBalance.entries.map(entry => `
+              ${filteredEntries.map(entry => `
                 <tr>
-                  <td>${entry.account.code}</td>
+                  <td><strong>${entry.account.code}</strong></td>
                   <td>${entry.account.name}</td>
-                  <td>${entry.account.account_type}</td>
-                  <td>${currency} ${entry.debitBalance.toFixed(2)}</td>
-                  <td>${currency} ${entry.creditBalance.toFixed(2)}</td>
-                  <td>${currency} ${entry.netBalance.toFixed(2)}</td>
+                  <td style="text-transform: capitalize;">${entry.account.account_type}</td>
+                  <td class="right">${currency} ${entry.debitBalance.toFixed(2)}</td>
+                  <td class="right">${currency} ${entry.creditBalance.toFixed(2)}</td>
+                  <td class="right">${currency} ${entry.netBalance.toFixed(2)}</td>
                 </tr>
               `).join('')}
               <tr class="totals">
-                <td colspan="3"><strong>TOTALS</strong></td>
-                <td><strong>${currency} ${trialBalance.totalDebits.toFixed(2)}</strong></td>
-                <td><strong>${currency} ${trialBalance.totalCredits.toFixed(2)}</strong></td>
-                <td class="difference"><strong>${currency} ${trialBalance.difference.toFixed(2)}</strong></td>
+                <td colspan="3">TOTALS</td>
+                <td class="right">${currency} ${totalDebits.toFixed(2)}</td>
+                <td class="right">${currency} ${totalCredits.toFixed(2)}</td>
+                <td class="right">${currency} ${diff.toFixed(2)}</td>
               </tr>
             </tbody>
           </table>
           
-          <div style="text-align: center; margin-top: 30px;">
-            <p><strong>Difference:</strong> <span class="difference">${trialBalance.difference.toFixed(2)}</span></p>
-            <p style="color: ${trialBalance.difference === 0 ? 'green' : 'red'};">
-              ${trialBalance.difference === 0 ? '✓ Trial Balance is Balanced' : '✗ Trial Balance is Unbalanced'}
+          <div class="status-box">
+            <p><strong>Difference:</strong> ${currency} ${diff.toFixed(2)}</p>
+            <p style="color: ${isBalanced ? '#15803d' : '#b91c1c'}; font-weight: 700; margin-top: 4px;">
+              ${isBalanced ? '✓ Trial Balance is in Balance' : '✗ Trial Balance is Unbalanced'}
             </p>
+          </div>
+
+          <div class="footer">
+            <span>Prepared by: ${user?.name || user?.email || 'Authorized User'}</span>
+            <span>Printed on: ${new Date().toLocaleString()}</span>
           </div>
         </body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.print();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+      }, 400);
     }
   };
 
@@ -226,34 +275,27 @@ const TrialBalance: React.FC = () => {
     }
   };
 
-  const filteredEntries = trialBalance?.entries.filter(entry => {
-    if (showUnbalanced) {
-      return entry.debitBalance !== entry.creditBalance;
-    }
-    return true;
-  }) || [];
-
   return (
     <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Trial Balance</h1>
-          <p className="text-gray-600">View account balances and verify accounting equation</p>
+          <p className="text-gray-600">View account balances and verify accounting equation for {businessName}</p>
         </div>
         <div className="flex space-x-3">
           <button
-            onClick={exportTrialBalance}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            onClick={printTrialBalance}
+            className="flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium shadow-sm transition-colors"
           >
-            <Download className="h-4 w-4 mr-2" />
-            Export
+            <Printer className="h-4 w-4 mr-2 text-gray-600" />
+            Print / PDF
           </button>
           <button
-            onClick={printTrialBalance}
-            className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            onClick={exportTrialBalance}
+            className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium shadow-sm transition-colors"
           >
-            <Filter className="h-4 w-4 mr-2" />
-            Print
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Export CSV
           </button>
         </div>
       </div>

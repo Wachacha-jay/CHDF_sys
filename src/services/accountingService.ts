@@ -160,10 +160,10 @@ export class AccountingService {
       
       // Apply date filters
       if (filters?.start_date) {
-        entries = entries.filter(entry => entry.entry_date >= filters.start_date!);
+        entries = entries.filter(entry => String(entry.entry_date || '').slice(0, 10) >= filters.start_date!);
       }
       if (filters?.end_date) {
-        entries = entries.filter(entry => entry.entry_date <= filters.end_date!);
+        entries = entries.filter(entry => String(entry.entry_date || '').slice(0, 10) <= filters.end_date!);
       }
 
       // Fetch lines for all entries
