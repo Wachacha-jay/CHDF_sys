@@ -25,7 +25,8 @@ const PayrollPaymentModal: React.FC<PayrollPaymentModalProps> = ({
   const { settings } = useSettingsContext();
   const currency = settings?.default_currency || 'KES';
 
-  const [payingAccounts, setPayingAccounts] = useState<Account[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
+  const [otherAssetAccounts, setOtherAssetAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [reference, setReference] = useState('');
@@ -47,24 +48,99 @@ const PayrollPaymentModal: React.FC<PayrollPaymentModalProps> = ({
   const loadPayingAccounts = async () => {
     try {
       setLoadingAccounts(true);
-      const allAccounts = await AccountingService.getAccounts();
-      // Filter for asset accounts, prioritizing Cash, Bank, and Mobile Money accounts
-      const assetAccs = (allAccounts || []).filter(a => 
-        a.account_type === 'asset' || 
-        (a.code && a.code.startsWith('1')) ||
-        (a as any).sub_category === 'cash_and_bank'
-      );
-      setPayingAccounts(assetAccs);
+      const [allAccounts, categories] = await Promise.all([
+        AccountingService.getAccounts(),
+        AccountingService.getAccountCategories()
+      ]);
 
-      // Auto-select bank account if available, or first asset account
-      const defaultBank = assetAccs.find(a => 
-        a.code === '1111' || 
-        a.name.toLowerCase().includes('bank') || 
-        a.name.toLowerCase().includes('operating')
-      ) || assetAccs[0];
+      // Flatten the full account hierarchy so nested bank & cash sub-accounts are never lost
+      const flatList = AccountingService.flattenAccounts(allAccounts || []);
 
-      if (defaultBank) {
-        setSelectedAccountId(defaultBank.id);
+      const catMap = new Map((categories || []).map(c => [c.id, c]));
+
+      // Bank & cash keywords commonly used in Chart of Accounts
+      const bankKeywords = [
+        'bank', 'cash', 'mpesa', 'm-pesa', 'till', 'paybill', 'float', 'wallet',
+        'checking', 'savings', 'equity', 'kcb', 'coop', 'co-op', 'absa', 'stanbic',
+        'standard chartered', 'ncba', 'dtb', 'family', 'barclays', 'petty cash',
+        'current a/c', 'current account', 'mobile money'
+      ];
+
+      const isBankOrCashAccount = (a: Account) => {
+        const name = (a.name || '').toLowerCase();
+        const code = (a.code || '');
+        const cat = a.category_id ? catMap.get(a.category_id) : undefined;
+        const catName = (cat?.name || '').toLowerCase();
+
+        // Check if name contains any bank/cash keywords
+        if (bankKeywords.some(kw => name.includes(kw))) return true;
+
+        // Check if code matches standard liquid asset prefixes (111x, 110x, 101x, 102x)
+        if (code.startsWith('111') || code.startsWith('110') || code.startsWith('101') || code.startsWith('102')) return true;
+
+        // Check if category name suggests bank/cash
+        if (catName.includes('cash') || catName.includes('bank') || catName.includes('liquid')) return true;
+
+        return false;
+      };
+
+      const isAssetAccount = (a: Account) => {
+        const type = (a.account_type || '').toLowerCase();
+        const code = (a.code || '');
+        const cat = a.category_id ? catMap.get(a.category_id) : undefined;
+
+        if (type === 'asset') return true;
+        if (code.startsWith('1')) return true;
+        if (cat?.account_type?.toLowerCase() === 'asset') return true;
+        if ((a as any).sub_category === 'cash_and_bank') return true;
+
+        return isBankOrCashAccount(a);
+      };
+
+      // Filter all assets
+      const allAssets = flatList.filter(isAssetAccount);
+
+      // Separate into Bank & Cash accounts vs Other Asset accounts
+      const banks: Account[] = [];
+      const others: Account[] = [];
+
+      allAssets.forEach(a => {
+        if (isBankOrCashAccount(a)) {
+          banks.push(a);
+        } else {
+          others.push(a);
+        }
+      });
+
+      // Sort alphabetically by code or name
+      banks.sort((a, b) => (a.code || '').localeCompare(b.code || '') || a.name.localeCompare(b.name));
+      others.sort((a, b) => (a.code || '').localeCompare(b.code || '') || a.name.localeCompare(b.name));
+
+      setBankAccounts(banks);
+      setOtherAssetAccounts(others);
+
+      // Smart auto-selection:
+      // 1. Try to match employee's designated bank name (e.g. 'Equity', 'KCB', 'Coop')
+      let defaultSelection = null;
+      if (run?.employee?.bank_name) {
+        const empBankName = run.employee.bank_name.toLowerCase().trim();
+        defaultSelection = banks.find(a => a.name.toLowerCase().includes(empBankName));
+      }
+      // 2. Try M-Pesa if employee method is mpesa
+      if (!defaultSelection && run?.employee?.payment_method?.toLowerCase().includes('mpesa')) {
+        defaultSelection = banks.find(a => a.name.toLowerCase().includes('mpesa'));
+      }
+      // 3. Fallback to default primary bank (code 1111, or 'operating', or first bank)
+      if (!defaultSelection) {
+        defaultSelection = banks.find(a => 
+          a.code === '1111' || 
+          a.name.toLowerCase().includes('operating') ||
+          a.name.toLowerCase().includes('main')
+        ) || banks[0] || others[0];
+      }
+
+      if (defaultSelection) {
+        setSelectedAccountId(defaultSelection.id);
       }
     } catch (err) {
       console.error('Failed to load paying accounts:', err);
@@ -109,7 +185,8 @@ const PayrollPaymentModal: React.FC<PayrollPaymentModalProps> = ({
     }
   };
 
-  const selectedAccount = payingAccounts.find(a => a.id === selectedAccountId);
+  const allAvailableAccounts = [...bankAccounts, ...otherAssetAccounts];
+  const selectedAccount = allAvailableAccounts.find(a => a.id === selectedAccountId);
 
   return (
     <div className="fixed inset-0 bg-gray-900 bg-opacity-60 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
@@ -202,15 +279,31 @@ const PayrollPaymentModal: React.FC<PayrollPaymentModalProps> = ({
               className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
             >
               <option value="">-- Choose Paying Account (Bank / Cash / M-Pesa) --</option>
-              {payingAccounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  [{acc.code}] {acc.name}
-                </option>
-              ))}
+              {bankAccounts.length > 0 && (
+                <optgroup label="🏦 Bank, Cash & Mobile Money Accounts">
+                  {bankAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      [{acc.code || '—'}] {acc.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {otherAssetAccounts.length > 0 && (
+                <optgroup label="📁 Other Asset Accounts">
+                  {otherAssetAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      [{acc.code || '—'}] {acc.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
-            <p className="text-xs text-slate-500">
-              Money will be credited (deducted) from this asset account, reducing its balance.
-            </p>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Money will be credited (deducted) from this asset account.</span>
+              <span className="text-blue-600 font-medium">
+                {bankAccounts.length} bank/cash account(s) available
+              </span>
+            </div>
           </div>
 
           {/* Payment Date & Reference */}
