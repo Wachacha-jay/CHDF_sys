@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Settings, User, LogOut, Sun, Moon, Bell, Menu, Package, Heart, Info, CheckCircle } from 'lucide-react';
+import { Settings, User, LogOut, Sun, Moon, Bell, Menu, Package, Heart, Info, CheckCircle, Gift, FileText, BookOpen, AlertCircle } from 'lucide-react';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { NotificationService, Notification } from '../../services/notificationService';
@@ -145,9 +145,16 @@ const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
           </button>
           
           {showNotifications && (
-            <div className="absolute right-0 mt-3 w-80 bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="absolute right-0 mt-3 w-96 bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="px-5 py-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
-                <span className="font-bold text-gray-100">Notifications</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-gray-100">Notifications</span>
+                  {notifications.length > 0 && (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                      {notifications.length}
+                    </span>
+                  )}
+                </div>
                 <button 
                   onClick={() => setUnread(0)}
                   className="text-[10px] font-black uppercase tracking-widest text-indigo-400 hover:text-indigo-300"
@@ -155,42 +162,71 @@ const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                   Mark all as read
                 </button>
               </div>
-              <ul className="max-h-[400px] overflow-y-auto divide-y divide-gray-800">
+              <ul className="max-h-[440px] overflow-y-auto divide-y divide-gray-800">
                 {notifications.length === 0 ? (
                   <li className="px-6 py-8 text-center">
                     <CheckCircle className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                     <p className="text-gray-500 text-sm">All caught up!</p>
                   </li>
                 ) : (
-                  notifications.map((n) => (
-                    <li 
-                      key={n.id} 
-                      onClick={() => {
-                        if (n.link) navigate(n.link);
-                        setShowNotifications(false);
-                      }}
-                      className="px-5 py-4 hover:bg-gray-800/50 cursor-pointer transition-colors group"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-1 p-2 rounded-lg ${
-                          n.type === 'warning' ? 'bg-orange-500/10 text-orange-500' :
-                          n.type === 'error' ? 'bg-red-500/10 text-red-500' :
-                          'bg-indigo-500/10 text-indigo-500'
-                        }`}>
-                          {n.title.includes('Stock') ? <Package className="w-4 h-4" /> : 
-                           n.title.includes('Sponsorship') ? <Heart className="w-4 h-4" /> :
-                           <Info className="w-4 h-4" />}
-                        </div>
-                        <div className="flex-1">
-                          <div className="text-gray-100 text-sm font-bold group-hover:text-white transition-colors">{n.title}</div>
-                          <div className="text-gray-400 text-xs mt-1 leading-relaxed">{n.message}</div>
-                          <div className="text-[10px] text-gray-600 font-bold uppercase mt-2">
-                            {formatDistanceToNow(new Date(n.timestamp), { addSuffix: true })}
+                  notifications.map((n) => {
+                    const isError = n.type === 'error';
+                    const isWarning = n.type === 'warning';
+                    const isGift = n.category === 'inkind' || n.category === 'donation' || n.title.includes('In-Kind') || n.title.includes('Donation');
+                    const isJournal = n.category === 'journal' || n.title.includes('Journal');
+                    const isBill = n.category === 'invoice' || n.category === 'purchase' || n.title.includes('Bill') || n.title.includes('Invoice');
+                    const isHeart = n.category === 'sponsorship' || n.title.includes('Sponsor') || n.title.includes('Child');
+
+                    return (
+                      <li 
+                        key={n.id} 
+                        onClick={() => {
+                          if (n.link) navigate(n.link);
+                          setShowNotifications(false);
+                        }}
+                        className="px-5 py-3.5 hover:bg-gray-800/50 cursor-pointer transition-colors group"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-0.5 p-2 rounded-xl shrink-0 ${
+                            isError ? 'bg-red-500/15 text-red-400 border border-red-500/20' :
+                            isWarning ? (isGift ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/15 text-amber-400 border border-amber-500/20') :
+                            isGift ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
+                            isBill ? 'bg-blue-500/15 text-blue-400 border border-blue-500/20' :
+                            isJournal ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/20' :
+                            isHeart ? 'bg-rose-500/15 text-rose-400 border border-rose-500/20' :
+                            'bg-slate-700/30 text-slate-300'
+                          }`}>
+                            {isGift ? (
+                              <Gift className="w-4 h-4" />
+                            ) : isError ? (
+                              <AlertCircle className="w-4 h-4" />
+                            ) : isJournal ? (
+                              <BookOpen className="w-4 h-4" />
+                            ) : isBill ? (
+                              <FileText className="w-4 h-4" />
+                            ) : isHeart ? (
+                              <Heart className="w-4 h-4" />
+                            ) : (
+                              <Package className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-gray-100 text-sm font-bold group-hover:text-white transition-colors truncate">
+                                {n.title}
+                              </span>
+                              <span className="text-[10px] text-gray-500 whitespace-nowrap">
+                                {formatDistanceToNow(new Date(n.timestamp), { addSuffix: true })}
+                              </span>
+                            </div>
+                            <p className="text-gray-400 text-xs mt-1 leading-relaxed">
+                              {n.message}
+                            </p>
                           </div>
                         </div>
-                      </div>
-                    </li>
-                  ))
+                      </li>
+                    );
+                  })
                 )}
               </ul>
             </div>

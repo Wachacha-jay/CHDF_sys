@@ -21,16 +21,21 @@ export interface SalesReportData {
     totalSales: number;
     totalRevenue: number;
     averageOrderValue: number;
+    distributionSalesCount: number;
+    distributionTotalValuation: number;
 }
 
 export class ReportsService {
     /**
-     * Get daily sales report for a date range
+     * Get daily sales report for a date range (Commercial sales only)
      */
     static async getDailySalesReport(startDate: string, endDate: string): Promise<DailySalesData[]> {
         try {
             const response = await ApiService.get<Sale>('sales', {
-                filters: {},
+                filters: {
+                    sale_date_gte: startDate,
+                    sale_date_lte: endDate
+                },
                 orderBy: { column: 'sale_date', ascending: false }
             });
 
@@ -38,10 +43,12 @@ export class ReportsService {
                 return [];
             }
 
-            // Filter by date range
+            // Exclude in-kind distributions to ensure pure commercial sales
             const sales = response.data.filter(sale => {
                 const saleDate = sale.sale_date;
-                return saleDate >= startDate && saleDate <= endDate;
+                const inRange = (!startDate || saleDate >= startDate) && (!endDate || saleDate <= endDate);
+                const isCommercial = sale.sale_type !== 'donation_distribution' && sale.payment_method !== 'in_kind_distribution';
+                return inRange && isCommercial;
             });
 
             // Group by date
@@ -78,12 +85,15 @@ export class ReportsService {
     }
 
     /**
-     * Get sales breakdown by payment method
+     * Get sales breakdown by payment method (Commercial sales only)
      */
     static async getSalesByPaymentMethod(startDate: string, endDate: string): Promise<PaymentMethodBreakdown[]> {
         try {
             const response = await ApiService.get<Sale>('sales', {
-                filters: {},
+                filters: {
+                    sale_date_gte: startDate,
+                    sale_date_lte: endDate
+                },
                 orderBy: { column: 'sale_date', ascending: false }
             });
 
@@ -91,16 +101,18 @@ export class ReportsService {
                 return [];
             }
 
-            // Filter by date range
+            // Filter commercial sales within date range
             const sales = response.data.filter(sale => {
                 const saleDate = sale.sale_date;
-                return saleDate >= startDate && saleDate <= endDate;
+                const inRange = (!startDate || saleDate >= startDate) && (!endDate || saleDate <= endDate);
+                const isCommercial = sale.sale_type !== 'donation_distribution' && sale.payment_method !== 'in_kind_distribution';
+                return inRange && isCommercial;
             });
 
             // Group by payment method
             const methodMap = new Map<string, Sale[]>();
             sales.forEach(sale => {
-                const method = sale.payment_method || 'cash';
+                let method = (sale.payment_method || 'cash').toLowerCase();
                 if (!methodMap.has(method)) {
                     methodMap.set(method, []);
                 }
@@ -108,6 +120,18 @@ export class ReportsService {
             });
 
             const totalRevenue = sales.reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0);
+
+            // Format human-readable method name
+            const formatMethodName = (raw: string) => {
+                switch (raw) {
+                    case 'cash': return 'Cash';
+                    case 'mobile_money': return 'M-Pesa / Mobile Money';
+                    case 'card': return 'Credit / Debit Card';
+                    case 'credit': return 'Credit / Invoice';
+                    case 'bank_transfer': return 'Bank Transfer';
+                    default: return raw.replace(/_/g, ' ').toUpperCase();
+                }
+            };
 
             // Calculate breakdown
             const breakdown: PaymentMethodBreakdown[] = [];
@@ -117,7 +141,7 @@ export class ReportsService {
                 const percentage = totalRevenue > 0 ? (total / totalRevenue) * 100 : 0;
 
                 breakdown.push({
-                    method: method.toUpperCase(),
+                    method: formatMethodName(method),
                     count,
                     total,
                     percentage
@@ -137,21 +161,43 @@ export class ReportsService {
      */
     static async getSalesReportData(startDate: string, endDate: string): Promise<SalesReportData> {
         try {
-            const [dailySales, paymentBreakdown] = await Promise.all([
+            const [dailySales, paymentBreakdown, allSalesResp] = await Promise.all([
                 this.getDailySalesReport(startDate, endDate),
-                this.getSalesByPaymentMethod(startDate, endDate)
+                this.getSalesByPaymentMethod(startDate, endDate),
+                ApiService.get<Sale>('sales', {
+                    filters: {
+                        sale_date_gte: startDate,
+                        sale_date_lte: endDate
+                    }
+                })
             ]);
 
             const totalSales = dailySales.reduce((sum, day) => sum + day.salesCount, 0);
             const totalRevenue = dailySales.reduce((sum, day) => sum + day.totalRevenue, 0);
             const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
 
+            // Calculate distribution summary
+            let distributionSalesCount = 0;
+            let distributionTotalValuation = 0;
+
+            if (allSalesResp.success && allSalesResp.data) {
+                allSalesResp.data.forEach(sale => {
+                    const isDist = sale.sale_type === 'donation_distribution' || sale.payment_method === 'in_kind_distribution';
+                    if (isDist) {
+                        distributionSalesCount += 1;
+                        distributionTotalValuation += Number(sale.total_amount || 0);
+                    }
+                });
+            }
+
             return {
                 dailySales,
                 paymentBreakdown,
                 totalSales,
                 totalRevenue,
-                averageOrderValue
+                averageOrderValue,
+                distributionSalesCount,
+                distributionTotalValuation
             };
         } catch (error) {
             console.error('Error fetching sales report data:', error);
@@ -160,16 +206,18 @@ export class ReportsService {
                 paymentBreakdown: [],
                 totalSales: 0,
                 totalRevenue: 0,
-                averageOrderValue: 0
+                averageOrderValue: 0,
+                distributionSalesCount: 0,
+                distributionTotalValuation: 0
             };
         }
     }
 
     /**
-     * Export sales data to CSV
+     * Export sales data to CSV with safe typecasting and summary line
      */
     static exportSalesToCSV(sales: Sale[], filename: string = 'sales_report.csv'): void {
-        if (sales.length === 0) {
+        if (!sales || sales.length === 0) {
             return;
         }
 
@@ -177,37 +225,89 @@ export class ReportsService {
         const headers = [
             'Sale Number',
             'Date',
-            'Customer',
+            'Sale Type',
+            'Customer / Beneficiary',
             'Payment Method',
-            'Subtotal',
-            'Tax',
-            'Discount',
-            'Total',
-            'Paid Amount',
+            'Items Count',
+            'Subtotal (KES)',
+            'Tax (KES)',
+            'Discount (KES)',
+            'Total (KES)',
+            'Paid (KES)',
             'Payment Status'
         ];
 
-        // Convert sales to CSV rows
-        const rows = sales.map(sale => [
-            sale.sale_number,
-            sale.sale_date,
-            sale.customer?.name || 'Walk-in Customer',
-            sale.payment_method || 'cash',
-            sale.subtotal.toFixed(2),
-            sale.tax_amount.toFixed(2),
-            sale.discount_amount.toFixed(2),
-            sale.total_amount.toFixed(2),
-            sale.paid_amount.toFixed(2),
-            sale.payment_status
+        let totalSubtotal = 0;
+        let totalTax = 0;
+        let totalDiscount = 0;
+        let totalSum = 0;
+        let totalPaid = 0;
+
+        // Convert sales to CSV rows safely (MySQL2 DECIMAL returns strings)
+        const rows = sales.map(sale => {
+            const isDist = sale.sale_type === 'donation_distribution' || sale.payment_method === 'in_kind_distribution';
+            const saleTypeLabel = isDist 
+                ? 'In-Kind Distribution' 
+                : (sale.sale_type ? sale.sale_type.replace(/_/g, ' ').toUpperCase() : 'COMMERCIAL SALE');
+            
+            const customerLabel = sale.customer?.name || (isDist ? 'Internal Beneficiary / Department' : 'Walk-in Customer');
+            
+            const subtotal = Number(sale.subtotal || 0);
+            const tax = Number(sale.tax_amount || 0);
+            const discount = Number(sale.discount_amount || 0);
+            const total = Number(sale.total_amount || 0);
+            const paid = Number(sale.paid_amount || 0);
+            const itemsCount = sale.items_count !== undefined ? sale.items_count : (sale.items?.length || 1);
+
+            totalSubtotal += subtotal;
+            totalTax += tax;
+            totalDiscount += discount;
+            totalSum += total;
+            totalPaid += paid;
+
+            const paymentMethodLabel = sale.payment_method 
+                ? sale.payment_method.replace(/_/g, ' ').toUpperCase() 
+                : 'CASH';
+
+            return [
+                sale.sale_number,
+                sale.sale_date,
+                saleTypeLabel,
+                customerLabel,
+                paymentMethodLabel,
+                itemsCount,
+                subtotal.toFixed(2),
+                tax.toFixed(2),
+                discount.toFixed(2),
+                total.toFixed(2),
+                paid.toFixed(2),
+                (sale.payment_status || 'paid').toUpperCase()
+            ];
+        });
+
+        // Add summary totals row
+        rows.push([
+            'TOTALS',
+            '',
+            '',
+            '',
+            '',
+            '',
+            totalSubtotal.toFixed(2),
+            totalTax.toFixed(2),
+            totalDiscount.toFixed(2),
+            totalSum.toFixed(2),
+            totalPaid.toFixed(2),
+            ''
         ]);
 
         // Create CSV content
         const csvContent = [
             headers.join(','),
-            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
         ].join('\n');
 
-        // Create blob and download
+        // Create blob and trigger download
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);

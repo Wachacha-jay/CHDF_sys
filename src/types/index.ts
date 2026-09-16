@@ -280,6 +280,8 @@ export interface Sale {
   child_id?: string;
   donor_id?: string;
   fund_id?: string;
+  items_count?: number;
+  total_quantity?: number;
 }
 
 export interface SaleItem {

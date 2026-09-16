@@ -76,8 +76,81 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
       : 'PAYMENT RECEIPT';
   const accentColor = isDistribution ? '#059669' : isSchoolFee ? '#4f46e5' : '#2563eb';
 
-  if (receiptWindow) {
+  if (!receiptWindow) return;
+
+  if (thermalPrinter) {
+    // 80mm thermal printer format
     receiptWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${receiptTitle} - ${receipt.saleNumber}</title>
+        <meta charset="UTF-8" />
+        <style>
+          body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.3; margin: 0; padding: 6px; width: 80mm; color: #000; }
+          .center { text-align: center; }
+          .right { text-align: right; }
+          .bold { font-weight: bold; }
+          .divider { border-top: 1px dashed #000; margin: 6px 0; }
+          .item-row { display: flex; justify-content: space-between; margin: 3px 0; }
+          .total-row { border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 4px 0; margin: 6px 0; font-size: 13px; font-weight: bold; }
+          @media print { body { margin: 0; } }
+        </style>
+      </head>
+      <body>
+        <div class="center">
+          <div class="bold" style="font-size: 14px;">${businessName}</div>
+          ${businessAddress ? `<div>${businessAddress}</div>` : ''}
+          ${businessPhone ? `<div>Tel: ${businessPhone}</div>` : ''}
+          <div class="divider"></div>
+          <div class="bold">${receiptTitle}</div>
+          <div class="divider"></div>
+        </div>
+        <div>Voucher #: ${receipt.saleNumber}</div>
+        <div>Date: ${receipt.date} ${receipt.time}</div>
+        ${receipt.departmentName ? `<div>Destination: ${receipt.departmentName}</div>` : ''}
+        ${receipt.customerName ? `<div>Recipient: ${receipt.customerName}</div>` : ''}
+        ${receipt.childName ? `<div>Child: ${receipt.childName}</div>` : ''}
+        ${receipt.expenseAccountName ? `<div>Account: ${receipt.expenseAccountName}</div>` : ''}
+        <div class="divider"></div>
+        <div class="bold">ITEMS DISBURSED:</div>
+        ${receipt.items.map(item => {
+          const name = item.product?.name || (item as any).name || 'Item';
+          const unitVal = item.unitPrice || 0;
+          const lineVal = (item.quantity || 1) * unitVal;
+          return `
+            <div class="item-row">
+              <span>${name}</span>
+              <span>${item.quantity}x ${currency} ${unitVal.toFixed(2)}</span>
+            </div>
+            <div class="right" style="font-size: 11px;">Valuation: ${currency} ${lineVal.toFixed(2)}</div>
+          `;
+        }).join('')}
+        <div class="total-row item-row">
+          <span>TOTAL:</span>
+          <span>${currency} ${receipt.total.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+        </div>
+        ${isDistribution ? `
+          <div style="margin-top: 14px;">
+            <div>Issued By: ________________</div>
+            <div style="margin-top: 8px;">Received By: ______________</div>
+          </div>
+        ` : ''}
+        <div class="center" style="margin-top: 12px; font-size: 10px;">
+          <div>✓ General Ledger: DR Expense / CR In-Kind Inventory</div>
+          <div>${new Date().toLocaleString()}</div>
+        </div>
+      </body>
+      </html>
+    `);
+    receiptWindow.document.close();
+    receiptWindow.focus();
+    setTimeout(() => receiptWindow.print(), 400);
+    return;
+  }
+
+  // Standard A4 Voucher format
+  receiptWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -184,7 +257,7 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
           .info-box p { font-size: 13px; color: #334155; margin: 3px 0; }
           .info-box p strong { color: #0f172a; }
 
-          /* ─── SCHOOL FEE BAND ─── */
+          /* ─── FEE / BREAKDOWN BAND ─── */
           .fee-band {
             background: linear-gradient(135deg, ${accentColor}15 0%, ${accentColor}05 100%);
             border: 1.5px solid ${accentColor}40;
@@ -205,7 +278,7 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
           .fee-row {
             display: flex;
             justify-content: space-between;
-            padding: 7px 0;
+            padding: 8px 0;
             font-size: 13px;
             border-bottom: 1px solid ${accentColor}15;
           }
@@ -273,7 +346,7 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
             }
             <div>
               <div class="business-name">${businessName}</div>
-              <div class="business-sub">Fund &amp; Program Accounting</div>
+              <div class="business-sub">Child Development &amp; Fund Accounting System</div>
             </div>
           </div>
           <div class="letterhead-right">
@@ -287,11 +360,11 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
         <!-- REFERENCE ROW -->
         <div class="ref-row">
           <div>
-            <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Journal / Entry Reference</div>
+            <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Voucher / Journal Reference</div>
             <div class="ref-no">${receipt.saleNumber}</div>
           </div>
           <div class="ref-date">
-            <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Transaction Date</div>
+            <div style="font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Distribution Date</div>
             <strong>${receipt.date}</strong>
             <span style="color: #94a3b8;">${receipt.time !== 'N/A' ? receipt.time : ''}</span>
           </div>
@@ -306,49 +379,77 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
             ${receipt.childName ? `<p style="margin-top: 6px; font-size: 12px; color: #64748b;">Beneficiary Child</p><p><strong>${receipt.childName}</strong></p>` : ''}
           </div>
           <div class="info-box">
-            <h4>${isDistribution ? 'Accounting Allocation' : 'Program Details'}</h4>
-            ${receipt.expenseAccountName ? `<p><strong>Expense Account:</strong> ${receipt.expenseAccountName}</p>` : ''}
-            ${receipt.fundName ? `<p><strong>Fund:</strong> ${receipt.fundName}</p>` : ''}
-            <p><strong>Payment / Transfer Method:</strong> ${receipt.paymentMethod.toUpperCase()}</p>
-            <p><strong>Transaction Type:</strong>
+            <h4>${isDistribution ? 'General Ledger Allocation' : 'Program Details'}</h4>
+            ${receipt.expenseAccountName ? `<p><strong>Debit Account:</strong> ${receipt.expenseAccountName}</p>` : ''}
+            ${isDistribution ? `<p><strong>Credit Account:</strong> 1135 - In-Kind Inventory</p>` : ''}
+            ${receipt.fundName ? `<p><strong>Fund Account:</strong> ${receipt.fundName}</p>` : ''}
+            <p><strong>Transfer Method:</strong> ${receipt.paymentMethod.toUpperCase().replace(/_/g, ' ')}</p>
+            <p><strong>Voucher Status:</strong>
               <span class="type-badge ${receipt.paymentMethod.includes('Fund') || isDistribution ? 'type-outflow' : 'type-inflow'}">
-                ${isDistribution ? 'Donation Stock Distribution' : isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}
+                ${isDistribution ? 'In-Kind Inventory Disbursed' : isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}
               </span>
             </p>
           </div>
         </div>
 
-        <!-- FEE BREAKDOWN -->
+        <!-- ITEMS BREAKDOWN -->
         <div class="fee-band">
           <div class="fee-band-header">
-            ${isSchoolFee ? 'School Fee Breakdown' : 'Payment Breakdown'}
+            ${isDistribution ? 'Disbursed In-Kind Consumables Breakdown' : isSchoolFee ? 'School Fee Breakdown' : 'Payment Breakdown'}
           </div>
-          ${receipt.items.map(item => `
-            <div class="fee-row">
-              <span>${item.name}</span>
-              <span>${currency} ${(item.quantity * item.unitPrice).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
-            </div>
-          `).join('')}
+          ${receipt.items.map(item => {
+            const itemName = item.product?.name || (item as any).name || 'Item';
+            const unitVal = item.unitPrice || 0;
+            const lineVal = (item.quantity || 1) * unitVal;
+            const unitMeasure = (item.product as any)?.unit_of_measure || '';
+            return `
+              <div class="fee-row">
+                <span><strong>${itemName}</strong> <span style="color:#64748b; font-size: 11px;">(${item.quantity} ${unitMeasure} @ ${currency} ${unitVal.toLocaleString('en-KE', { minimumFractionDigits: 2 })})</span></span>
+                <span style="font-weight: 600;">${currency} ${lineVal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+              </div>
+            `;
+          }).join('')}
           <div class="fee-row total-row">
-            <span>Total Amount</span>
+            <span>${isDistribution ? 'Total Disbursed Valuation' : 'Total Amount'}</span>
             <span class="amount-pill">${currency} ${receipt.total.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
           </div>
         </div>
 
+        <!-- DISTRIBUTION SIGNATURES -->
+        ${isDistribution ? `
+          <div style="margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+            <div style="border-top: 1.5px solid #0f172a; padding-top: 6px; font-size: 11px;">
+              <p style="font-weight: 700; color: #0f172a;">Dispatched / Issued By</p>
+              <p style="color: #64748b; margin-top: 4px;">Sign: ___________________</p>
+              <p style="color: #94a3b8; margin-top: 2px;">Date: ____ / ____ / 20___</p>
+            </div>
+            <div style="border-top: 1.5px solid #0f172a; padding-top: 6px; font-size: 11px;">
+              <p style="font-weight: 700; color: #0f172a;">Received / Recipient</p>
+              <p style="color: #64748b; margin-top: 4px;">Sign: ___________________</p>
+              <p style="color: #94a3b8; margin-top: 2px;">Date: ____ / ____ / 20___</p>
+            </div>
+            <div style="border-top: 1.5px solid #0f172a; padding-top: 6px; font-size: 11px;">
+              <p style="font-weight: 700; color: #0f172a;">Approved / Dept Head</p>
+              <p style="color: #64748b; margin-top: 4px;">Sign: ___________________</p>
+              <p style="color: #94a3b8; margin-top: 2px;">Date: ____ / ____ / 20___</p>
+            </div>
+          </div>
+        ` : ''}
+
         <!-- FOOTER -->
         <div class="receipt-footer">
-          <p class="thank-you">✓ Payment Recorded &amp; Posted to General Ledger</p>
-          <p>This is a system-generated official receipt. Keep it for your records.</p>
-          <p>All school fee transactions are linked to the child beneficiary for audit trail purposes.</p>
+          <p class="thank-you">${isDistribution ? '✓ In-Kind Items Disbursed &amp; General Ledger Posted' : '✓ Payment Recorded &amp; Posted to General Ledger'}</p>
+          <p>${isDistribution ? 'Stock decremented from In-Kind Inventory (1135) and debited to Destination Department Expense.' : 'This is a system-generated official receipt. Keep it for your records.'}</p>
+          <p>Double-Entry Entry: DR Program Expense &nbsp;|&nbsp; CR In-Kind Inventory (1135)</p>
           <div class="watermark">Generated by ${businessName} Fund Accounting System — ${new Date().toLocaleString()}</div>
         </div>
 
       </body>
       </html>
     `);
-    receiptWindow.document.close();
-    receiptWindow.print();
-  }
+  receiptWindow.document.close();
+  receiptWindow.focus();
+  setTimeout(() => receiptWindow.print(), 400);
 }
 
 

@@ -242,8 +242,14 @@ export class SalesService {
           total_amount: (item.quantity * (item.unit_cost || 0))
         });
 
-        // Decrement product inventory stock
-        await this.updateProductStock(item.product_id, item.quantity, 'out');
+        // Decrement product inventory stock with distribution reference
+        await this.updateProductStock(
+          item.product_id, 
+          item.quantity, 
+          'out', 
+          'distribution', 
+          `In-Kind Donation Distribution: #${saleNumber}`
+        );
       }
 
       const sale = await this.getSaleById(saleId);
@@ -388,13 +394,19 @@ export class SalesService {
   }
 
   // Helper method to update product stock
-  private static async updateProductStock(productId: string, quantity: number, type: 'in' | 'out'): Promise<boolean> {
+  private static async updateProductStock(
+    productId: string, 
+    quantity: number, 
+    type: 'in' | 'out',
+    referenceType: string = 'sale',
+    description?: string
+  ): Promise<boolean> {
     try {
       const productResponse = await ApiService.getById<Product>('products', productId);
       if (!productResponse.success || !productResponse.data) return false;
 
       const product = productResponse.data;
-      let newStock = product.current_stock;
+      let newStock = Number(product.current_stock || 0);
 
       if (type === 'out') {
         newStock = Math.max(0, newStock - quantity);
@@ -404,7 +416,7 @@ export class SalesService {
 
       const updateResponse = await ApiService.update<Product>('products', productId, {
         current_stock: newStock,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
       });
 
       if (!updateResponse.success) return false;
@@ -413,10 +425,10 @@ export class SalesService {
       await ApiService.create('inventory_movements', {
         product_id: productId,
         movement_type: type,
-        quantity,
+        quantity: Math.abs(quantity),
         unit_cost: product.cost_price,
-        reference_type: 'sale',
-        description: `Sale ${type === 'out' ? 'reduction' : 'return'}`
+        reference_type: referenceType,
+        description: description || `${referenceType} ${type === 'out' ? 'reduction' : 'return'}`
       });
 
       return true;

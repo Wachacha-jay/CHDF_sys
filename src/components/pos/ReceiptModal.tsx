@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Receipt, Printer } from 'lucide-react';
-import { printReceipt, ReceiptData } from '../../utils/receiptUtils';
+import { Receipt, Printer, Share2 } from 'lucide-react';
+import { printReceipt, printPaymentReceipt, ReceiptData } from '../../utils/receiptUtils';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 
 interface ReceiptModalProps {
@@ -13,27 +13,48 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) => {
   const [printerType, setPrinterType] = useState<'standard' | 'thermal'>('standard');
 
   const handlePrint = () => {
-    printReceipt(receipt, {
-      businessName: settings?.business_name,
-      businessAddress: settings?.business_address,
-      businessPhone: settings?.business_phone,
-      businessEmail: settings?.business_email,
-      logoUrl: settings?.logo_url,
-      currency: settings?.default_currency || 'KSh'
-    }, printerType === 'thermal');
+    if (receipt.type === 'distribution' || receipt.type === 'school_fee' || receipt.type === 'donation') {
+      printPaymentReceipt(receipt, {
+        businessName: settings?.business_name,
+        businessAddress: settings?.business_address,
+        businessPhone: settings?.business_phone,
+        businessEmail: settings?.business_email,
+        logoUrl: settings?.logo_url,
+        currency: settings?.default_currency || 'KSh'
+      }, printerType === 'thermal');
+    } else {
+      printReceipt(receipt, {
+        businessName: settings?.business_name,
+        businessAddress: settings?.business_address,
+        businessPhone: settings?.business_phone,
+        businessEmail: settings?.business_email,
+        logoUrl: settings?.logo_url,
+        currency: settings?.default_currency || 'KSh'
+      }, printerType === 'thermal');
+    }
   };
+
+  const isDist = receipt.type === 'distribution';
 
   return (
     <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
       <div className="relative w-full max-w-md card p-8 animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center space-x-3">
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl">
-              <Receipt className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+            <div className={`p-3 rounded-2xl ${isDist ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-indigo-50 dark:bg-indigo-500/10'}`}>
+              {isDist ? (
+                <Share2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <Receipt className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+              )}
             </div>
             <div>
-              <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Transaction Complete</h3>
-              <p className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mt-1">Receipt Generated Successfully</p>
+              <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tight">
+                {isDist ? 'Distribution Complete' : 'Transaction Complete'}
+              </h3>
+              <p className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mt-1">
+                {isDist ? 'Distribution Voucher Generated' : 'Receipt Generated Successfully'}
+              </p>
             </div>
           </div>
         </div>
@@ -77,8 +98,12 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) => {
           )}
 
           <div className="pt-4 border-t border-gray-200 dark:border-slate-700 flex justify-between items-center">
-            <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest">Total Amount</span>
-            <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">KSh {receipt.total.toLocaleString()}</span>
+            <span className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest">
+              {isDist ? 'Total Valuation' : 'Total Amount'}
+            </span>
+            <span className={`text-2xl font-black ${isDist ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
+              KSh {receipt.total.toLocaleString()}
+            </span>
           </div>
         </div>
 
@@ -121,10 +146,12 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) => {
         <div className="flex space-x-4">
           <button
             onClick={handlePrint}
-            className="flex-1 btn-primary flex items-center justify-center py-4"
+            className={`flex-1 flex items-center justify-center py-4 rounded-xl font-bold text-white transition-all shadow-md active:scale-95 ${
+              isDist ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20'
+            }`}
           >
             <Printer className="h-5 w-5 mr-3" />
-            Print Now
+            {isDist ? 'Print Distribution Voucher' : 'Print Receipt'}
           </button>
           <button
             onClick={onClose}

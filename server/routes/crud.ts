@@ -52,11 +52,24 @@ async function ensureInKindSchema() {
       await pool.query('ALTER TABLE donations ADD COLUMN total_fair_market_value DECIMAL(12,4) DEFAULT 0');
     }
 
-    // 4. Ensure sales.expense_account_id
+    // 4. Ensure sales table distribution columns & sale_type VARCHAR(50)
     const [saleCols]: any = await pool.query('SHOW COLUMNS FROM sales');
     const saleColNames = new Set(saleCols.map((c: any) => c.Field));
     if (!saleColNames.has('expense_account_id')) {
       await pool.query('ALTER TABLE sales ADD COLUMN expense_account_id CHAR(36) NULL');
+    }
+    if (!saleColNames.has('department_id')) {
+      await pool.query('ALTER TABLE sales ADD COLUMN department_id CHAR(36) NULL');
+    }
+    if (!saleColNames.has('child_id')) {
+      await pool.query('ALTER TABLE sales ADD COLUMN child_id CHAR(36) NULL');
+    }
+    if (!saleColNames.has('sale_type')) {
+      await pool.query("ALTER TABLE sales ADD COLUMN sale_type VARCHAR(50) DEFAULT 'standard'");
+    } else {
+      try {
+        await pool.query("ALTER TABLE sales MODIFY COLUMN sale_type VARCHAR(50) DEFAULT 'standard'");
+      } catch (_) {}
     }
 
     // 5. Ensure business_settings logo_url and favicon_url are LONGTEXT for data/image URLs
@@ -88,6 +101,35 @@ async function ensureInKindSchema() {
         INDEX idx_dept_id (department_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // 7. Ensure units_of_measure table exists (used by ProductForm unit dropdown)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS units_of_measure (
+        id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        name VARCHAR(100) NOT NULL,
+        symbol VARCHAR(20) NOT NULL,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    const [uomRows]: any = await pool.query('SELECT COUNT(*) as cnt FROM units_of_measure');
+    if (uomRows[0]?.cnt === 0) {
+      await pool.query(`
+        INSERT INTO units_of_measure (id, name, symbol) VALUES
+          (UUID(), 'Pieces', 'pcs'),
+          (UUID(), 'Kilograms', 'kg'),
+          (UUID(), 'Grams', 'g'),
+          (UUID(), 'Litres', 'L'),
+          (UUID(), 'Millilitres', 'mL'),
+          (UUID(), 'Metres', 'm'),
+          (UUID(), 'Boxes', 'box'),
+          (UUID(), 'Cartons', 'ctn'),
+          (UUID(), 'Bags', 'bag'),
+          (UUID(), 'Pairs', 'pair'),
+          (UUID(), 'Sets', 'set'),
+          (UUID(), 'Units', 'unit')
+      `);
+    }
 
     inKindSchemaEnsured = true;
   } catch (err) {
@@ -150,6 +192,9 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         } else if (key.endsWith('_lte')) {
           operator = '<=';
           column = key.replace('_lte', '');
+        } else if (key.endsWith('_neq')) {
+          operator = '!=';
+          column = key.replace('_neq', '');
         }
 
         // Convert query string booleans to MySQL TinyInt 1 or 0
@@ -185,6 +230,17 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         for (let row of rows) {
             const [customers]: any = await pool.query('SELECT * FROM customers WHERE id = ?', [row.customer_id]);
             row.customer = customers[0] || null;
+            try {
+                const [itemStats]: any = await pool.query(
+                    'SELECT COUNT(*) as items_count, COALESCE(SUM(quantity), 0) as total_quantity FROM sale_items WHERE sale_id = ?',
+                    [row.id]
+                );
+                row.items_count = Number(itemStats[0]?.items_count || 0);
+                row.total_quantity = Number(itemStats[0]?.total_quantity || 0);
+            } catch (_) {
+                row.items_count = 0;
+                row.total_quantity = 0;
+            }
         }
     } else if (table === 'purchases') {
         for (let row of rows) {
@@ -306,6 +362,38 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       values.push(`EXP${Date.now()}${Math.floor(Math.random() * 1000)}`);
     }
 
+    // Product-specific sanitization
+    if (table === 'products') {
+      // Remove unit_id — it's a form-only field; products table stores unit_of_measure (string)
+      const unitIdIdx = keys.indexOf('unit_id');
+      if (unitIdIdx !== -1) {
+        keys.splice(unitIdIdx, 1);
+        (values as any[]).splice(unitIdIdx, 1);
+      }
+      // Auto-generate product code if missing or empty
+      const codeIdx = keys.indexOf('code');
+      const codeVal = codeIdx !== -1 ? values[codeIdx] : undefined;
+      if (!codeVal || String(codeVal).trim() === '') {
+        const shortId = newId.replace(/-/g, '').substring(0, 8).toUpperCase();
+        const generatedCode = `PRD-${shortId}`;
+        if (codeIdx !== -1) {
+          (values as any[])[codeIdx] = generatedCode;
+        } else {
+          keys.push('code');
+          (values as any[]).push(generatedCode);
+        }
+      }
+      // Null out empty barcode/sku to avoid UNIQUE constraint on empty string
+      const barcodeIdx = keys.indexOf('barcode');
+      if (barcodeIdx !== -1 && (!values[barcodeIdx] || String(values[barcodeIdx]).trim() === '')) {
+        (values as any[])[barcodeIdx] = null;
+      }
+      const skuIdx = keys.indexOf('sku');
+      if (skuIdx !== -1 && (!values[skuIdx] || String(values[skuIdx]).trim() === '')) {
+        (values as any[])[skuIdx] = null;
+      }
+    }
+
     // Special-case: transactional create for journal_entries with lines
     if (table === 'journal_entries' && Array.isArray(req.body.lines)) {
       const connection = await pool.getConnection();
@@ -393,10 +481,95 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       return;
     }
 
+    // Special-case: transactional create for purchases with items
+    if (table === 'purchases' && Array.isArray(req.body.items)) {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        let purchaseNumber = req.body.purchase_number || `PUR${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+        const purchasePayload: Record<string, any> = {
+          id: req.body.id || newId,
+          purchase_number: purchaseNumber,
+          supplier_id: req.body.supplier_id || null,
+          purchase_date: req.body.purchase_date || new Date().toISOString().split('T')[0],
+          due_date: req.body.due_date || null,
+          subtotal: Number(req.body.subtotal || 0),
+          tax_amount: Number(req.body.tax_amount || 0),
+          discount_amount: Number(req.body.discount_amount || 0),
+          total_amount: Number(req.body.total_amount || 0),
+          paid_amount: Number(req.body.paid_amount || 0),
+          payment_status: req.body.payment_status || 'pending',
+          notes: req.body.notes || null,
+          created_by: (req as any).user?.id || null
+        };
+
+        const pKeys = Object.keys(purchasePayload);
+        const pValues = Object.values(purchasePayload).map(v => v === undefined ? null : v);
+        const pPlaceholders = pKeys.map(() => '?').join(', ');
+        await connection.query(`INSERT INTO purchases (${pKeys.join(', ')}) VALUES (${pPlaceholders})`, pValues);
+
+        // Insert purchase items & update product inventory
+        const items = req.body.items;
+        for (const item of items) {
+          if (!item.product_id) continue;
+          const itemId = item.id || crypto.randomUUID();
+          const qty = Number(item.quantity || 0);
+          const unitCost = Number(item.unit_cost || 0);
+          const totalLine = Number(item.total_amount || (qty * unitCost));
+
+          await connection.query(`
+            INSERT INTO purchase_items (id, purchase_id, product_id, quantity, unit_cost, discount_amount, tax_amount, total_amount)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [itemId, purchasePayload.id, item.product_id, qty, unitCost, Number(item.discount_amount || 0), Number(item.tax_amount || 0), totalLine]);
+
+          // Increment product inventory stock & update cost price if provided
+          await connection.query(`
+            UPDATE products 
+            SET current_stock = current_stock + ?,
+                cost_price = CASE WHEN ? > 0 THEN ? ELSE cost_price END
+            WHERE id = ?
+          `, [qty, unitCost, unitCost, item.product_id]);
+
+          // Create inventory movement record
+          const movementId = crypto.randomUUID();
+          await connection.query(`
+            INSERT INTO inventory_movements (id, product_id, movement_type, quantity, unit_cost, reference_type, reference_id, description, created_by)
+            VALUES (?, ?, 'in', ?, ?, 'purchase', ?, ?, ?)
+          `, [movementId, item.product_id, qty, unitCost, purchasePayload.id, `Stock added via purchase ${purchaseNumber}`, (req as any).user?.id || null]);
+        }
+
+        await connection.commit();
+
+        const [pRows]: any = await connection.query(`SELECT * FROM purchases WHERE id = ?`, [purchasePayload.id]);
+        const [pItemRows]: any = await connection.query(`SELECT * FROM purchase_items WHERE purchase_id = ?`, [purchasePayload.id]);
+        const result = pRows[0] || purchasePayload;
+        result.items = pItemRows || [];
+
+        logCrudActivity(req, 'CREATE', 'purchases', purchasePayload.id, `Created purchase ${purchaseNumber}`);
+        res.json({ success: true, data: result });
+      } catch (error: any) {
+        await connection.rollback();
+        console.error('Error inserting purchase transactionally:', error);
+        res.status(500).json({ success: false, error: error.message || 'Database error creating purchase' });
+      } finally {
+        connection.release();
+      }
+      return;
+    }
+
     // Generic insert for other tables
     if (table === 'journal_entries' && !keys.includes('entry_number')) {
       keys.push('entry_number');
       values.push(`JNL${Date.now()}${Math.floor(Math.random() * 1000)}`);
+    }
+
+    // Strip virtual/child relations like 'items' from single-table insert
+    const itemsIdx = keys.indexOf('items');
+    if (itemsIdx !== -1) {
+      keys.splice(itemsIdx, 1);
+      (values as any[]).splice(itemsIdx, 1);
     }
 
     const placeholders = keys.map(() => '?').join(', ');
@@ -427,6 +600,17 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
   try {
     const updateData = { ...req.body };
     delete updateData.id; // Never update ID column
+    // Product-specific: remove unit_id (form-only field, not in products table)
+    if (table === 'products') {
+      delete updateData.unit_id;
+      // Null out empty barcode/sku to avoid UNIQUE constraint on empty string
+      if (updateData.barcode !== undefined && (!updateData.barcode || String(updateData.barcode).trim() === '')) {
+        updateData.barcode = null;
+      }
+      if (updateData.sku !== undefined && (!updateData.sku || String(updateData.sku).trim() === '')) {
+        updateData.sku = null;
+      }
+    }
     
     const keys = Object.keys(updateData);
     const values = Object.values(updateData).map(val => (val === '' ? null : val));

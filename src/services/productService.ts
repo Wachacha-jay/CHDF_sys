@@ -182,6 +182,10 @@ export class ProductService {
     }
   }
 
+  static async updateProductStock(productId: string, quantity: number, type: 'in' | 'out' | 'adjustment'): Promise<boolean> {
+    return this.updateStock(productId, quantity, type);
+  }
+
   static async getLowStockProducts(): Promise<Product[]> {
     const response = await ApiService.get<Product>('products', {
       filters: { is_active: true },

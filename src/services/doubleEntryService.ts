@@ -7,12 +7,7 @@ export class DoubleEntryService {
    */
   static async postSale(sale: Sale): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const allFlatAccounts = accounts.reduce((prev: any[], curr: any) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((p, c) => p.concat(c).concat(c.children ? flatten(c.children) : []), []);
-      };
-      return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-    }, []);
+    const allFlatAccounts = AccountingService.flattenAccounts(accounts);
     const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
 
     // If this is an In-Kind Donation Distribution, post DR Expense, CR In-Kind Inventory

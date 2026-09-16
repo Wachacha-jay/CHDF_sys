@@ -197,6 +197,65 @@ export class FundAccountingService {
       const savedDonation = response.data;
       if (items && items.length > 0) {
         for (const item of items) {
+          let linkedProductId = item.product_id || null;
+
+          // If this is a consumable in-kind item, ensure it's added to inventory
+          if (item.asset_class === 'consumable') {
+            const qty = Number(item.quantity || 1);
+            const lineFMV = Number(item.fair_market_value || 0);
+            const unitCost = qty > 0 ? (lineFMV / qty) : lineFMV;
+
+            if (linkedProductId) {
+              // Existing product linked -> increment its stock
+              try {
+                await ProductService.updateStock(linkedProductId, qty, 'in');
+                await ApiService.create('inventory_movements', {
+                  product_id: linkedProductId,
+                  movement_type: 'in',
+                  quantity: qty,
+                  unit_cost: unitCost,
+                  reference_type: 'donation',
+                  reference_id: savedDonation.id,
+                  description: `In-Kind Donation: ${item.item_description}`
+                });
+              } catch (stockErr) {
+                console.warn('Failed to update stock for linked product:', stockErr);
+              }
+            } else if (item.item_description && item.item_description.trim()) {
+              // No product was selected: Auto-create in-kind product in inventory
+              try {
+                const newProduct = await ProductService.createProduct({
+                  name: item.item_description.trim(),
+                  is_in_kind: true,
+                  cost_price: unitCost,
+                  selling_price: 0,
+                  current_stock: qty,
+                  minimum_stock: 0,
+                  unit_of_measure: item.unit_of_measure || 'pcs',
+                  is_active: true,
+                  is_service: false,
+                  description: `In-Kind Donated Consumable (${savedDonation.donation_date || new Date().toISOString().split('T')[0]})`
+                });
+                if (newProduct) {
+                  linkedProductId = newProduct.id;
+                  try {
+                    await ApiService.create('inventory_movements', {
+                      product_id: newProduct.id,
+                      movement_type: 'in',
+                      quantity: qty,
+                      unit_cost: unitCost,
+                      reference_type: 'donation',
+                      reference_id: savedDonation.id,
+                      description: `In-Kind Donation initial stock: ${item.item_description}`
+                    });
+                  } catch (_) {}
+                }
+              } catch (prodErr) {
+                console.warn('Failed to auto-create in-kind product in inventory:', prodErr);
+              }
+            }
+          }
+
           await ApiService.create('donation_items', {
             donation_id: savedDonation.id,
             item_description: item.item_description,
@@ -204,7 +263,7 @@ export class FundAccountingService {
             fair_market_value: Number(item.fair_market_value || 0),
             quantity: Number(item.quantity || 1),
             unit_of_measure: item.unit_of_measure || 'units',
-            product_id: item.product_id || null,
+            product_id: linkedProductId,
             department_id: item.department_id || null,
             fixed_asset_id: item.fixed_asset_id || null,
             project_name: item.project_name || null,
@@ -389,12 +448,17 @@ export class FundAccountingService {
             child_id: donation.restricted_to_child_id || undefined
           });
 
-          // Increment Product Inventory Stock
+          // Increment Product Inventory Stock (only if not already credited during recordDonation)
           if (item.product_id) {
             try {
-              await ProductService.updateProductStock(item.product_id, Number(item.quantity || 1), 'in');
+              const movementsRes = await ApiService.get<any>('inventory_movements', {
+                filters: { reference_id: donation.id, product_id: item.product_id }
+              });
+              if (!movementsRes.success || !movementsRes.data || movementsRes.data.length === 0) {
+                await ProductService.updateStock(item.product_id, Number(item.quantity || 1), 'in');
+              }
             } catch (stockErr) {
-              console.warn(`Failed to update stock for product ${item.product_id}:`, stockErr);
+              console.warn(`Failed to verify or update stock for product ${item.product_id}:`, stockErr);
             }
           }
 
