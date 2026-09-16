@@ -220,7 +220,13 @@ export class SalesService {
         paid_amount: totalAmount,
         payment_status: 'paid',
         payment_method: 'in_kind_distribution',
-        notes: `In-Kind Distribution${data.recipient_name ? ` (Recipient: ${data.recipient_name})` : ''}. ${data.notes || ''}`.trim()
+        notes: `In-Kind Distribution${data.recipient_name ? ` (Recipient: ${data.recipient_name})` : ''}. ${data.notes || ''}`.trim(),
+        items: data.items.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_cost || 0,
+          total_amount: (item.quantity * (item.unit_cost || 0))
+        }))
       };
 
       const response = await ApiService.post<any>('sales', salePayload);
@@ -229,29 +235,6 @@ export class SalesService {
       }
 
       const saleId = response.data.id;
-
-      // Create sale_items and decrement product stock
-      for (const item of data.items) {
-        await ApiService.post('sale_items', {
-          sale_id: saleId,
-          product_id: item.product_id,
-          quantity: item.quantity,
-          unit_price: item.unit_cost || 0,
-          discount_amount: 0,
-          tax_amount: 0,
-          total_amount: (item.quantity * (item.unit_cost || 0))
-        });
-
-        // Decrement product inventory stock with distribution reference
-        await this.updateProductStock(
-          item.product_id, 
-          item.quantity, 
-          'out', 
-          'distribution', 
-          `In-Kind Donation Distribution: #${saleNumber}`
-        );
-      }
-
       const sale = await this.getSaleById(saleId);
       if (sale) {
         // Tag additional fields for DoubleEntryService

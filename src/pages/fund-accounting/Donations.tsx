@@ -31,6 +31,9 @@ const Donations: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [unitsOfMeasure, setUnitsOfMeasure] = useState<string[]>([
+    'units', 'pcs', 'kg', 'g', 'L', 'mL', 'box', 'bag', 'ctn', 'pair', 'set', 'dozens', 'packet', 'tin'
+  ]);
   const [loading, setLoading] = useState(true);
 
   const [donationMode, setDonationMode] = useState<'monetary' | 'in_kind'>('monetary');
@@ -63,7 +66,7 @@ const Donations: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [dList, fList, chList, donationList, cList, accList, deptsList, prodsList] = await Promise.all([
+    const [dList, fList, chList, donationList, cList, accList, deptsList, prodsList, uomList] = await Promise.all([
       FundAccountingService.getDonors(),
       FundAccountingService.getFundAccounts(),
       FundAccountingService.getChildren(),
@@ -71,7 +74,8 @@ const Donations: React.FC = () => {
       FundAccountingService.getDonorClusters(),
       AccountingService.getAccounts(),
       FundAccountingService.getDepartments(),
-      ProductService.getProducts({ is_active: true })
+      ProductService.getProducts({ is_active: true }),
+      ApiService.get<any>('units_of_measure')
     ]);
     setDonors(dList);
     setFunds(fList);
@@ -81,6 +85,11 @@ const Donations: React.FC = () => {
     setAccounts(accList ? AccountingService.flattenAccounts(accList) : []);
     setDepartments(deptsList || []);
     setProducts(prodsList || []);
+    if (uomList && uomList.success && Array.isArray(uomList.data) && uomList.data.length > 0) {
+      const dbUnits = uomList.data.map((u: any) => u.name || u.symbol || u.code).filter(Boolean);
+      const combined = Array.from(new Set([...dbUnits, 'units', 'pcs', 'kg', 'g', 'L', 'mL', 'box', 'bag', 'ctn', 'pair', 'set', 'dozens', 'packet', 'tin']));
+      setUnitsOfMeasure(combined);
+    }
     setLoading(false);
   };
 
@@ -178,7 +187,38 @@ const Donations: React.FC = () => {
   const updateInKindRow = (index: number, field: keyof DonationItem, value: any) => {
     setInKindItems(prev => {
       const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
+      const current = { ...updated[index], [field]: value };
+
+      if (field === 'product_id') {
+        if (value) {
+          const prod = products.find(p => p.id === value);
+          if (prod) {
+            // Auto-fill item description if empty
+            if (!current.item_description || current.item_description.trim() === '') {
+              current.item_description = prod.name;
+            }
+            // Auto-fill unit of measure from product
+            if (prod.unit_of_measure) {
+              current.unit_of_measure = prod.unit_of_measure;
+            }
+            // Auto-fill fair market value from product value (cost_price or selling_price)
+            const unitVal = Number(prod.cost_price || prod.selling_price || 0);
+            const qty = Number(current.quantity || 1);
+            current.fair_market_value = unitVal * qty;
+          }
+        }
+      } else if (field === 'quantity' && current.product_id) {
+        // Recalculate fair market value when quantity changes
+        const prod = products.find(p => p.id === current.product_id);
+        if (prod) {
+          const unitVal = Number(prod.cost_price || prod.selling_price || 0);
+          if (unitVal > 0) {
+            current.fair_market_value = unitVal * Number(value || 1);
+          }
+        }
+      }
+
+      updated[index] = current;
       return updated;
     });
   };
@@ -1082,13 +1122,15 @@ const Donations: React.FC = () => {
                                           onChange={(e) => updateInKindRow(idx, 'quantity', Number(e.target.value))}
                                           className="w-20 px-2 py-1 border border-gray-300 rounded text-xs"
                                         />
-                                        <input
-                                          type="text"
-                                          placeholder="Unit (e.g. bags)"
+                                        <select
                                           value={item.unit_of_measure || 'units'}
                                           onChange={(e) => updateInKindRow(idx, 'unit_of_measure', e.target.value)}
-                                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs"
-                                        />
+                                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500"
+                                        >
+                                          {Array.from(new Set([item.unit_of_measure, ...unitsOfMeasure].filter(Boolean))).map((u) => (
+                                            <option key={u} value={u}>{u}</option>
+                                          ))}
+                                        </select>
                                       </div>
                                     </div>
                                   )}
@@ -1141,6 +1183,15 @@ const Donations: React.FC = () => {
                                     onChange={(e) => updateInKindRow(idx, 'fair_market_value', Number(e.target.value))}
                                     className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs font-bold text-right text-emerald-600 focus:ring-1 focus:ring-indigo-500"
                                   />
+                                  {item.product_id && (
+                                    <div className="text-[10px] text-gray-400 mt-0.5 text-right font-medium">
+                                      {(() => {
+                                        const prod = products.find(p => p.id === item.product_id);
+                                        const uVal = Number(prod?.cost_price || prod?.selling_price || 0);
+                                        return uVal > 0 ? `@ KES ${uVal.toLocaleString()} / ${item.unit_of_measure || 'unit'}` : '';
+                                      })()}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="p-2 text-center">
                                   <button

@@ -575,7 +575,12 @@ const PointOfSale: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-auto bg-white/50 dark:bg-transparent">
-          <Cart cart={cart} updateQuantity={updateQuantity} removeFromCart={removeFromCart} />
+          <Cart 
+            cart={cart} 
+            updateQuantity={updateQuantity} 
+            removeFromCart={removeFromCart} 
+            isDistribution={posMode === 'distribution'} 
+          />
         </div>
 
         {/* Checkout Footer */}
