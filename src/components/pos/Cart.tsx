@@ -9,6 +9,7 @@ interface CartProps {
   updateUnitPrice?: (productId: string, unitPrice: number) => void;
   removeFromCart: (productId: string) => void;
   isDistribution?: boolean;
+  className?: string;
 }
 
 const CartItemRow: React.FC<{
@@ -54,6 +55,7 @@ const CartItemRow: React.FC<{
   const handleQtyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setQtyInput(val);
+    if (val === '') return;
     const parsed = parseInt(val, 10);
     if (!isNaN(parsed) && parsed >= 1) {
       const capped = currentStock > 0 ? Math.min(parsed, currentStock) : parsed;
@@ -70,7 +72,7 @@ const CartItemRow: React.FC<{
 
   return (
     <div 
-      className={`bg-white dark:bg-slate-900 rounded-xl p-3.5 border transition-all ${
+      className={`bg-white dark:bg-slate-900 rounded-xl p-3 border transition-all ${
         isExceedingStock 
           ? 'border-red-400 dark:border-red-700 bg-red-50/20'
           : isItemInKind 
@@ -87,14 +89,14 @@ const CartItemRow: React.FC<{
             ) : (
               <Package className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
             )}
-            <h3 className="font-bold text-gray-900 dark:text-white text-xs sm:text-sm leading-tight">
+            <h3 className="font-black text-gray-900 dark:text-white text-xs sm:text-sm leading-tight">
               {item.product.name}
             </h3>
           </div>
           
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-[10px] text-gray-400 font-mono">{item.product.code}</span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
               currentStock <= 0
                 ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
                 : currentStock <= 5
@@ -107,10 +109,10 @@ const CartItemRow: React.FC<{
               <button
                 type="button"
                 onClick={handleSetMax}
-                className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold"
+                className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline font-black cursor-pointer"
                 title="Distribute all available stock"
               >
-                Distribute Max ({currentStock})
+                Max ({currentStock})
               </button>
             )}
           </div>
@@ -134,14 +136,17 @@ const CartItemRow: React.FC<{
       )}
 
       {/* Quantity and Pricing Row */}
-      <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100 dark:border-slate-800/80">
-        {/* Quantity Controls */}
-        <div className="flex items-center space-x-1">
+      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-gray-100 dark:border-slate-800/80">
+        {/* Quantity Controls with explicit label */}
+        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-slate-800/60 p-1 rounded-xl border border-gray-200 dark:border-slate-700">
+          <span className="text-[10px] font-black text-gray-500 dark:text-slate-400 pl-1 uppercase tracking-tight">
+            {isDistribution ? 'Qty:' : 'Qty:'}
+          </span>
           <button
             type="button"
             onClick={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1))}
             disabled={item.quantity <= 1}
-            className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-slate-700 disabled:opacity-30 transition-colors"
+            className="w-7 h-7 rounded-lg bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-200 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-600 disabled:opacity-30 transition-colors shadow-xs"
             title="Decrease quantity"
           >
             <Minus className="h-3 w-3" />
@@ -154,8 +159,8 @@ const CartItemRow: React.FC<{
             value={qtyInput}
             onChange={handleQtyChange}
             onBlur={handleQtyBlur}
-            className={`w-14 text-center text-xs font-black py-1 px-1 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none transition-colors ${
-              isExceedingStock ? 'border-red-500 text-red-600' : 'border-gray-200 dark:border-slate-700'
+            className={`w-14 text-center text-xs font-black py-1 px-1 border-2 rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none transition-colors ${
+              isExceedingStock ? 'border-red-500 text-red-600' : 'border-gray-300 dark:border-slate-600'
             }`}
             title="Type exact quantity to distribute"
           />
@@ -164,7 +169,7 @@ const CartItemRow: React.FC<{
             type="button"
             onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
             disabled={currentStock > 0 && item.quantity >= currentStock}
-            className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-slate-700 disabled:opacity-30 transition-colors"
+            className="w-7 h-7 rounded-lg bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-200 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-600 disabled:opacity-30 transition-colors shadow-xs"
             title="Increase quantity"
           >
             <Plus className="h-3 w-3" />
@@ -215,7 +220,8 @@ const Cart: React.FC<CartProps> = ({
   updateQuantity, 
   updateUnitPrice, 
   removeFromCart, 
-  isDistribution = false 
+  isDistribution = false,
+  className = ''
 }) => {
   const { settings } = useSettingsContext();
   const currency = (settings?.default_currency && settings.default_currency !== 'USD') 
@@ -223,21 +229,21 @@ const Cart: React.FC<CartProps> = ({
     : 'KES';
 
   return (
-    <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
+    <div className={className || "space-y-3"}>
       {cart.length === 0 ? (
-        <div className="text-center text-gray-500 mt-8">
-          <ShoppingCart className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-          <p className="font-semibold text-sm text-gray-700 dark:text-slate-300">
+        <div className="text-center text-gray-500 py-6">
+          <ShoppingCart className="h-10 w-10 mx-auto mb-3 text-gray-300 dark:text-slate-700" />
+          <p className="font-black text-xs text-gray-700 dark:text-slate-300 uppercase tracking-wider">
             {isDistribution ? 'Distribution list is empty' : 'Cart is empty'}
           </p>
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-[10px] text-gray-400 mt-1">
             {isDistribution 
               ? 'Click in-kind items in the catalog to add to distribution voucher' 
               : 'Add commercial products to get started'}
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {cart.map((item) => (
             <CartItemRow
               key={item.product.id}

@@ -358,12 +358,12 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
                           <Printer className="h-4 w-4" />
                         </button>
 
-                        {/* Edit (draft only) */}
-                        {run.status === 'draft' && (
+                        {/* Edit Salary & Deductions (unpaid runs) */}
+                        {run.status !== 'paid' && (
                           <button
                             onClick={() => onEditRun(run)}
-                            title="Edit Deductions & Earnings"
-                            className="p-1.5 text-slate-600 hover:text-green-700 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Edit Salary Details & Deductions"
+                            className="p-1.5 text-slate-600 hover:text-green-700 hover:bg-green-50 rounded-lg transition-colors cursor-pointer"
                           >
                             <Edit className="h-4 w-4" />
                           </button>

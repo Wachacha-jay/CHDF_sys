@@ -213,6 +213,27 @@ export const usePayroll = () => {
     loadPayrollPeriods();
   }, [loadPayrollSettings, loadPayrollPeriods]);
 
+  const clearAllPayrollRuns = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await PayrollService.clearAllPayrollRuns();
+      if (result.success) {
+        toast.success(result.message || 'Cleared all payroll runs ✓');
+        await loadPayrollPeriods();
+        await loadPayrollRuns();
+        return true;
+      } else {
+        toast.error(result.error || 'Failed to clear payroll runs');
+        return false;
+      }
+    } catch {
+      toast.error('Failed to clear payroll runs');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollPeriods, loadPayrollRuns]);
+
   return {
     payrollSettings,
     payrollPeriods,
@@ -231,5 +252,6 @@ export const usePayroll = () => {
     payPayrollRun,
     updatePayrollRun,
     calculateEmployeePayroll,
+    clearAllPayrollRuns,
   };
 };

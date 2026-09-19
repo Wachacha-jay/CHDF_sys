@@ -559,7 +559,9 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
     const allow = req.body.allowances !== undefined ? Number(req.body.allowances) : Number(run.allowances || 0);
     const bonus = req.body.bonuses !== undefined ? Number(req.body.bonuses) : Number(run.bonuses || 0);
     const notes = req.body.notes !== undefined ? req.body.notes : run.notes;
-    const basicSalary = Number(run.basic_salary) || 0;
+    const basicSalary = req.body.basic_salary !== undefined 
+      ? Number(req.body.basic_salary) 
+      : (Number(run.basic_salary) || 0);
 
     const hourlyRate = basicSalary / 160;
     const overtimePay = otHours * hourlyRate * (Number(settings.overtime_rate) || 1.5);
@@ -596,13 +598,13 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
 
     await pool.query(
       `UPDATE payroll_runs SET
-        overtime_hours = ?, overtime_pay = ?, holiday_hours = ?, holiday_pay = ?,
+        basic_salary = ?, overtime_hours = ?, overtime_pay = ?, holiday_hours = ?, holiday_pay = ?,
         allowances = ?, bonuses = ?, gross_pay = ?, tax_deduction = ?,
         nhif_deduction = ?, nssf_deduction = ?, housing_levy_deduction = ?,
         sacco_welfare_deduction = ?, other_deductions = ?, net_pay = ?, notes = ?
       WHERE id = ?`,
       [
-        otHours, overtimePay, holHours, holidayPay,
+        basicSalary, otHours, overtimePay, holHours, holidayPay,
         allow, bonus, grossPay, taxDeduction,
         nhifDeduction, nssfDeduction, housingLevy,
         saccoDeduction, otherDed, netPay, notes, id
@@ -638,6 +640,66 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
   } catch (error: any) {
     console.error('Error updating payroll run:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5B. CLEAR ALL PAYROLL RUNS (Start fresh)
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/clear-runs', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Delete deductions and allowances linked to runs
+    await connection.query('DELETE FROM payroll_deductions');
+    await connection.query('DELETE FROM payroll_allowances');
+
+    // 2. Delete all payroll runs
+    const [runDeleteResult]: any = await connection.query('DELETE FROM payroll_runs');
+
+    // 3. Delete payroll journal entries linked to periods
+    try {
+      await connection.query('DELETE FROM payroll_journal_entries');
+    } catch (_) {}
+
+    // 4. Reset payroll periods totals and status back to 'open'
+    await connection.query(`
+      UPDATE payroll_periods SET 
+        total_gross_pay = 0,
+        total_net_pay = 0,
+        total_tax = 0,
+        total_nhif = 0,
+        total_nssf = 0,
+        total_housing_levy = 0,
+        total_sacco_welfare = 0,
+        status = 'open'
+    `);
+
+    await connection.commit();
+
+    // Audit log
+    try {
+      const user = (req as any).user;
+      const auditId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'RESET', 'Payroll', 'ALL', 'Cleared all payroll runs for fresh start', ?, '')`,
+        [auditId, user?.id || null, user?.name || user?.email || 'System', JSON.stringify({ runs_deleted: runDeleteResult?.affectedRows || 0 })]
+      );
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      message: `Successfully cleared all payroll runs (${runDeleteResult?.affectedRows || 0} run(s) deleted). All pay periods have been reset to open status.`,
+      runs_deleted: runDeleteResult?.affectedRows || 0
+    });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error('Error clearing payroll runs:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to clear payroll runs' });
+  } finally {
+    connection.release();
   }
 });
 

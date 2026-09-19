@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Search, Edit, Trash2, User, Mail, Phone, Calendar, 
   DollarSign, Settings, FileText, Users, Building2, Layers, CheckCircle, Clock, X,
-  FileSpreadsheet
+  FileSpreadsheet, RotateCcw, PieChart
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { useSettingsContext } from '../contexts/SettingsContext';
@@ -18,6 +18,7 @@ import PayrollDetailsModal from '../components/payroll/PayrollDetailsModal';
 import PayrollRunModal from '../components/payroll/PayrollRunModal';
 import EmployeePayrollForm from '../components/payroll/EmployeePayrollForm';
 import P9Form from '../components/payroll/P9Form';
+import DepartmentBudgetingTab from '../components/payroll/DepartmentBudgetingTab';
 import type { 
   Employee, PayrollRun, PayrollDeduction, PayrollAllowance, 
   Designation, Department 
@@ -28,11 +29,15 @@ const Employees: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [showClearRunsModal, setShowClearRunsModal] = useState(false);
+  const [clearingRuns, setClearingRuns] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   
-  // De-cluttered tab state
-  const [activeTab, setActiveTab] = useState<'employees' | 'payroll-runs' | 'payroll-periods'>('employees');
+  // Tab state including Department Budgeting
+  const [activeTab, setActiveTab] = useState<'employees' | 'payroll-runs' | 'payroll-periods' | 'department-budgeting'>('employees');
   
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -53,7 +58,8 @@ const Employees: React.FC = () => {
     nssf_number: '',
     nhif_number: '',
     bank_name: '',
-    bank_account: ''
+    bank_account: '',
+    is_active: true
   });
   
   // Payroll state
@@ -90,8 +96,13 @@ const Employees: React.FC = () => {
     generatePayrollForPeriod,
     approvePayrollRun,
     payPayrollRun,
-    updatePayrollRun
+    updatePayrollRun,
+    clearAllPayrollRuns
   } = usePayroll();
+
+  const isEmployeeActive = (emp: Employee) => {
+    return Boolean(emp.is_active === true || (emp.is_active as any) === 1 || (emp.is_active as any) === '1');
+  };
 
   useEffect(() => {
     loadEmployees();
@@ -122,22 +133,10 @@ const Employees: React.FC = () => {
   const loadEmployees = async () => {
     try {
       setLoading(true);
-      const response = await ApiService.get<Employee>('employees', {
-        filters: { is_active: true }
-      });
+      const response = await ApiService.get<Employee>('employees');
       
       if (response.success && response.data) {
-        let filteredEmployees = response.data;
-        
-        if (searchTerm) {
-          filteredEmployees = filteredEmployees.filter(employee =>
-            `${employee.first_name} ${employee.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            employee.code.toLowerCase().includes(searchTerm.toLowerCase())
-          );
-        }
-        
-        setEmployees(filteredEmployees);
+        setEmployees(response.data || []);
       }
     } catch (error) {
       toast.error('Failed to load employees');
@@ -146,8 +145,50 @@ const Employees: React.FC = () => {
     }
   };
 
+  const handleToggleEmployeeStatus = async (employee: Employee) => {
+    const currentlyActive = isEmployeeActive(employee);
+    const newStatus = !currentlyActive;
+    const actionLabel = newStatus ? 'activated' : 'deactivated';
+
+    setTogglingId(employee.id);
+    try {
+      const response = await ApiService.update('employees', employee.id, {
+        is_active: newStatus
+      });
+      if (response.success) {
+        toast.success(`Employee ${employee.first_name} ${employee.last_name} ${actionLabel} ✓`);
+        setEmployees(prev => prev.map(e => e.id === employee.id ? { ...e, is_active: newStatus } : e));
+      } else {
+        toast.error(response.error || `Failed to ${actionLabel} employee`);
+      }
+    } catch (error: any) {
+      toast.error(`Failed to ${actionLabel} employee: ${error.message || ''}`);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const displayedEmployees = useMemo(() => {
+    return employees.filter(employee => {
+      const active = isEmployeeActive(employee);
+      if (statusFilter === 'active' && !active) return false;
+      if (statusFilter === 'inactive' && active) return false;
+
+      if (searchTerm) {
+        const query = searchTerm.toLowerCase();
+        const fullName = `${employee.first_name || ''} ${employee.last_name || ''}`.toLowerCase();
+        const email = (employee.email || '').toLowerCase();
+        const code = (employee.code || '').toLowerCase();
+        const dept = (employee.department || '').toLowerCase();
+        const pos = (employee.position || '').toLowerCase();
+        return fullName.includes(query) || email.includes(query) || code.includes(query) || dept.includes(query) || pos.includes(query);
+      }
+      return true;
+    });
+  }, [employees, statusFilter, searchTerm]);
+
   const handleSearch = () => {
-    loadEmployees();
+    // displayedEmployees automatically updates via searchTerm memo
   };
 
   const handleDelete = async (employeeId: string) => {
@@ -295,7 +336,8 @@ const Employees: React.FC = () => {
                   nssf_number: '',
                   nhif_number: '',
                   bank_name: '',
-                  bank_account: ''
+                  bank_account: '',
+                  is_active: true
                 });
                 setShowModal(true);
               }}
@@ -321,10 +363,10 @@ const Employees: React.FC = () => {
 
       {/* Main Tabs Navigation */}
       <div className="border-b border-slate-200">
-        <nav className="-mb-px flex space-x-8">
+        <nav className="-mb-px flex space-x-6 overflow-x-auto">
           <button
             onClick={() => setActiveTab('employees')}
-            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center transition-colors ${
+            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center whitespace-nowrap transition-colors ${
               activeTab === 'employees'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
@@ -339,7 +381,7 @@ const Employees: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('payroll-runs')}
-            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center transition-colors ${
+            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center whitespace-nowrap transition-colors ${
               activeTab === 'payroll-runs'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
@@ -356,7 +398,7 @@ const Employees: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('payroll-periods')}
-            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center transition-colors ${
+            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center whitespace-nowrap transition-colors ${
               activeTab === 'payroll-periods'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
@@ -368,6 +410,21 @@ const Employees: React.FC = () => {
               {payrollPeriods.length}
             </span>
           </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('department-budgeting');
+              loadPayrollRuns();
+            }}
+            className={`py-3 px-1 border-b-2 font-bold text-sm flex items-center whitespace-nowrap transition-colors ${
+              activeTab === 'department-budgeting'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }`}
+          >
+            <PieChart className="h-4 w-4 mr-2" />
+            Department Budgeting
+          </button>
         </nav>
       </div>
 
@@ -376,9 +433,9 @@ const Employees: React.FC = () => {
       {/* ─────────────────────────────────────────────────────────────────── */}
       {activeTab === 'employees' && (
         <div className="space-y-4">
-          {/* Search bar */}
+          {/* Search bar & Status Filter */}
           <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs">
-            <div className="flex gap-3 items-center">
+            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 h-4 w-4" />
                 <input
@@ -386,16 +443,46 @@ const Employees: React.FC = () => {
                   placeholder="Search employees by name, email, code or department..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                   className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
-              <button
-                onClick={handleSearch}
-                className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 text-sm font-medium"
-              >
-                Search
-              </button>
+
+              {/* Status Filter Tabs */}
+              <div className="flex items-center space-x-1.5 self-center sm:self-auto bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    statusFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All ({employees.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('active')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    statusFilter === 'active'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-emerald-700 hover:text-emerald-900'
+                  }`}
+                >
+                  Active ({employees.filter(e => isEmployeeActive(e)).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('inactive')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    statusFilter === 'inactive'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-rose-700 hover:text-rose-900'
+                  }`}
+                >
+                  Inactive ({employees.filter(e => !isEmployeeActive(e)).length})
+                </button>
+              </div>
             </div>
           </div>
 
@@ -426,7 +513,7 @@ const Employees: React.FC = () => {
                         Basic Salary
                       </th>
                       <th className="px-6 py-3.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                        Status
+                        Status (Click to Toggle)
                       </th>
                       <th className="px-6 py-3.5 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">
                         Actions
@@ -434,18 +521,28 @@ const Employees: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
-                    {employees.map((employee) => {
-                      const status = getEmployeeStatus(employee.is_active);
+                    {displayedEmployees.map((employee) => {
+                      const active = isEmployeeActive(employee);
                       return (
-                        <tr key={employee.id} className="hover:bg-slate-50/60 transition-colors">
+                        <tr 
+                          key={employee.id} 
+                          className={`hover:bg-slate-50/60 transition-colors ${!active ? 'bg-slate-50/40 opacity-75' : ''}`}
+                        >
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
-                              <div className="w-9 h-9 bg-blue-100 text-blue-700 font-bold rounded-full flex items-center justify-center mr-3 text-xs">
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center mr-3 text-xs font-bold ${
+                                active ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                              }`}>
                                 {employee.first_name?.[0]}{employee.last_name?.[0]}
                               </div>
                               <div>
-                                <div className="text-sm font-semibold text-slate-900">
+                                <div className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
                                   {employee.first_name} {employee.last_name}
+                                  {!active && (
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-600 font-medium">
+                                      Inactive
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-xs text-slate-500">
                                   {employee.email}
@@ -469,9 +566,31 @@ const Employees: React.FC = () => {
                             {currency} {employee.basic_salary?.toLocaleString('en-KE', { minimumFractionDigits: 2 }) || '0.00'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2.5 py-0.5 text-xs font-semibold rounded-full ${status.bg} ${status.color}`}>
-                              {status.text}
-                            </span>
+                            {/* Interactive Status Toggle Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEmployeeStatus(employee)}
+                              disabled={togglingId === employee.id}
+                              title={`Click to ${active ? 'deactivate (excludes from payroll runs)' : 'activate (includes in payroll runs)'}`}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all border shadow-2xs cursor-pointer ${
+                                active
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 hover:border-rose-300'
+                              }`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full transition-colors ${
+                                  active ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-rose-400'
+                                }`}
+                              />
+                              {togglingId === employee.id ? (
+                                <span className="italic">Updating...</span>
+                              ) : active ? (
+                                'Active'
+                              ) : (
+                                'Inactive'
+                              )}
+                            </button>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <div className="flex items-center justify-end space-x-2">
@@ -515,7 +634,8 @@ const Employees: React.FC = () => {
                                     nssf_number: employee.nssf_number || employee.nssf_no || '',
                                     nhif_number: employee.nhif_number || employee.nhif_no || '',
                                     bank_name: employee.bank_name || '',
-                                    bank_account: employee.bank_account || ''
+                                    bank_account: employee.bank_account || '',
+                                    is_active: isEmployeeActive(employee)
                                   });
                                   setShowModal(true);
                                 }}
@@ -541,11 +661,17 @@ const Employees: React.FC = () => {
               </div>
             )}
             
-            {!loading && employees.length === 0 && (
+            {!loading && displayedEmployees.length === 0 && (
               <div className="text-center py-12">
                 <User className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-                <h3 className="text-base font-semibold text-slate-800 mb-1">No employees found</h3>
-                <p className="text-xs text-slate-500">Get started by adding your first employee.</p>
+                <h3 className="text-base font-semibold text-slate-800 mb-1">
+                  {employees.length === 0 ? 'No employees found' : 'No matching employees'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {employees.length === 0 
+                    ? 'Get started by adding your first employee.' 
+                    : 'Try changing your search term or status filter.'}
+                </p>
               </div>
             )}
           </div>
@@ -601,6 +727,16 @@ const Employees: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowClearRunsModal(true)}
+                className="inline-flex items-center px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 hover:border-rose-300 transition-colors shadow-2xs"
+                title="Permanently clear all payroll runs across all periods and start fresh"
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1 text-rose-600" />
+                Clear Runs (Fresh Start)
+              </button>
+
               {currentPeriod && currentPeriod.status !== 'closed' && (
                 <button
                   onClick={async () => {
@@ -664,6 +800,22 @@ const Employees: React.FC = () => {
             onClosePeriod={closePayrollPeriod}
             onSelectPeriod={handleSelectPeriod}
             selectedPeriod={currentPeriod}
+          />
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* 4. DEPARTMENT BUDGETING TAB (Rollup & Breakdown by Dept)            */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'department-budgeting' && (
+        <div className="w-full">
+          <DepartmentBudgetingTab
+            payrollRuns={payrollRuns}
+            payrollPeriods={payrollPeriods}
+            departments={departments}
+            currentPeriod={currentPeriod}
+            onSelectPeriod={handleSelectPeriod}
+            loading={payrollLoading}
           />
         </div>
       )}
@@ -946,6 +1098,31 @@ const Employees: React.FC = () => {
                 </div>
               </div>
 
+              {/* Employment Active Status Toggle */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-slate-800">Employment Status</div>
+                  <div className="text-[11px] text-slate-500">
+                    {employeeFormData.is_active
+                      ? 'Active — Eligible to be included in payroll generation runs'
+                      : 'Inactive — Excluded from future payroll runs'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEmployeeFormData(prev => ({ ...prev, is_active: !prev.is_active }))}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    employeeFormData.is_active ? 'bg-emerald-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      employeeFormData.is_active ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               {/* Form Action buttons */}
               <div className="flex justify-end space-x-3 pt-3 border-t border-slate-200">
                 <button
@@ -1053,6 +1230,64 @@ const Employees: React.FC = () => {
           data={p9Data}
           onClose={() => { setShowP9Modal(false); setP9Data(null); }}
         />
+      )}
+
+      {/* Clear Runs Confirmation Modal */}
+      {showClearRunsModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center space-x-3 text-rose-600 mb-4">
+              <div className="p-3 bg-rose-100 rounded-full">
+                <RotateCcw className="h-6 w-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Clear All Payroll Runs?</h3>
+                <p className="text-xs text-rose-600 font-semibold">Start Fresh with Clean Payroll Data</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              This action will permanently delete all generated employee payroll runs, salary allowances, deductions, and related draft payroll journal entries, and reset pay periods back to open.
+            </p>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg mb-6 text-xs text-amber-800">
+              <strong>Safe Operation:</strong> Employee profiles, salary setup, and business configurations are fully preserved. Only payroll run records are cleared.
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button
+                type="button"
+                onClick={() => setShowClearRunsModal(false)}
+                disabled={clearingRuns}
+                className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={clearingRuns}
+                onClick={async () => {
+                  setClearingRuns(true);
+                  const success = await clearAllPayrollRuns();
+                  setClearingRuns(false);
+                  if (success) {
+                    setShowClearRunsModal(false);
+                  }
+                }}
+                className="px-4 py-2 text-sm font-semibold text-white bg-rose-600 rounded-lg hover:bg-rose-700 disabled:opacity-50 flex items-center shadow-sm"
+              >
+                {clearingRuns ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Clearing Runs...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-4 w-4 mr-1.5" />
+                    Confirm &amp; Clear All Runs
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

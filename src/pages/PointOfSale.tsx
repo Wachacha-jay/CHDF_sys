@@ -437,128 +437,188 @@ const PointOfSale: React.FC = () => {
               loading={loading} 
               onAddToCart={(prod) => addToCart(prod, posMode)} 
               isDistribution={posMode === 'distribution'}
+              cart={cart}
+              onUpdateQuantity={updateQuantity}
             />
           )}
         </div>
       </div>
 
-      {/* Cart Section */}
-      <div className="w-96 bg-gray-50 dark:bg-slate-950 border-l border-gray-200 dark:border-slate-800 flex flex-col">
-        <div className="p-6 border-b border-gray-200 dark:border-slate-800">
-          <h2 className="text-xl font-black text-gray-900 dark:text-white mb-4">
-            {posMode === 'distribution' ? 'Distribution Cart' : 'Cart'}
-          </h2>
+      {/* Cart & Distribution Sidebar */}
+      <div className="w-96 xl:w-[430px] bg-gray-50 dark:bg-slate-950 border-l border-gray-200 dark:border-slate-800 flex flex-col h-full overflow-hidden shrink-0">
+        {/* Sidebar Header */}
+        <div className="p-4 sm:p-5 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-black text-gray-900 dark:text-white uppercase tracking-tight">
+                {posMode === 'distribution' ? 'Distribution Voucher' : 'Commercial Cart'}
+              </h2>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                posMode === 'distribution'
+                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300'
+              }`}>
+                {cart.length} {cart.length === 1 ? 'item' : 'items'}
+              </span>
+            </div>
+            <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">
+              {posMode === 'distribution' 
+                ? 'Adjust quantities to distribute & set destination' 
+                : 'Commercial sale & payment gateway'}
+            </p>
+          </div>
+          {cart.length > 0 && (
+            <button
+              type="button"
+              onClick={clearCart}
+              className="text-[11px] font-black text-red-500 hover:text-red-700 uppercase tracking-wider px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+              title="Clear all items"
+            >
+              Clear
+            </button>
+          )}
+        </div>
 
+        {/* Scrollable Center: Cart Items FIRST, then Requisition / Payment Info */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+          {/* SECTION 1: ITEMS IN CART (WITH QUANTITY CONTROLS) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-black text-gray-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                {posMode === 'distribution' ? <Gift className="w-3.5 h-3.5 text-emerald-600" /> : <ShoppingCart className="w-3.5 h-3.5 text-indigo-600" />}
+                {posMode === 'distribution' ? 'Items to Distribute' : 'Order Items'}
+              </span>
+              {cart.length > 0 && (
+                <span className="text-[10px] text-gray-400 font-bold">
+                  {cart.reduce((s, i) => s + i.quantity, 0)} total units
+                </span>
+              )}
+            </div>
+
+            <Cart 
+              cart={cart} 
+              updateQuantity={updateQuantity} 
+              updateUnitPrice={updateUnitPrice}
+              removeFromCart={removeFromCart} 
+              isDistribution={posMode === 'distribution'} 
+            />
+          </div>
+
+          {/* SECTION 2: REQUISITION / DISPATCH ALLOCATION (DISTRIBUTION MODE) */}
           {posMode === 'distribution' ? (
-            /* Distribution Dedicated Destination & Allocation Panel */
-            <div className="space-y-4">
-              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 rounded-xl">
-                <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-black text-[11px] uppercase tracking-wider">
-                  <Share2 className="w-3.5 h-3.5" />
-                  <span>Distribution Requisition</span>
+            <div className="pt-3 border-t border-gray-200 dark:border-slate-800 space-y-3">
+              <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-black text-[11px] uppercase tracking-wider px-1">
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Dispatch & Accounting Allocation</span>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-gray-200 dark:border-slate-800 space-y-3 shadow-xs">
+                {/* Destination Department (Required) */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <Building2 className="w-3 h-3 text-emerald-600" />
+                    Destination Department *
+                  </label>
+                  <select
+                    value={destDepartmentId}
+                    onChange={(e) => setDestDepartmentId(e.target.value)}
+                    required
+                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
+                  >
+                    <option value="">-- Select Destination Department --</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
-                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 leading-relaxed">
-                  Dispatched items reduce In-Kind Inventory (1135) and post as an Expense against the selected department.
-                </p>
-              </div>
 
-              {/* Destination Department (Required) */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Building2 className="w-3.5 h-3.5 text-emerald-600" />
-                  Destination Department *
-                </label>
-                <select
-                  value={destDepartmentId}
-                  onChange={(e) => setDestDepartmentId(e.target.value)}
-                  required
-                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
-                >
-                  <option value="">-- Select Destination Department --</option>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Expense Account (Required) */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
-                  Expense Account (Debit) *
-                </label>
-                <select
-                  value={destExpenseAccountId}
-                  onChange={(e) => setDestExpenseAccountId(e.target.value)}
-                  required
-                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
-                >
-                  <option value="">-- Select Expense G/L Account --</option>
-                  {expenseAccounts.map((acc) => (
-                    <option key={acc.id} value={acc.id}>{acc.code} - {acc.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Recipient / Beneficiary (Optional) */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Users className="w-3.5 h-3.5 text-emerald-600" />
-                  Recipient / Beneficiary (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={recipientName}
-                  onChange={(e) => setRecipientName(e.target.value)}
-                  placeholder="e.g. School Kitchen, Dormitory A, John"
-                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
-                />
-              </div>
-
-              {/* Beneficiary Child (Optional) */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Baby className="w-3.5 h-3.5 text-emerald-600" />
-                  Beneficiary Child (Optional)
-                </label>
-                <select
-                  value={destChildId}
-                  onChange={(e) => setDestChildId(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
-                >
-                  <option value="">-- None (General Distribution) --</option>
-                  {children.map((c) => (
-                    <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Date & Notes */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest">Date</label>
-                  <input
-                    type="date"
-                    value={distributionDate}
-                    onChange={(e) => setDistributionDate(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-1.5 px-2.5 dark:text-white"
-                  />
+                {/* Expense Account (Required) */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                    <BookOpen className="w-3 h-3 text-emerald-600" />
+                    Expense Account (Debit) *
+                  </label>
+                  <select
+                    value={destExpenseAccountId}
+                    onChange={(e) => setDestExpenseAccountId(e.target.value)}
+                    required
+                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-2 px-3 focus:ring-2 focus:ring-emerald-500 dark:text-white"
+                  >
+                    <option value="">-- Select Expense G/L Account --</option>
+                    {expenseAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>{acc.code} - {acc.name}</option>
+                    ))}
+                  </select>
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-600 dark:text-slate-400 uppercase tracking-widest">Requisition / Ref</label>
-                  <input
-                    type="text"
-                    value={distributionNotes}
-                    onChange={(e) => setDistributionNotes(e.target.value)}
-                    placeholder="e.g. Weekly supply"
-                    className="w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold py-1.5 px-2.5 dark:text-white"
-                  />
-                </div>
+
+                {/* Collapsible Optional Beneficiary, Child, Date & Ref */}
+                <details className="group pt-1 border-t border-gray-100 dark:border-slate-800">
+                  <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-wider hover:text-emerald-600 transition-colors py-1">
+                    <span className="flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      Recipient & Beneficiary (Optional)
+                    </span>
+                    <span className="text-xs transition-transform group-open:rotate-180">▾</span>
+                  </summary>
+
+                  <div className="mt-2.5 space-y-2.5 animate-in fade-in duration-200">
+                    <div>
+                      <label className="text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                        Recipient / Staff in charge
+                      </label>
+                      <input
+                        type="text"
+                        value={recipientName}
+                        onChange={(e) => setRecipientName(e.target.value)}
+                        placeholder="e.g. School Kitchen, Dormitory A, John"
+                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-semibold py-1.5 px-2.5 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
+                        Beneficiary Child
+                      </label>
+                      <select
+                        value={destChildId}
+                        onChange={(e) => setDestChildId(e.target.value)}
+                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-semibold py-1.5 px-2.5 dark:text-white"
+                      >
+                        <option value="">-- None (General Distribution) --</option>
+                        {children.map((c) => (
+                          <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Date</label>
+                        <input
+                          type="date"
+                          value={distributionDate}
+                          onChange={(e) => setDistributionDate(e.target.value)}
+                          className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-semibold py-1.5 px-2 dark:text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Requisition / Ref</label>
+                        <input
+                          type="text"
+                          value={distributionNotes}
+                          onChange={(e) => setDistributionNotes(e.target.value)}
+                          placeholder="e.g. Weekly supply"
+                          className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-semibold py-1.5 px-2 dark:text-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
           ) : (
-            /* Standard Commercial or NGO Payment Form */
-            <>
+            /* Standard Commercial Payment Form */
+            <div className="pt-3 border-t border-gray-200 dark:border-slate-800 space-y-3">
               <PaymentForm
                 paymentMethod={paymentMethod}
                 setPaymentMethod={setPaymentMethod}
@@ -572,13 +632,13 @@ const PointOfSale: React.FC = () => {
                 onAddCustomer={() => setShowAddCustomer(true)}
                 posMode="retail"
               />
-              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800">
+              <div className="pt-3 border-t border-gray-200 dark:border-slate-800">
                 <details className="group">
                   <summary className="list-none cursor-pointer flex items-center justify-between text-[10px] font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest hover:text-indigo-500 transition-colors">
                     <span>Optional Tracking Info</span>
                     <span className="group-open:rotate-180 transition-transform">↓</span>
                   </summary>
-                  <div className="mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="mt-3 animate-in fade-in slide-in-from-top-1 duration-200">
                     <DimensionSelector 
                       value={dimensions}
                       onChange={setDimensions}
@@ -586,30 +646,20 @@ const PointOfSale: React.FC = () => {
                   </div>
                 </details>
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        <div className="flex-1 overflow-auto bg-white/50 dark:bg-transparent">
-          <Cart 
-            cart={cart} 
-            updateQuantity={updateQuantity} 
-            updateUnitPrice={updateUnitPrice}
-            removeFromCart={removeFromCart} 
-            isDistribution={posMode === 'distribution'} 
-          />
-        </div>
-
-        {/* Checkout Footer */}
-        <div className="p-6 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="flex justify-between items-center mb-6">
-            <span className="text-sm font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
+        {/* Fixed Checkout Footer */}
+        <div className="p-4 sm:p-5 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+          <div className="flex justify-between items-baseline mb-4">
+            <span className="text-xs font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
               {posMode === 'distribution' ? 'Total Valuation' : 'Grand Total'}
             </span>
-            <span className={`text-3xl font-black ${
+            <span className={`text-2xl sm:text-3xl font-black ${
               posMode === 'distribution' ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'
             }`}>
-              KSh {getTotal().toLocaleString()}
+              KSh {getTotal().toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
 
@@ -617,10 +667,10 @@ const PointOfSale: React.FC = () => {
             <button
               onClick={handleDistributionCheckout}
               disabled={cart.length === 0 || loading || !destDepartmentId || !destExpenseAccountId}
-              className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 flex items-center justify-center space-x-2 ${
+              className={`w-full py-3.5 px-4 rounded-xl font-black uppercase tracking-widest text-xs sm:text-sm transition-all shadow-lg active:scale-95 flex items-center justify-center space-x-2 ${
                 cart.length === 0 || loading || !destDepartmentId || !destExpenseAccountId
                   ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20 cursor-pointer'
               }`}
             >
               <Share2 className="w-4 h-4 mr-2" />
@@ -630,10 +680,10 @@ const PointOfSale: React.FC = () => {
             <button
               onClick={paymentMethod === 'mpesa' ? handleMpesaPayment : handleCheckout}
               disabled={cart.length === 0 || loading}
-              className={`w-full py-4 px-6 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-lg active:scale-95 ${
+              className={`w-full py-3.5 px-4 rounded-xl font-black uppercase tracking-widest text-xs sm:text-sm transition-all shadow-lg active:scale-95 ${
                 cart.length === 0 || loading
                   ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 cursor-not-allowed shadow-none'
-                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 dark:shadow-none'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 dark:shadow-none cursor-pointer'
               }`}
             >
               {loading ? 'Processing...' : paymentMethod === 'mpesa' ? 'Initiate M-Pesa' : 'Complete Purchase'}

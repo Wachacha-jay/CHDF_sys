@@ -264,4 +264,17 @@ export class PayrollService {
       return null;
     }
   }
+
+  // ────────────────────────────────────────────────
+  // Clear All Payroll Runs (Fresh Start)
+  // ────────────────────────────────────────────────
+  static async clearAllPayrollRuns(): Promise<{ success: boolean; message?: string; runs_deleted?: number; error?: string }> {
+    try {
+      const response: any = await apiClient.post<any>('/payroll/clear-runs', {});
+      return { success: true, message: response?.message, runs_deleted: response?.runs_deleted };
+    } catch (error: any) {
+      const msg = error?.response?.data?.error || 'Failed to clear payroll runs';
+      return { success: false, error: msg };
+    }
+  }
 }
