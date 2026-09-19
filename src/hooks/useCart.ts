@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Product } from '../types';
+import toast from 'react-hot-toast';
 
 export interface CartItem {
   product: Product;
@@ -10,20 +11,31 @@ export interface CartItem {
 export const useCart = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
 
-  const addToCart = (product: Product) => {
-    const existingItem = cart.find(item => item.product.id === product.id);
-    // For in-kind items, selling_price is usually 0; use cost_price (valuation)
+  const addToCart = (product: Product, mode: 'retail' | 'distribution' = 'retail') => {
+    const isDist = mode === 'distribution' || !!product.is_in_kind;
+    const currentStock = Number(product.current_stock ?? 0);
+
+    // Hard stock boundary check: prevent adding out-of-stock items
+    if (currentStock <= 0) {
+      toast.error(`"${product.name}" is out of stock (0 ${product.unit_of_measure || 'units'} available)`);
+      return;
+    }
+
+    // In-kind distribution prioritizes cost_price (Fair Market Value); retail prioritizes selling_price
     const effectiveUnitPrice = Number(
-      (product.is_in_kind ? product.cost_price : product.selling_price) || 
-      product.selling_price || 
-      product.cost_price || 
-      0
+      isDist 
+        ? (product.cost_price || product.selling_price || 0) 
+        : (product.selling_price || product.cost_price || 0)
     );
 
-    const maxStock = Number(product.current_stock ?? 999999);
+    const existingItem = cart.find(item => item.product.id === product.id);
 
     if (existingItem) {
-      const nextQty = Math.min(maxStock > 0 ? maxStock : 1, existingItem.quantity + 1);
+      if (existingItem.quantity >= currentStock) {
+        toast.error(`Cannot add more "${product.name}". Maximum available stock is ${currentStock} ${product.unit_of_measure || 'units'}.`);
+        return;
+      }
+      const nextQty = Math.min(currentStock, existingItem.quantity + 1);
       setCart(cart.map(item =>
         item.product.id === product.id
           ? { ...item, quantity: nextQty }
@@ -45,12 +57,23 @@ export const useCart = () => {
     }
     setCart(cart.map(item => {
       if (item.product.id === productId) {
-        const maxStock = Number(item.product.current_stock ?? 999999);
-        const cappedQty = maxStock > 0 ? Math.min(quantity, maxStock) : quantity;
-        return { ...item, quantity: cappedQty };
+        const maxStock = Number(item.product.current_stock ?? 0);
+        if (maxStock > 0 && quantity > maxStock) {
+          toast.error(`Quantity capped at available stock (${maxStock} ${item.product.unit_of_measure || 'units'})`);
+          return { ...item, quantity: maxStock };
+        }
+        return { ...item, quantity };
       }
       return item;
     }));
+  };
+
+  const updateUnitPrice = (productId: string, unitPrice: number) => {
+    setCart(cart.map(item =>
+      item.product.id === productId 
+        ? { ...item, unitPrice: Math.max(0, unitPrice) } 
+        : item
+    ));
   };
 
   const removeFromCart = (productId: string) => {
@@ -77,6 +100,7 @@ export const useCart = () => {
     setCart,
     addToCart,
     updateQuantity,
+    updateUnitPrice,
     removeFromCart,
     getTotal,
     clearCart

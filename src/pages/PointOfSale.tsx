@@ -63,6 +63,7 @@ const PointOfSale: React.FC = () => {
     cart,
     addToCart,
     updateQuantity,
+    updateUnitPrice,
     removeFromCart,
     getTotal,
     clearCart
@@ -184,6 +185,14 @@ const PointOfSale: React.FC = () => {
       return;
     }
 
+    for (const item of cart) {
+      const avail = Number(item.product.current_stock ?? 0);
+      if (item.quantity > avail) {
+        toast.error(`Cannot distribute ${item.quantity} of "${item.product.name}" (only ${avail} available in stock)`);
+        return;
+      }
+    }
+
     try {
       setLoading(true);
       const res = await SalesService.recordDonationDistribution({
@@ -196,7 +205,9 @@ const PointOfSale: React.FC = () => {
         items: cart.map(item => ({
           product_id: item.product.id,
           quantity: item.quantity,
-          unit_cost: item.product.cost_price || item.unitPrice || 0
+          unit_cost: (item.unitPrice !== undefined && item.unitPrice > 0)
+            ? item.unitPrice 
+            : (item.product.cost_price || item.product.selling_price || 0)
         }))
       });
 
@@ -421,7 +432,12 @@ const PointOfSale: React.FC = () => {
               </div>
             </div>
           ) : (
-            <ProductGrid products={filteredProducts} loading={loading} onAddToCart={addToCart} />
+            <ProductGrid 
+              products={filteredProducts} 
+              loading={loading} 
+              onAddToCart={(prod) => addToCart(prod, posMode)} 
+              isDistribution={posMode === 'distribution'}
+            />
           )}
         </div>
       </div>
@@ -578,6 +594,7 @@ const PointOfSale: React.FC = () => {
           <Cart 
             cart={cart} 
             updateQuantity={updateQuantity} 
+            updateUnitPrice={updateUnitPrice}
             removeFromCart={removeFromCart} 
             isDistribution={posMode === 'distribution'} 
           />
