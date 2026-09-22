@@ -49,13 +49,18 @@ const CashFlow: React.FC = () => {
       setLoading(true);
       
       const accounts = await AccountingService.getAccounts();
+      const flatAccounts = flattenAccounts(accounts);
       const entries = await AccountingService.getJournalEntries({
         start_date: dateRange.startDate,
-        end_date: dateRange.endDate
+        end_date: dateRange.endDate,
+        is_posted: true
       });
 
-      // Calculate Opening Balance (Cash accounts only)
-      const cashAccounts = flattenAccounts(accounts).filter(a => a.name.toLowerCase().includes('cash') || a.name.toLowerCase().includes('bank'));
+      // Calculate Opening Balance (Cash and Bank accounts only)
+      const cashAccounts = flatAccounts.filter(a => 
+        a.account_type === 'asset' && 
+        (a.code?.startsWith('10') || a.code?.startsWith('11') || /cash|bank|mpesa|equity|kcb|coop/i.test(a.name))
+      );
       const cashAccountIds = cashAccounts.map(a => a.id);
       
       let openingBalance = 0;
@@ -63,7 +68,7 @@ const CashFlow: React.FC = () => {
         openingBalance += await AccountingService.getAccountBalanceAsOf(id, dateRange.startDate);
       }
 
-      // Simple classification logic
+      // Classification logic
       const operating: { name: string; amount: number }[] = [];
       const investing: { name: string; amount: number }[] = [];
       const financing: { name: string; amount: number }[] = [];
@@ -73,16 +78,20 @@ const CashFlow: React.FC = () => {
         if (cashMovementLine) {
           const amount = (cashMovementLine.debit_amount || 0) - (cashMovementLine.credit_amount || 0);
           
-          // Simplified: assume based on entry description or other account type
           const otherLines = entry.lines?.filter(l => !cashAccountIds.includes(l.account_id)) || [];
           const primaryAccount = otherLines[0]?.account;
 
           if (primaryAccount) {
-            if (primaryAccount.account_type === 'revenue' || primaryAccount.account_type === 'expense') {
-              operating.push({ name: entry.description, amount });
-            } else if (primaryAccount.account_type === 'asset' && primaryAccount.account_subtype === 'fixed') {
+            const isFixedAsset = primaryAccount.account_subtype === 'fixed' || 
+              primaryAccount.code?.startsWith('12') || 
+              primaryAccount.code?.startsWith('15') || 
+              /equipment|machinery|vehicle|building|infrastructure|furniture|computer/i.test(primaryAccount.name);
+
+            if (isFixedAsset) {
               investing.push({ name: entry.description, amount });
-            } else if (primaryAccount.account_type === 'liability' || primaryAccount.account_type === 'equity') {
+            } else if (primaryAccount.account_type === 'revenue' || primaryAccount.account_type === 'expense' || primaryAccount.code?.startsWith('4') || primaryAccount.code?.startsWith('5')) {
+              operating.push({ name: entry.description, amount });
+            } else if (primaryAccount.account_type === 'liability' || primaryAccount.account_type === 'equity' || primaryAccount.code?.startsWith('2') || primaryAccount.code?.startsWith('3')) {
               financing.push({ name: entry.description, amount });
             } else {
               operating.push({ name: entry.description, amount });

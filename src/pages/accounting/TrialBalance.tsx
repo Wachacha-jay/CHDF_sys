@@ -41,20 +41,22 @@ const TrialBalance: React.FC = () => {
       setLoading(true);
       
       // Get all accounts and categories
-      const [accounts, categoriesData] = await Promise.all([
+      const [accountsTree, categoriesData] = await Promise.all([
         AccountingService.getAccounts({ is_active: true }),
         AccountingService.getAccountCategories()
       ]);
       
+      const flatAccounts = AccountingService.flattenAccounts(accountsTree);
       setCategories(categoriesData);
 
       // Get all journal entries up to the selected date
       const journalEntries = await AccountingService.getJournalEntries({
-        end_date: asOfDate
+        end_date: asOfDate,
+        is_posted: true
       });
 
       // Calculate trial balance
-      const trialBalanceData = calculateTrialBalance(accounts, journalEntries, asOfDate);
+      const trialBalanceData = calculateTrialBalance(flatAccounts, journalEntries, asOfDate);
       setTrialBalance(trialBalanceData);
     } catch (error) {
       console.error('Error loading trial balance:', error);
@@ -89,16 +91,20 @@ const TrialBalance: React.FC = () => {
       }
     });
 
-    // Create trial balance entries
+    // Create trial balance entries adhering to standard closing Trial Balance rules
     const entries: TrialBalanceEntry[] = accounts.map(account => {
       const balance = accountBalances.get(account.id) || { debits: 0, credits: 0 };
-      const netBalance = balance.debits - balance.credits;
+      const net = balance.debits - balance.credits;
       
+      // Net debit goes to Debit column; Net credit goes to Credit column
+      const debitBalance = net > 0 ? net : 0;
+      const creditBalance = net < 0 ? Math.abs(net) : 0;
+
       return {
         account,
-        debitBalance: balance.debits,
-        creditBalance: balance.credits,
-        netBalance
+        debitBalance,
+        creditBalance,
+        netBalance: net
       };
     });
 
@@ -118,7 +124,15 @@ const TrialBalance: React.FC = () => {
 
   const filteredEntries = trialBalance?.entries.filter(entry => {
     if (showUnbalanced) {
-      return entry.debitBalance !== entry.creditBalance;
+      const isDebitNormal = entry.account.account_type === 'asset' || 
+                            entry.account.account_type === 'expense' || 
+                            entry.account.code?.startsWith('1') || 
+                            entry.account.code?.startsWith('5');
+      if (isDebitNormal) {
+        return entry.netBalance < -0.01; // Abnormal credit balance
+      } else {
+        return entry.netBalance > 0.01;  // Abnormal debit balance
+      }
     }
     return true;
   }) || [];

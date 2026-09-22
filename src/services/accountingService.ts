@@ -233,7 +233,7 @@ export class AccountingService {
       // Generate entry number
       const entryNumber = await this.generateEntryNumber(entryData.entry_date);
 
-      // Create journal entry (allow caller to request posted state)
+      // Create journal entry (default to posted true)
       const entryResponse = await ApiService.create<JournalEntry>('journal_entries', {
         entry_number: entryNumber,
         entry_date: entryData.entry_date,
@@ -241,7 +241,7 @@ export class AccountingService {
         reference: entryData.reference || null,
         total_debit: totalDebits,
         total_credit: totalCredits,
-        is_posted: entryData.is_posted ? true : false,
+        is_posted: entryData.is_posted !== undefined ? entryData.is_posted : true,
         lines: entryData.lines
       });
 
@@ -302,10 +302,11 @@ export class AccountingService {
   static async getBalanceSheet(asOfDate?: string): Promise<BalanceSheetData> {
     const date = asOfDate || new Date().toISOString().split('T')[0];
     
-    // Get all accounts
-    const accounts = await this.getAccounts({ is_active: true });
+    // Get all flat accounts
+    const rootAccounts = await this.getAccounts({ is_active: true });
+    const accounts = this.flattenAccounts(rootAccounts);
     
-    // Get account balances as of the specified date
+    // Get account balances as of the specified date (debits - credits)
     const accountBalances = await this.getAccountBalances(date);
 
     const balanceSheet: BalanceSheetData = {
@@ -325,43 +326,68 @@ export class AccountingService {
       }
     };
 
+    let totalRevenue = 0;
+    let totalExpense = 0;
+
     // Process each account
     for (const account of accounts) {
-      const balance = accountBalances.get(account.id) || 0;
+      const balance = accountBalances.get(account.id) || 0; // debits - credits
       
       if (account.account_type === 'asset') {
-        if (account.account_subtype === 'current') {
-          balanceSheet.assets.current_assets.push({
-            name: account.name,
-            amount: Math.abs(balance)
-          });
-        } else {
-          balanceSheet.assets.fixed_assets.push({
-            name: account.name,
-            amount: Math.abs(balance)
-          });
+        const isCurrent = account.account_subtype === 'current' || 
+          account.code?.startsWith('10') || 
+          account.code?.startsWith('11') || 
+          /cash|bank|receivable|inventory|prepaid/i.test(account.name);
+        
+        if (balance !== 0) {
+          const item = { name: account.name, amount: balance };
+          if (isCurrent) {
+            balanceSheet.assets.current_assets.push(item);
+          } else {
+            balanceSheet.assets.fixed_assets.push(item);
+          }
+          balanceSheet.assets.total_assets += balance;
         }
-        balanceSheet.assets.total_assets += Math.abs(balance);
       } else if (account.account_type === 'liability') {
-        if (account.account_subtype === 'current') {
-          balanceSheet.liabilities.current_liabilities.push({
-            name: account.name,
-            amount: Math.abs(balance)
-          });
-        } else {
-          balanceSheet.liabilities.long_term_liabilities.push({
-            name: account.name,
-            amount: Math.abs(balance)
-          });
+        const normalBalance = -balance; // credits - debits
+        if (normalBalance !== 0) {
+          const isCurrent = account.account_subtype === 'current' || 
+            account.code?.startsWith('20') || 
+            account.code?.startsWith('21') || 
+            /payable|accrued|short|statutory|tax|nssf|nhif|shif/i.test(account.name);
+          
+          const item = { name: account.name, amount: normalBalance };
+          if (isCurrent) {
+            balanceSheet.liabilities.current_liabilities.push(item);
+          } else {
+            balanceSheet.liabilities.long_term_liabilities.push(item);
+          }
+          balanceSheet.liabilities.total_liabilities += normalBalance;
         }
-        balanceSheet.liabilities.total_liabilities += Math.abs(balance);
       } else if (account.account_type === 'equity') {
-        balanceSheet.equity.equity_accounts.push({
-          name: account.name,
-          amount: Math.abs(balance)
-        });
-        balanceSheet.equity.total_equity += Math.abs(balance);
+        const normalBalance = -balance; // credits - debits
+        if (normalBalance !== 0) {
+          balanceSheet.equity.equity_accounts.push({
+            name: account.name,
+            amount: normalBalance
+          });
+          balanceSheet.equity.total_equity += normalBalance;
+        }
+      } else if (account.account_type === 'revenue' || account.code?.startsWith('4')) {
+        totalRevenue += (-balance); // credits - debits
+      } else if (account.account_type === 'expense' || account.code?.startsWith('5')) {
+        totalExpense += balance; // debits - credits
       }
+    }
+
+    // Current period net income / surplus (Revenues - Expenses)
+    const currentPeriodSurplus = totalRevenue - totalExpense;
+    if (Math.abs(currentPeriodSurplus) > 0.001) {
+      balanceSheet.equity.equity_accounts.push({
+        name: 'Current Period Net Surplus / (Deficit)',
+        amount: currentPeriodSurplus
+      });
+      balanceSheet.equity.total_equity += currentPeriodSurplus;
     }
 
     return balanceSheet;
@@ -370,13 +396,14 @@ export class AccountingService {
   // Trial Balance
   static async getTrialBalance(asOfDate?: string): Promise<TrialBalanceData[]> {
     const date = asOfDate || new Date().toISOString().split('T')[0];
-    const accounts = await this.getAccounts({ is_active: true });
+    const rootAccounts = await this.getAccounts({ is_active: true });
+    const accounts = this.flattenAccounts(rootAccounts);
     const accountBalances = await this.getAccountBalances(date);
 
     const trialBalance: TrialBalanceData[] = [];
 
     for (const account of accounts) {
-      const balance = accountBalances.get(account.id) || 0;
+      const balance = accountBalances.get(account.id) || 0; // debits - credits
       
       trialBalance.push({
         account_code: account.code,

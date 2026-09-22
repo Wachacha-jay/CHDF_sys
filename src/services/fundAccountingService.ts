@@ -464,31 +464,53 @@ export class FundAccountingService {
           }
 
         } else if (item.asset_class === 'fixed_asset') {
-          // B. Fixed Asset (Equipment/Furniture): Debit 1210 Equipment
+          // B. Fixed Asset (Equipment, Furniture, Vehicles, Tech)
+          const descLower = (item.item_description || '').toLowerCase();
+          let targetAccount = equipmentAccount;
+          let assetType = 'Equipment & Machinery';
+          let usefulLife = 5;
+
+          if (descLower.includes('vehicle') || descLower.includes('car') || descLower.includes('motor') || descLower.includes('van')) {
+            targetAccount = findAccount('1240') || equipmentAccount;
+            assetType = 'Vehicles';
+            usefulLife = 7;
+          } else if (descLower.includes('furniture') || descLower.includes('desk') || descLower.includes('chair') || descLower.includes('table')) {
+            targetAccount = findAccount('1220') || equipmentAccount;
+            assetType = 'Furniture & Fixtures';
+            usefulLife = 8;
+          } else if (descLower.includes('computer') || descLower.includes('laptop') || descLower.includes('server') || descLower.includes('printer')) {
+            targetAccount = findAccount('1250') || findAccount('1210') || equipmentAccount;
+            assetType = 'Computer & Technology';
+            usefulLife = 4;
+          }
+
           lines.push({
-            account_id: equipmentAccount.id,
-            description: `In-Kind Equipment: ${item.item_description}`,
+            account_id: targetAccount.id,
+            description: `In-Kind ${assetType}: ${item.item_description}`,
             debit_amount: lineVal,
             credit_amount: 0,
-            department_id: item.department_id || undefined,
+            department_id: item.department_id || donation.department_id || undefined,
             donor_id: donation.donor_id || undefined,
             fund_id: donation.fund_id || undefined
           });
 
-          // Log in Fixed Asset Register
+          // Log in Fixed Asset Register & link ID
           try {
-            await FixedAssetService.create({
+            const created = await FixedAssetService.create({
               asset_name: item.item_description,
               description: `In-Kind donation from ${donorName}. ${item.notes || ''}`.trim(),
-              asset_type: 'Equipment & Machinery',
+              asset_type: assetType,
               purchase_date: entryDate,
               purchase_cost: lineVal,
               current_value: lineVal,
               salvage_value: 0,
-              useful_life_years: 5,
-              department_id: item.department_id || undefined,
+              useful_life_years: usefulLife,
+              department_id: item.department_id || donation.department_id || undefined,
               status: 'Active'
             });
+            if (created?.id && item.id) {
+              await ApiService.update('donation_items', item.id, { fixed_asset_id: created.id });
+            }
           } catch (assetErr) {
             console.warn('Failed to auto-register fixed asset:', assetErr);
           }
@@ -500,13 +522,14 @@ export class FundAccountingService {
             description: `In-Kind Infrastructure: ${item.item_description}${item.project_name ? ` (${item.project_name})` : ''}`,
             debit_amount: lineVal,
             credit_amount: 0,
+            department_id: item.department_id || donation.department_id || undefined,
             donor_id: donation.donor_id || undefined,
             fund_id: donation.fund_id || undefined
           });
 
-          // Log in Fixed Asset Register under Buildings & Infrastructure
+          // Log in Fixed Asset Register under Buildings & Infrastructure & link ID
           try {
-            await FixedAssetService.create({
+            const created = await FixedAssetService.create({
               asset_name: `${item.item_description}${item.project_name ? ` - ${item.project_name}` : ''}`,
               description: `In-Kind construction/materials for ${item.project_name || 'infrastructure project'} from ${donorName}. ${item.notes || ''}`.trim(),
               asset_type: 'Buildings & Infrastructure',
@@ -515,9 +538,12 @@ export class FundAccountingService {
               current_value: lineVal,
               salvage_value: 0,
               useful_life_years: 25,
-              department_id: item.department_id || undefined,
+              department_id: item.department_id || donation.department_id || undefined,
               status: 'Active'
             });
+            if (created?.id && item.id) {
+              await ApiService.update('donation_items', item.id, { fixed_asset_id: created.id });
+            }
           } catch (assetErr) {
             console.warn('Failed to auto-register construction fixed asset:', assetErr);
           }

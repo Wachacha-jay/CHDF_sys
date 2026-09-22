@@ -31,14 +31,16 @@ const BalanceSheet: React.FC = () => {
     try {
       setLoading(true);
 
-      // Fetch accounts, categories, and journal entries (including all entries)
-      const [accounts, categories, journalEntries] = await Promise.all([
+      // Fetch accounts, categories, and journal entries
+      const [accountsTree, categories, journalEntries] = await Promise.all([
         AccountingService.getAccounts({ is_active: true }),
         AccountingService.getAccountCategories(),
-        AccountingService.getJournalEntries({ end_date: asOfDate })
+        AccountingService.getJournalEntries({ end_date: asOfDate, is_posted: true })
       ]);
 
-      // Calculate account balances from journal entries
+      const flatAccounts = AccountingService.flattenAccounts(accountsTree);
+
+      // Calculate account balances from journal entries (debits - credits)
       const accountBalances = new Map<string, number>();
       journalEntries.forEach(entry => {
         if (entry.lines) {
@@ -49,41 +51,91 @@ const BalanceSheet: React.FC = () => {
         }
       });
 
-      const getCategoryGroup = (type: string, catNames: string[]) => {
-        return categories
-          .filter(c => c.account_type === type && catNames.some(name => c.name.toLowerCase().includes(name.toLowerCase())))
-          .flatMap(c => accounts.filter(a => a.category_id === c.id))
-          .map(a => ({
-            name: a.name,
-            amount: Math.abs(accountBalances.get(a.id) || 0)
-          }))
-          .filter(a => a.amount !== 0);
+      const assetAccounts = flatAccounts.filter(a => a.account_type === 'asset' || a.code?.startsWith('1'));
+      const liabAccounts = flatAccounts.filter(a => a.account_type === 'liability' || a.code?.startsWith('2'));
+      const eqAccounts = flatAccounts.filter(a => a.account_type === 'equity' || a.code?.startsWith('3'));
+      const revAccounts = flatAccounts.filter(a => a.account_type === 'revenue' || a.code?.startsWith('4'));
+      const expAccounts = flatAccounts.filter(a => a.account_type === 'expense' || a.code?.startsWith('5'));
+
+      // Calculate Current Period Revenues and Expenses
+      let totalRevenue = 0;
+      revAccounts.forEach(a => {
+        const bal = accountBalances.get(a.id) || 0;
+        totalRevenue += (-bal); // credits - debits
+      });
+
+      let totalExpense = 0;
+      expAccounts.forEach(a => {
+        const bal = accountBalances.get(a.id) || 0;
+        totalExpense += bal; // debits - credits
+      });
+
+      const currentPeriodSurplus = totalRevenue - totalExpense;
+
+      // Assets: Normal balance is Debit (debits - credits)
+      const isCurrentAsset = (a: Account) => {
+        if (a.account_subtype === 'current') return true;
+        if (a.account_subtype === 'fixed') return false;
+        if (a.code?.startsWith('10') || a.code?.startsWith('11')) return true;
+        if (a.code?.startsWith('12') || a.code?.startsWith('15')) return false;
+        return /cash|bank|receivable|inventory|prepaid/i.test(a.name);
       };
 
-      const getRemainingForType = (type: string, excludedIds: string[]) => {
-        return accounts
-          .filter(a => a.account_type === type && !excludedIds.includes(a.id))
-          .map(a => ({
-            name: a.name,
-            amount: Math.abs(accountBalances.get(a.id) || 0)
-          }))
-          .filter(a => a.amount !== 0);
+      const currentAssets: { name: string; amount: number }[] = [];
+      const fixedAssets: { name: string; amount: number }[] = [];
+
+      assetAccounts.forEach(a => {
+        const bal = accountBalances.get(a.id) || 0;
+        if (Math.abs(bal) > 0.001) {
+          const item = { name: `${a.code ? a.code + ' ' : ''}${a.name}`, amount: bal };
+          if (isCurrentAsset(a)) {
+            currentAssets.push(item);
+          } else {
+            fixedAssets.push(item);
+          }
+        }
+      });
+
+      // Liabilities: Normal balance is Credit (credits - debits)
+      const isCurrentLiab = (a: Account) => {
+        if (a.account_subtype === 'current') return true;
+        if (a.account_subtype === 'long_term') return false;
+        if (a.code?.startsWith('20') || a.code?.startsWith('21')) return true;
+        if (a.code?.startsWith('22') || a.code?.startsWith('25')) return false;
+        return /payable|accrued|short|tax|nssf|nhif|shif|levy|payroll/i.test(a.name);
       };
 
-      const currentAssets = getCategoryGroup('asset', ['current', 'cash', 'receivable', 'bank', 'inventory']);
-      const currentAssetIds = accounts.filter(a => a.account_type === 'asset' && a.category_id && categories.some(c => c.id === a.category_id && ['current', 'cash', 'receivable', 'bank', 'inventory'].some(n => c.name.toLowerCase().includes(n)))).map(a => a.id);
-      const fixedAssets = getRemainingForType('asset', currentAssetIds);
+      const currentLiabilities: { name: string; amount: number }[] = [];
+      const longTermLiabilities: { name: string; amount: number }[] = [];
 
-      const currentLiabilities = getCategoryGroup('liability', ['current', 'payable', 'accrued', 'payroll', 'tax', 'nssf', 'nhif', 'shif', 'levy']);
-      const currentLiabIds = accounts.filter(a => a.account_type === 'liability' && a.category_id && categories.some(c => c.id === a.category_id && ['current', 'payable', 'accrued', 'payroll', 'tax', 'nssf', 'nhif', 'shif', 'levy'].some(n => c.name.toLowerCase().includes(n)))).map(a => a.id);
-      const longTermLiabilities = getRemainingForType('liability', currentLiabIds);
+      liabAccounts.forEach(a => {
+        const bal = -(accountBalances.get(a.id) || 0); // normal credit
+        if (Math.abs(bal) > 0.001) {
+          const item = { name: `${a.code ? a.code + ' ' : ''}${a.name}`, amount: bal };
+          if (isCurrentLiab(a)) {
+            currentLiabilities.push(item);
+          } else {
+            longTermLiabilities.push(item);
+          }
+        }
+      });
 
-      const equityAccounts = accounts
-        .filter(account => account.account_type === 'equity')
-        .map(account => ({
-          name: account.name,
-          amount: accountBalances.get(account.id) || 0
-        }));
+      // Equity: Normal balance is Credit (credits - debits)
+      const equityAccounts: { name: string; amount: number }[] = [];
+      eqAccounts.forEach(a => {
+        const bal = -(accountBalances.get(a.id) || 0); // normal credit
+        if (Math.abs(bal) > 0.001) {
+          equityAccounts.push({ name: `${a.code ? a.code + ' ' : ''}${a.name}`, amount: bal });
+        }
+      });
+
+      // Add Current Period Net Surplus / (Deficit) line to Equity
+      if (Math.abs(currentPeriodSurplus) > 0.001 || equityAccounts.length === 0) {
+        equityAccounts.push({
+          name: 'Current Period Net Surplus / (Deficit)',
+          amount: currentPeriodSurplus
+        });
+      }
 
       const totalAssets = [...currentAssets, ...fixedAssets].reduce((sum, item) => sum + item.amount, 0);
       const totalLiabilities = [...currentLiabilities, ...longTermLiabilities].reduce((sum, item) => sum + item.amount, 0);

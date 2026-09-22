@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, PackageSearch, Building2, Cpu, Wrench, CheckCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, PackageSearch, Building2, Cpu, Wrench, CheckCircle, Landmark, CreditCard, Gift, History } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { FixedAssetService } from '../../services/fixedAssetService';
+import { AccountingService } from '../../services/accountingService';
 import { ApiService } from '../../services/api';
-import type { FixedAsset, Department } from '../../types';
+import type { FixedAsset, Department, Account } from '../../types';
 
 const ASSET_TYPES = [
   'Equipment & Machinery',
@@ -31,6 +32,9 @@ const emptyForm = {
 const FixedAssets: React.FC = () => {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
+  const [acquisitionMethod, setAcquisitionMethod] = useState<'bank_cash' | 'payable' | 'donation' | 'opening_balance'>('bank_cash');
+  const [creditAccountId, setCreditAccountId] = useState('');
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<FixedAsset | null>(null);
@@ -61,18 +65,30 @@ const FixedAssets: React.FC = () => {
       });
     } else {
       setFormData(emptyForm);
+      setAcquisitionMethod('bank_cash');
     }
   }, [selectedAsset, showModal]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [assetsData, deptsRes] = await Promise.all([
+      const [assetsData, deptsRes, accountsData] = await Promise.all([
         FixedAssetService.getAll(),
-        ApiService.get<Department>('departments', { filters: { is_active: true } })
+        ApiService.get<Department>('departments', { filters: { is_active: true } }),
+        AccountingService.getAccounts({ is_active: true })
       ]);
       setAssets(assetsData);
       if (deptsRes.success && deptsRes.data) setDepartments(deptsRes.data);
+
+      const flatAccounts = AccountingService.flattenAccounts(accountsData);
+      const cashAndBanks = flatAccounts.filter(a => 
+        a.account_type === 'asset' && 
+        (a.code?.startsWith('11') || /bank|cash|mpesa|equity|kcb|coop/i.test(a.name))
+      );
+      setBankAccounts(cashAndBanks);
+      if (cashAndBanks.length > 0 && !creditAccountId) {
+        setCreditAccountId(cashAndBanks[0].id);
+      }
     } catch (e) {
       toast.error('Failed to load data');
     } finally {
@@ -107,8 +123,20 @@ const FixedAssets: React.FC = () => {
         result = await FixedAssetService.update(selectedAsset.id, payload);
         if (result) toast.success('Asset updated successfully');
       } else {
-        result = await FixedAssetService.create(payload);
-        if (result) toast.success('Asset added successfully');
+        const res = await FixedAssetService.createWithGL(payload, {
+          acquisition_method: acquisitionMethod,
+          credit_account_id: acquisitionMethod === 'bank_cash' ? creditAccountId : undefined
+        });
+        result = res.asset;
+        if (result) {
+          if (res.journalEntryId) {
+            toast.success('Asset registered & posted to General Ledger ✓');
+          } else if (res.error) {
+            toast.success('Asset registered (GL notice: ' + res.error + ')');
+          } else {
+            toast.success('Asset added successfully');
+          }
+        }
       }
 
       if (result) {
@@ -123,6 +151,7 @@ const FixedAssets: React.FC = () => {
       setSaving(false);
     }
   };
+
 
   const handleDelete = async (id: string) => {
     const ok = await FixedAssetService.delete(id);
@@ -326,6 +355,72 @@ const FixedAssets: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Purchase / Market Value (KES) <span className="text-red-500">*</span></label>
                   <input type="number" required min="0" step="0.01" value={formData.purchase_cost} onChange={e => setFormData({ ...formData, purchase_cost: e.target.value, current_value: formData.current_value || e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500" />
                 </div>
+
+                {!selectedAsset && (
+                  <div className="col-span-2 bg-indigo-50/70 border border-indigo-100 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <Landmark size={14} className="text-indigo-600" />
+                        General Ledger Accounting & Funding Source
+                      </span>
+                      <span className="text-xs text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded font-medium">Double-Entry Active</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1">Acquisition Method</label>
+                        <select
+                          value={acquisitionMethod}
+                          onChange={e => setAcquisitionMethod(e.target.value as any)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="bank_cash">Purchased (Bank / Cash Account)</option>
+                          <option value="payable">Purchased on Credit (Accounts Payable)</option>
+                          <option value="donation">In-Kind Donation / Capital Grant</option>
+                          <option value="opening_balance">Opening Balance / Existing Asset</option>
+                        </select>
+                      </div>
+
+                      {acquisitionMethod === 'bank_cash' && (
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 mb-1">Paid From (Bank / Cash Account)</label>
+                          <select
+                            value={creditAccountId}
+                            onChange={e => setCreditAccountId(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500"
+                          >
+                            {bankAccounts.length === 0 ? (
+                              <option value="">Default Bank / Cash (1110/1111)</option>
+                            ) : (
+                              bankAccounts.map(b => (
+                                <option key={b.id} value={b.id}>{b.code} - {b.name}</option>
+                              ))
+                            )}
+                          </select>
+                        </div>
+                      )}
+
+                      {acquisitionMethod === 'payable' && (
+                        <div className="flex items-center text-xs text-gray-600 bg-white p-2.5 rounded-lg border border-gray-200">
+                          Credits <strong>2000 Accounts Payable</strong>. A payable balance is recognized in the General Ledger.
+                        </div>
+                      )}
+
+                      {acquisitionMethod === 'donation' && (
+                        <div className="flex items-center text-xs text-gray-600 bg-white p-2.5 rounded-lg border border-gray-200">
+                          Credits <strong>4260 In-Kind Donation Revenue</strong>.
+                        </div>
+                      )}
+
+                      {acquisitionMethod === 'opening_balance' && (
+                        <div className="flex items-center text-xs text-gray-600 bg-white p-2.5 rounded-lg border border-gray-200">
+                          Credits <strong>3000 Capital Fund / Owner's Equity</strong>.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Current Value (KES)</label>
                   <input type="number" min="0" step="0.01" value={formData.current_value} onChange={e => setFormData({ ...formData, current_value: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500" />

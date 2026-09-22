@@ -47,14 +47,16 @@ const IncomeStatement: React.FC = () => {
   const loadIncomeStatement = async () => {
     try {
       setLoading(true);
-      // Fetch accounts and entries (include all journal entries)
-      const accounts = await AccountingService.getAccounts();
+      // Fetch accounts and entries
+      const accountsTree = await AccountingService.getAccounts();
+      const allAccounts = AccountingService.flattenAccounts(accountsTree);
       const entries = await AccountingService.getJournalEntries({
         start_date: dateRange.startDate,
-        end_date: dateRange.endDate
+        end_date: dateRange.endDate,
+        is_posted: true
       });
 
-      // Simple aggregation logic
+      // Aggregate balances from journal entries (debits - credits)
       const balances = new Map<string, number>();
       entries.forEach(entry => {
         entry.lines?.forEach(line => {
@@ -67,24 +69,30 @@ const IncomeStatement: React.FC = () => {
       const costOfGoodsSold: { name: string; amount: number }[] = [];
       const operatingExpenses: { name: string; amount: number }[] = [];
 
-      // Flatten account tree for easier processing
-      const flattenAccounts = (accs: any[]): any[] => {
-        return accs.reduce((flat, acc) => {
-          return flat.concat(acc, acc.children ? flattenAccounts(acc.children) : []);
-        }, []);
-      };
-
-      const allAccounts = flattenAccounts(accounts);
-
       allAccounts.forEach(acc => {
-        const balance = balances.get(acc.id) || 0;
-        if (acc.account_type === 'revenue' && balance !== 0) {
-          revenue.push({ name: acc.name, amount: Math.abs(balance) });
-        } else if (acc.account_type === 'expense') {
-          if (acc.name.toLowerCase().includes('cost of goods')) {
-            costOfGoodsSold.push({ name: acc.name, amount: Math.abs(balance) });
-          } else if (balance !== 0) {
-            operatingExpenses.push({ name: acc.name, amount: Math.abs(balance) });
+        const balance = balances.get(acc.id) || 0; // debits - credits
+        const isRevenue = acc.account_type === 'revenue' || acc.code?.startsWith('4');
+        const isExpense = acc.account_type === 'expense' || acc.code?.startsWith('5');
+
+        if (isRevenue) {
+          // Normal balance for Revenue is Credit (Credits - Debits)
+          const netRev = -balance;
+          if (Math.abs(netRev) > 0.001) {
+            revenue.push({ name: `${acc.code ? acc.code + ' ' : ''}${acc.name}`, amount: netRev });
+          }
+        } else if (isExpense) {
+          // Normal balance for Expense is Debit (Debits - Credits)
+          const netExp = balance;
+          if (Math.abs(netExp) > 0.001) {
+            const isCOGS = acc.code?.startsWith('50') || 
+                           acc.name.toLowerCase().includes('cost of goods') || 
+                           acc.name.toLowerCase().includes('cogs') ||
+                           acc.name.toLowerCase().includes('direct cost');
+            if (isCOGS) {
+              costOfGoodsSold.push({ name: `${acc.code ? acc.code + ' ' : ''}${acc.name}`, amount: netExp });
+            } else {
+              operatingExpenses.push({ name: `${acc.code ? acc.code + ' ' : ''}${acc.name}`, amount: netExp });
+            }
           }
         }
       });

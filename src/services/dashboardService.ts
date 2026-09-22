@@ -69,6 +69,9 @@ export class DashboardService {
         const donationList = donations.success ? (donations.data || []) : [];
         stats.totalDonationsMonth = donationList.reduce((sum: number, d: any) => sum + Number(d.amount || 0), 0);
         
+        // Aggregate monthly revenue (commercial sales + donations)
+        stats.monthlyRevenue = (stats.monthlyRevenue || 0) + stats.totalDonationsMonth;
+        
         // Sum restricted fund balances
         let restrictedTotal = 0;
         fundBalances.forEach((balance, fundId) => {

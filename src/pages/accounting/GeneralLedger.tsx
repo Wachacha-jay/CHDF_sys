@@ -38,7 +38,8 @@ const GeneralLedger: React.FC = () => {
         AccountingService.getJournalEntries()
       ]);
 
-      setAccounts(accountsData || []);
+      const flatAccounts = AccountingService.flattenAccounts(accountsData || []);
+      setAccounts(flatAccounts);
       setEntries(entriesData || []);
     } catch (error: any) {
       console.error('Error fetching data:', error);
@@ -64,8 +65,21 @@ const GeneralLedger: React.FC = () => {
     return matchesSearch && matchesAccount && matchesDateFrom && matchesDateTo;
   });
 
-  const totalDebits = filteredEntries.reduce((sum, entry) => sum + Number(entry.total_debit || 0), 0);
-  const totalCredits = filteredEntries.reduce((sum, entry) => sum + Number(entry.total_credit || 0), 0);
+  const totalDebits = filteredEntries.reduce((sum, entry) => {
+    if (selectedAccount) {
+      const lineDebits = entry.lines?.filter(l => l.account_id === selectedAccount).reduce((s, l) => s + Number(l.debit_amount || 0), 0) || 0;
+      return sum + lineDebits;
+    }
+    return sum + Number(entry.total_debit || 0);
+  }, 0);
+
+  const totalCredits = filteredEntries.reduce((sum, entry) => {
+    if (selectedAccount) {
+      const lineCredits = entry.lines?.filter(l => l.account_id === selectedAccount).reduce((s, l) => s + Number(l.credit_amount || 0), 0) || 0;
+      return sum + lineCredits;
+    }
+    return sum + Number(entry.total_credit || 0);
+  }, 0);
 
   const setDatePreset = (preset: 'this_month' | 'this_year' | 'last_30' | 'all') => {
     const today = new Date();
@@ -415,19 +429,34 @@ const GeneralLedger: React.FC = () => {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 ${selectedAccount ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-6`}>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h3 className="text-sm font-medium text-gray-500 mb-2">Total Entries</h3>
           <p className="text-2xl font-bold text-gray-900">{filteredEntries.length}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Total Debits</h3>
-          <p className="text-2xl font-bold text-green-600">{currency} {totalDebits.toLocaleString()}</p>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">
+            {selectedAccount ? 'Account Debits' : 'Total Debits'}
+          </h3>
+          <p className="text-2xl font-bold text-green-600">{currency} {totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Total Credits</h3>
-          <p className="text-2xl font-bold text-red-600">{currency} {totalCredits.toLocaleString()}</p>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">
+            {selectedAccount ? 'Account Credits' : 'Total Credits'}
+          </h3>
+          <p className="text-2xl font-bold text-red-600">{currency} {totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
         </div>
+        {selectedAccount && (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+            <h3 className="text-sm font-medium text-gray-500 mb-2">Net Position</h3>
+            <p className="text-2xl font-bold text-indigo-600">
+              {currency} {Math.abs(totalDebits - totalCredits).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              <span className="text-xs font-semibold ml-1.5 text-gray-500 uppercase">
+                {totalDebits >= totalCredits ? 'DR' : 'CR'}
+              </span>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Journal Entries Table */}
