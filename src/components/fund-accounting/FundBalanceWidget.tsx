@@ -3,7 +3,11 @@ import { FundAccount } from '../../types';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { Wallet, TrendingUp, ShieldCheck, AlertCircle } from 'lucide-react';
 
-export const FundBalanceWidget: React.FC = () => {
+interface FundBalanceWidgetProps {
+  refreshTrigger?: number;
+}
+
+export const FundBalanceWidget: React.FC<FundBalanceWidgetProps> = ({ refreshTrigger }) => {
   const [funds, setFunds] = useState<FundAccount[]>([]);
   const [balances, setBalances] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -19,7 +23,7 @@ export const FundBalanceWidget: React.FC = () => {
       setLoading(false);
     };
     loadData();
-  }, []);
+  }, [refreshTrigger]);
 
   if (loading) return <div className="animate-pulse h-48 bg-gray-100 rounded-xl"></div>;
 

@@ -131,6 +131,32 @@ async function ensureInKindSchema() {
       `);
     }
 
+    // 8. Ensure inter-departmental clearing accounts exist
+    await pool.query(`
+      INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
+        (UUID(), '1300', 'Inter-departmental Receivables', 'asset', 1),
+        (UUID(), '2300', 'Inter-departmental Payables', 'liability', 1),
+        (UUID(), '4900', 'Internal Transfer In (Revenue)', 'revenue', 1),
+        (UUID(), '5900', 'Internal Transfer Out (Expense)', 'expense', 1)
+    `);
+
+    // 9. Ensure internal_transfers columns (transfer_type, from_bank_account_id, to_bank_account_id)
+    try {
+      const [itCols]: any = await pool.query('SHOW COLUMNS FROM internal_transfers');
+      const itColNames = new Set(itCols.map((c: any) => c.Field));
+      if (!itColNames.has('transfer_type')) {
+        await pool.query("ALTER TABLE internal_transfers ADD COLUMN transfer_type ENUM('direct_transfer', 'internal_loan', 'loan_repayment') DEFAULT 'direct_transfer'");
+      }
+      if (!itColNames.has('from_bank_account_id')) {
+        await pool.query('ALTER TABLE internal_transfers ADD COLUMN from_bank_account_id CHAR(36) NULL');
+      }
+      if (!itColNames.has('to_bank_account_id')) {
+        await pool.query('ALTER TABLE internal_transfers ADD COLUMN to_bank_account_id CHAR(36) NULL');
+      }
+    } catch (itErr) {
+      console.warn('Could not inspect or alter internal_transfers table:', itErr);
+    }
+
     inKindSchemaEnsured = true;
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);

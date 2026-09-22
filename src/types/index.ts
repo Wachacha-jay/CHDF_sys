@@ -685,16 +685,21 @@ export interface InternalTransfer {
   id: string;
   from_department_id: string;
   to_department_id: string;
+  from_bank_account_id?: string;
+  to_bank_account_id?: string;
   amount: number;
   transfer_date: string;
   description: string;
   status: 'pending' | 'approved' | 'rejected';
+  transfer_type?: 'direct_transfer' | 'internal_loan' | 'loan_repayment';
   approved_by?: string;
   created_by?: string;
   created_at: string;
   updated_at: string;
   from_department?: Department;
   to_department?: Department;
+  from_bank_account?: Account;
+  to_bank_account?: Account;
 }
 
 export interface FixedAsset {

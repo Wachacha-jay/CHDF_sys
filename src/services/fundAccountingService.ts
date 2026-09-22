@@ -676,8 +676,8 @@ export class FundAccountingService {
     };
 
     // Primary lookup; fallback to regex-matched accounts if migration 013 hasn't been run
-    const bankAccount =
-        findAccount('1111') || findAccount('1110');
+    const defaultBankAccount =
+        findAccount('1111') || findAccount('1110') || flat.find(a => a.account_type === 'asset');
 
     const interDeptReceivable =
         findAccount('1300') ||
@@ -696,7 +696,7 @@ export class FundAccountingService {
         flat.find(a => /transfer.out|inter.?dept.+expense/i.test(a.name));
 
     const missing: string[] = [];
-    if (!bankAccount)         missing.push('Bank/Cash (1111 or 1110)');
+    if (!defaultBankAccount)  missing.push('Bank/Cash (1111 or 1110)');
     if (!interDeptReceivable) missing.push('Inter-Dept Receivable (1300)');
     if (!interDeptPayable)    missing.push('Inter-Dept Payable (2300)');
     if (!transferIn)          missing.push('Transfer In (4900)');
@@ -709,33 +709,72 @@ export class FundAccountingService {
         );
     }
 
+    // Resolve specific source and destination bank accounts if selected
+    const sourceBank = (transfer.from_bank_account_id ? flat.find(a => a.id === transfer.from_bank_account_id) : null) || defaultBankAccount!;
+    const destBank = (transfer.to_bank_account_id ? flat.find(a => a.id === transfer.to_bank_account_id) : null) || defaultBankAccount!;
+
     const fromName = deptName(transfer.from_department_id);
     const toName   = deptName(transfer.to_department_id);
 
     const lines: any[] = [];
-
-    // @ts-ignore - access transfer_type which was added via migration
     const type = transfer.transfer_type || 'direct_transfer';
 
     if (type === 'direct_transfer') {
-        lines.push(
-            {
-                account_id: transferOut.id,
-                description: `Direct Transfer Out → ${toName}`,
-                debit_amount: transfer.amount,
-                credit_amount: 0,
-                department_id: transfer.from_department_id
-            },
-            {
-                account_id: transferIn.id,
-                description: `Direct Transfer In ← ${fromName}`,
-                debit_amount: 0,
-                credit_amount: transfer.amount,
-                department_id: transfer.to_department_id
-            }
-        );
+        if (transfer.from_bank_account_id || transfer.to_bank_account_id) {
+            // Source Dept: DR Transfer Out (5900), CR Source Bank
+            lines.push(
+                {
+                    account_id: transferOut.id,
+                    description: `Direct Transfer Out to ${toName}`,
+                    debit_amount: transfer.amount,
+                    credit_amount: 0,
+                    department_id: transfer.from_department_id
+                },
+                {
+                    account_id: sourceBank.id,
+                    description: `Transfer payout from ${sourceBank.name} to ${toName}`,
+                    debit_amount: 0,
+                    credit_amount: transfer.amount,
+                    department_id: transfer.from_department_id
+                }
+            );
+            // Dest Dept: DR Dest Bank, CR Transfer In (4900)
+            lines.push(
+                {
+                    account_id: destBank.id,
+                    description: `Transfer received into ${destBank.name} from ${fromName}`,
+                    debit_amount: transfer.amount,
+                    credit_amount: 0,
+                    department_id: transfer.to_department_id
+                },
+                {
+                    account_id: transferIn.id,
+                    description: `Direct Transfer In from ${fromName}`,
+                    debit_amount: 0,
+                    credit_amount: transfer.amount,
+                    department_id: transfer.to_department_id
+                }
+            );
+        } else {
+            lines.push(
+                {
+                    account_id: transferOut.id,
+                    description: `Direct Transfer Out → ${toName}`,
+                    debit_amount: transfer.amount,
+                    credit_amount: 0,
+                    department_id: transfer.from_department_id
+                },
+                {
+                    account_id: transferIn.id,
+                    description: `Direct Transfer In ← ${fromName}`,
+                    debit_amount: 0,
+                    credit_amount: transfer.amount,
+                    department_id: transfer.to_department_id
+                }
+            );
+        }
     } else if (type === 'internal_loan') {
-        // Lender Dept: DR Due-From (1300), CR Bank (1111)
+        // Lender Dept: DR Due-From (1300), CR Paying Bank
         lines.push(
             {
                 account_id: interDeptReceivable.id,
@@ -745,18 +784,18 @@ export class FundAccountingService {
                 department_id: transfer.from_department_id
             },
             {
-                account_id: bankAccount.id,
-                description: `Funds disbursed to ${toName}`,
+                account_id: sourceBank.id,
+                description: `Funds disbursed from ${sourceBank.name} to ${toName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
             }
         );
-        // Borrower Dept: DR Bank (1111), CR Due-To (2300)
+        // Borrower Dept: DR Receiving Bank, CR Due-To (2300)
         lines.push(
             {
-                account_id: bankAccount.id,
-                description: `Loan received from ${fromName}`,
+                account_id: destBank.id,
+                description: `Loan received in ${destBank.name} from ${fromName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.to_department_id
@@ -770,7 +809,7 @@ export class FundAccountingService {
             }
         );
     } else if (type === 'loan_repayment') {
-        // Repayer (Borrower) Dept: DR Due-To (2300), CR Bank (1111)
+        // Repayer (Borrower) Dept: DR Due-To (2300), CR Paying Bank
         lines.push(
             {
                 account_id: interDeptPayable.id,
@@ -780,18 +819,18 @@ export class FundAccountingService {
                 department_id: transfer.from_department_id
             },
             {
-                account_id: bankAccount.id,
-                description: `Repayment funds sent to ${toName}`,
+                account_id: sourceBank.id,
+                description: `Repayment sent from ${sourceBank.name} to ${toName}`,
                 debit_amount: 0,
                 credit_amount: transfer.amount,
                 department_id: transfer.from_department_id
             }
         );
-        // Receiving (Lender) Dept: DR Bank (1111), CR Due-From (1300)
+        // Receiving (Lender) Dept: DR Receiving Bank, CR Due-From (1300)
         lines.push(
             {
-                account_id: bankAccount.id,
-                description: `Repayment received from ${fromName}`,
+                account_id: destBank.id,
+                description: `Repayment received in ${destBank.name} from ${fromName}`,
                 debit_amount: transfer.amount,
                 credit_amount: 0,
                 department_id: transfer.to_department_id
@@ -814,50 +853,95 @@ export class FundAccountingService {
     });
   }
 
-  // Fund Balances (Calculated from Ledger)
+  // Fund Balances (Calculated accurately from Ledger without self-cancelling asset counterpart)
   static async getFundBalance(fundId: string): Promise<number> {
-    const linesResponse = await ApiService.get<JournalEntryLine>('journal_entry_lines', {
-        filters: { fund_id: fundId }
-    });
-    
+    const [linesResponse, accounts] = await Promise.all([
+      ApiService.get<JournalEntryLine>('journal_entry_lines', { filters: { fund_id: fundId } }),
+      AccountingService.getAccounts()
+    ]);
+    const flatAccounts = AccountingService.flattenAccounts(accounts || []);
+    const accountMap = new Map(flatAccounts.map(a => [a.id, a]));
+
     if (linesResponse.success && linesResponse.data) {
-        return linesResponse.data.reduce((acc, line) => {
-            // Fund Balance increases with Revenue (Credit) and decreases with Expense (Debit).
-            return acc + (Number(line.credit_amount || 0) - Number(line.debit_amount || 0));
-        }, 0);
+      return linesResponse.data.reduce((acc, line) => {
+        const accObj = accountMap.get(line.account_id);
+        const type = (accObj?.account_type || '').toLowerCase();
+        const code = accObj?.code || '';
+
+        let change = 0;
+        if (type === 'revenue' || code.startsWith('4')) {
+          change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+        } else if (type === 'expense' || code.startsWith('5')) {
+          change = -(Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
+        } else if (type === 'equity' || code.startsWith('3')) {
+          change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+        }
+        return acc + change;
+      }, 0);
     }
     return 0;
   }
 
   static async getFundBalances(): Promise<Map<string, number>> {
-    const linesResponse = await ApiService.get<JournalEntryLine>('journal_entry_lines');
+    const [linesResponse, accounts] = await Promise.all([
+      ApiService.get<JournalEntryLine>('journal_entry_lines'),
+      AccountingService.getAccounts()
+    ]);
+    const flatAccounts = AccountingService.flattenAccounts(accounts || []);
+    const accountMap = new Map(flatAccounts.map(a => [a.id, a]));
     const balances = new Map<string, number>();
 
     if (linesResponse.success && linesResponse.data) {
-        for (const line of linesResponse.data) {
-            if (line.fund_id) {
-                const current = balances.get(line.fund_id) || 0;
-                // Simplified: Assets increase with Debit, Revenue with Credit.
-                // In fund accounting, we track the "Fund Balance" (Equity-like).
-                // Fund Balance increases with Revenue (Credit) and decreases with Expense (Debit).
-                balances.set(line.fund_id, current + (line.credit_amount - line.debit_amount));
-            }
+      for (const line of linesResponse.data) {
+        if (line.fund_id) {
+          const current = balances.get(line.fund_id) || 0;
+          const accObj = accountMap.get(line.account_id);
+          const type = (accObj?.account_type || '').toLowerCase();
+          const code = accObj?.code || '';
+
+          let change = 0;
+          if (type === 'revenue' || code.startsWith('4')) {
+            change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          } else if (type === 'expense' || code.startsWith('5')) {
+            change = -(Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
+          } else if (type === 'equity' || code.startsWith('3')) {
+            change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          }
+          balances.set(line.fund_id, current + change);
         }
+      }
     }
     return balances;
   }
 
   static async getDepartmentBalances(): Promise<Map<string, number>> {
-    const linesResponse = await ApiService.get<JournalEntryLine>('journal_entry_lines');
+    const [linesResponse, accounts] = await Promise.all([
+      ApiService.get<JournalEntryLine>('journal_entry_lines'),
+      AccountingService.getAccounts()
+    ]);
+    const flatAccounts = AccountingService.flattenAccounts(accounts || []);
+    const accountMap = new Map(flatAccounts.map(a => [a.id, a]));
     const balances = new Map<string, number>();
 
     if (linesResponse.success && linesResponse.data) {
-        for (const line of linesResponse.data) {
-            if (line.department_id) {
-                const current = balances.get(line.department_id) || 0;
-                balances.set(line.department_id, current + (line.credit_amount - line.debit_amount));
-            }
+      for (const line of linesResponse.data) {
+        if (line.department_id) {
+          const current = balances.get(line.department_id) || 0;
+          const accObj = accountMap.get(line.account_id);
+          const type = (accObj?.account_type || '').toLowerCase();
+          const code = accObj?.code || '';
+
+          let change = 0;
+          if (type === 'revenue' || code.startsWith('4')) {
+            change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          } else if (type === 'expense' || code.startsWith('5')) {
+            change = -(Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
+          } else if (type === 'equity' || code.startsWith('3')) {
+            change = Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          }
+          balances.set(line.department_id, current + change);
         }
+      }
     }
     return balances;
   }
