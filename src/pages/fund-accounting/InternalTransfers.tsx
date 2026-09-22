@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
 import { ApiService } from '../../services/api';
-import { ArrowRightLeft, Plus, CheckCircle, Clock, XCircle, TrendingUp, Wallet, Calendar, Building2, Landmark } from 'lucide-react';
+import { ArrowRightLeft, Plus, CheckCircle, Clock, XCircle, TrendingUp, Wallet, Calendar, Building2, Landmark, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { Department, InternalTransfer, Account } from '../../types';
 import { useAuthContext } from '../../contexts/useAuthContext';
+import { BankBalanceOverview } from '../../components/fund-accounting/BankBalanceOverview';
 
 const InternalTransfers: React.FC = () => {
   const { user } = useAuthContext();
+  const location = useLocation();
   const [transfers, setTransfers] = useState<InternalTransfer[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
+  const [bankBalances, setBankBalances] = useState<Array<{ account: Account; balance: number; currency: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const [formData, setFormData] = useState<Partial<InternalTransfer>>({
     from_department_id: '',
@@ -30,16 +35,18 @@ const InternalTransfers: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [tResponse, dList, rawAccounts] = await Promise.all([
+      const [tResponse, dList, rawAccounts, liveBankBalances] = await Promise.all([
         ApiService.get<InternalTransfer>('internal_transfers', {
           orderBy: { column: 'transfer_date', ascending: false }
         }),
         FundAccountingService.getDepartments(),
-        AccountingService.getAccounts()
+        AccountingService.getAccounts(),
+        FundAccountingService.getBankAndCashBalances()
       ]);
 
       setTransfers(tResponse.success ? (tResponse.data || []) : []);
       setDepartments(dList || []);
+      setBankBalances(liveBankBalances || []);
 
       const flat = AccountingService.flattenAccounts(rawAccounts || []);
       const assets = flat.filter(a => a.account_type === 'asset' || a.code?.startsWith('1'));
@@ -52,7 +59,16 @@ const InternalTransfers: React.FC = () => {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    loadData(); 
+  }, [refreshTrigger]);
+
+  useEffect(() => {
+    if (location.state?.preselectedSourceBankId) {
+      setFormData(prev => ({ ...prev, from_bank_account_id: location.state.preselectedSourceBankId }));
+      setShowModal(true);
+    }
+  }, [location.state]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,6 +203,18 @@ const InternalTransfers: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Live Bank Balances Overview: Treasury snapshot for transfers */}
+      <BankBalanceOverview
+        refreshTrigger={refreshTrigger}
+        onInitiateTransfer={(sourceBankId) => {
+          if (sourceBankId) {
+            setFormData(prev => ({ ...prev, from_bank_account_id: sourceBankId }));
+          }
+          setShowModal(true);
+        }}
+        showTransferAction={true}
+      />
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto w-full">
@@ -331,46 +359,95 @@ const InternalTransfers: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <span className="flex items-center gap-1.5">
                       <Landmark size={15} className="text-indigo-600" />
-                      Paid From (Source Bank / Account)
+                      Paid From (Source Bank)
                     </span>
                   </label>
                   <select
-                    className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border text-sm font-medium"
+                    className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border text-xs font-medium"
                     value={formData.from_bank_account_id || ''}
                     onChange={e => setFormData({ ...formData, from_bank_account_id: e.target.value })}
                   >
                     <option value="">Default Operating Account</option>
-                    {bankAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>
-                        [{acc.code}] {acc.name}
-                      </option>
-                    ))}
+                    {bankAccounts.map(acc => {
+                      const bInfo = bankBalances.find(b => b.account.id === acc.id);
+                      const balStr = bInfo ? ` (Bal: KES ${bInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })})` : '';
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}{balStr}
+                        </option>
+                      );
+                    })}
                   </select>
-                  <span className="text-[11px] text-gray-400 mt-0.5 block">Bank being debited/paid from</span>
+                  {(() => {
+                    const bInfo = bankBalances.find(b => b.account.id === formData.from_bank_account_id);
+                    if (bInfo) {
+                      return (
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50/80 px-2 py-1 rounded-lg mt-1.5">
+                          <Wallet size={12} />
+                          <span>Available: KES {bInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      );
+                    }
+                    return <span className="text-[11px] text-gray-400 mt-0.5 block">Bank being credited (Outflow)</span>;
+                  })()}
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <span className="flex items-center gap-1.5">
                       <Landmark size={15} className="text-emerald-600" />
-                      Paid To (Destination Bank / Account)
+                      Paid To (Destination Bank)
                     </span>
                   </label>
                   <select
-                    className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border text-sm font-medium"
+                    className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border text-xs font-medium"
                     value={formData.to_bank_account_id || ''}
                     onChange={e => setFormData({ ...formData, to_bank_account_id: e.target.value })}
                   >
                     <option value="">Default Operating Account</option>
-                    {bankAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>
-                        [{acc.code}] {acc.name}
-                      </option>
-                    ))}
+                    {bankAccounts.map(acc => {
+                      const bInfo = bankBalances.find(b => b.account.id === acc.id);
+                      const balStr = bInfo ? ` (Bal: KES ${bInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })})` : '';
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}{balStr}
+                        </option>
+                      );
+                    })}
                   </select>
-                  <span className="text-[11px] text-gray-400 mt-0.5 block">Bank receiving the funds</span>
+                  {(() => {
+                    const bInfo = bankBalances.find(b => b.account.id === formData.to_bank_account_id);
+                    if (bInfo) {
+                      return (
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50/80 px-2 py-1 rounded-lg mt-1.5">
+                          <Landmark size={12} />
+                          <span>Current Bal: KES {bInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      );
+                    }
+                    return <span className="text-[11px] text-gray-400 mt-0.5 block">Bank receiving funds (Inflow)</span>;
+                  })()}
                 </div>
               </div>
+
+              {/* Warning if transfer exceeds available balance */}
+              {(() => {
+                const sourceAcc = bankBalances.find(b => b.account.id === formData.from_bank_account_id);
+                if (sourceAcc && Number(formData.amount || 0) > sourceAcc.balance && sourceAcc.balance > 0) {
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs flex items-start gap-2">
+                      <AlertCircle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Caution: Transfer amount exceeds available bank balance</span>
+                        <p className="mt-0.5 text-amber-700">
+                          Transfer amount (KES {Number(formData.amount).toLocaleString()}) exceeds the available balance in {sourceAcc.account.name} (KES {sourceAcc.balance.toLocaleString()}).
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {/* Amount & Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

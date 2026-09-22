@@ -11,7 +11,8 @@ import {
   Sponsor,
   JournalEntryLine,
   JournalEntry,
-  Sponsorship
+  Sponsorship,
+  Account
 } from '../types';
 import { AccountingService } from './accountingService';
 import { FixedAssetService } from './fixedAssetService';
@@ -531,7 +532,8 @@ export class FundAccountingService {
         credit_amount: totalFMV,
         donor_id: donation.donor_id || undefined,
         fund_id: donation.fund_id || undefined,
-        child_id: donation.restricted_to_child_id || undefined
+        child_id: donation.restricted_to_child_id || undefined,
+        department_id: donation.department_id || undefined
       });
 
       const entry = await AccountingService.createJournalEntry({
@@ -609,6 +611,7 @@ export class FundAccountingService {
           credit_amount: 0,
           donor_id: donation.donor_id || undefined,
           fund_id: donation.fund_id || undefined,
+          department_id: donation.department_id || undefined,
           child_id: donation.restricted_to_child_id || undefined
         },
         // CR: NGO Donation Revenue (4200 / 4210 / 4220 / 4240)
@@ -619,6 +622,7 @@ export class FundAccountingService {
           credit_amount: amt,
           donor_id: donation.donor_id || undefined,
           fund_id: donation.fund_id || undefined,
+          department_id: donation.department_id || undefined,
           child_id: donation.restricted_to_child_id || undefined
         }
       ]
@@ -944,5 +948,104 @@ export class FundAccountingService {
       }
     }
     return balances;
+  }
+
+  // Live Bank & Cash Asset Accounts Overview (Strict Double-Entry: Asset Balance = Debits - Credits)
+  static async getBankAndCashBalances(): Promise<Array<{
+    account: Account;
+    balance: number;
+    currency: string;
+  }>> {
+    const [linesResponse, accounts] = await Promise.all([
+      ApiService.get<JournalEntryLine>('journal_entry_lines'),
+      AccountingService.getAccounts()
+    ]);
+    const flatAccounts = AccountingService.flattenAccounts(accounts || []);
+    
+    // Liquid asset accounts (Cash, Bank, Mobile Money, Clearing)
+    const bankKeywords = [
+      'bank', 'cash', 'mpesa', 'm-pesa', 'till', 'paybill', 'float', 'wallet',
+      'checking', 'savings', 'equity', 'kcb', 'coop', 'co-op', 'absa', 'stanbic',
+      'petty cash', 'liquid'
+    ];
+
+    const isBankOrCash = (a: Account) => {
+      const type = (a.account_type || '').toLowerCase();
+      const code = a.code || '';
+      const name = (a.name || '').toLowerCase();
+      if (type !== 'asset' && !code.startsWith('1')) return false;
+      if (code.startsWith('111') || code.startsWith('110') || code.startsWith('100') || code.startsWith('115')) return true;
+      return bankKeywords.some(kw => name.includes(kw));
+    };
+
+    const liquidAccounts = flatAccounts.filter(isBankOrCash);
+
+    // Calculate live balance: Normal balance for Asset accounts is DEBIT (Balance = Debits - Credits)
+    const balanceMap = new Map<string, number>();
+    if (linesResponse.success && linesResponse.data) {
+      for (const line of linesResponse.data) {
+        const current = balanceMap.get(line.account_id) || 0;
+        const netChange = Number(line.debit_amount || 0) - Number(line.credit_amount || 0);
+        balanceMap.set(line.account_id, current + netChange);
+      }
+    }
+
+    return liquidAccounts.map(account => ({
+      account,
+      balance: balanceMap.get(account.id) || 0,
+      currency: 'KES'
+    }));
+  }
+
+  // Detailed Departmental Financial Summaries (Inflows, Expenditures, Net Balance adhering to Debits/Credits)
+  static async getDepartmentFinancialSummaries(): Promise<Array<{
+    department: Department;
+    allocated: number;   // Revenue Inflows + Transfers In
+    expenditures: number; // Expense Outflows + Transfers Out
+    netBalance: number;   // Allocated - Expenditures
+    budget: number;
+  }>> {
+    const [departments, linesResponse, accounts] = await Promise.all([
+      this.getDepartments(),
+      ApiService.get<JournalEntryLine>('journal_entry_lines'),
+      AccountingService.getAccounts()
+    ]);
+    const flatAccounts = AccountingService.flattenAccounts(accounts || []);
+    const accountMap = new Map(flatAccounts.map(a => [a.id, a]));
+
+    const summaries = new Map<string, { allocated: number; expenditures: number }>();
+    departments.forEach(d => summaries.set(d.id, { allocated: 0, expenditures: 0 }));
+
+    if (linesResponse.success && linesResponse.data) {
+      for (const line of linesResponse.data) {
+        if (line.department_id && summaries.has(line.department_id)) {
+          const sum = summaries.get(line.department_id)!;
+          const acc = accountMap.get(line.account_id);
+          const type = (acc?.account_type || '').toLowerCase();
+          const code = acc?.code || '';
+
+          // Revenue (4xxx) & Transfers In (4900): Credit increases recognized allocation, Debit decreases
+          if (type === 'revenue' || code.startsWith('4')) {
+            sum.allocated += (Number(line.credit_amount || 0) - Number(line.debit_amount || 0));
+          }
+          // Expense (5xxx) & Transfers Out (5900): Debit increases expenditure, Credit decreases
+          else if (type === 'expense' || code.startsWith('5')) {
+            sum.expenditures += (Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
+          }
+        }
+      }
+    }
+
+    return departments.map(d => {
+      const s = summaries.get(d.id) || { allocated: 0, expenditures: 0 };
+      const budget = (d as any).budget_limit || (d as any).annual_budget || 500000;
+      return {
+        department: d,
+        allocated: s.allocated,
+        expenditures: s.expenditures,
+        netBalance: s.allocated - s.expenditures,
+        budget
+      };
+    });
   }
 }

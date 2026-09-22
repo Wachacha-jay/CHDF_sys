@@ -51,6 +51,9 @@ async function ensureInKindSchema() {
     if (!donColNames.has('total_fair_market_value')) {
       await pool.query('ALTER TABLE donations ADD COLUMN total_fair_market_value DECIMAL(12,4) DEFAULT 0');
     }
+    if (!donColNames.has('department_id')) {
+      await pool.query('ALTER TABLE donations ADD COLUMN department_id CHAR(36) NULL');
+    }
 
     // 4. Ensure sales table distribution columns & sale_type VARCHAR(50)
     const [saleCols]: any = await pool.query('SHOW COLUMNS FROM sales');

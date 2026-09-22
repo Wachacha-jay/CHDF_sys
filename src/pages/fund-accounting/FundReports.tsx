@@ -9,13 +9,26 @@ import { printPaymentReceipt } from '../../utils/receiptUtils';
 import { 
   FileText, Calendar, Printer, Filter, DollarSign, ArrowUpRight, 
   ArrowDownLeft, ArrowRightLeft, Users, GraduationCap, Heart, HelpCircle,
-  Trash2, Download, RotateCcw, Building2, CheckCircle2, X
+  Trash2, Download, RotateCcw, Building2, CheckCircle2, X, Landmark,
+  Wallet, PieChart, BarChart3, TrendingUp, AlertCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { Department, FundAccount, Child, Donor, JournalEntry, InternalTransfer } from '../../types';
+import type { Department, FundAccount, Child, Donor, JournalEntry, InternalTransfer, Account } from '../../types';
+import { BankBalanceOverview } from '../../components/fund-accounting/BankBalanceOverview';
 
+export type ReportTab = 'activities' | 'fees' | 'donations' | 'transfers' | 'treasury';
 
-type ReportTab = 'activities' | 'fees' | 'donations' | 'transfers';
+export interface RevenueStreamSummary {
+  accountId: string;
+  code: string;
+  name: string;
+  category?: string;
+  grossCredits: number;
+  adjustmentsDebits: number;
+  netRevenue: number;
+  percentage: number;
+  count: number;
+}
 
 const FundReports: React.FC = () => {
   const { settings: contextSettings } = useSettingsContext();
@@ -49,6 +62,8 @@ const FundReports: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [children, setChildren] = useState<Child[]>([]);
   const [donors, setDonors] = useState<Donor[]>([]);
+  const [allAccounts, setAllAccounts] = useState<Account[]>([]);
+  const [bankBalances, setBankBalances] = useState<Array<{ account: Account; balance: number; currency: string }>>([]);
 
   // Loaded Transaction Data
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
@@ -58,22 +73,30 @@ const FundReports: React.FC = () => {
   // Master Data Loader
   const loadMasterData = async () => {
     try {
-      const [fList, dList, cList, donorList, settings] = await Promise.all([
+      const [fList, dList, cList, donorList, settings, rawAccounts, liveBankBalances] = await Promise.all([
         FundAccountingService.getFundAccounts(),
         FundAccountingService.getDepartments(),
         FundAccountingService.getChildren(),
         FundAccountingService.getDonors(),
-        BusinessSettingsService.getSettings()
+        BusinessSettingsService.getSettings(),
+        AccountingService.getAccounts(),
+        FundAccountingService.getBankAndCashBalances()
       ]);
       setFunds(fList || []);
       setDepartments(dList || []);
       setChildren(cList || []);
       setDonors(donorList || []);
       setBusinessSettings(settings);
+      setAllAccounts(AccountingService.flattenAccounts(rawAccounts || []));
+      setBankBalances(liveBankBalances || []);
     } catch (e) {
       console.error('Error loading master data', e);
     }
   };
+
+  const accountMap = useMemo(() => {
+    return new Map<string, Account>(allAccounts.map(a => [a.id, a]));
+  }, [allAccounts]);
 
   // Helper to normalize any date string to YYYY-MM-DD
   const normalizeDate = (d: any): string => {
@@ -197,6 +220,10 @@ const FundReports: React.FC = () => {
         if (endDate) list = list.filter(t => normalizeDate(t.transfer_date) <= endDate);
         setTransfers(list);
       }
+
+      // 4. Refresh live bank balances
+      const balances = await FundAccountingService.getBankAndCashBalances();
+      setBankBalances(balances || []);
     } catch (e) {
       toast.error('Failed to load financial records');
     } finally {
@@ -213,16 +240,43 @@ const FundReports: React.FC = () => {
   }, [startDate, endDate]);
 
   // ----------------------------------------------------
-  // COMPUTED DATA FOR EACH TAB (with robust filtering)
+  // COMPUTED DATA FOR EACH TAB (with robust filtering & double-entry accounting)
   // ----------------------------------------------------
 
-  // Tab 1: Statement of Activities Computed Lines
+  // Tab 1: Statement of Activities Computed Lines & Double-Entry Revenue Stream Breakdown
   const activitiesData = useMemo(() => {
     const revenueLines: any[] = [];
     const expenseLines: any[] = [];
 
+    // Revenue streams aggregation map (Credits: Inflows minus Debits: Adjustments)
+    const revenueStreamsMap = new Map<string, {
+      accountId: string;
+      code: string;
+      name: string;
+      category?: string;
+      grossCredits: number;
+      adjustmentsDebits: number;
+      netRevenue: number;
+      count: number;
+    }>();
+
+    // Expense streams aggregation map (Debits: Expenses minus Credits: Rebates)
+    const expenseStreamsMap = new Map<string, {
+      accountId: string;
+      code: string;
+      name: string;
+      grossDebits: number;
+      adjustmentsCredits: number;
+      netExpense: number;
+      count: number;
+    }>();
+
     journalEntries.forEach(entry => {
       entry.lines?.forEach(line => {
+        const lineAccount = line.account || accountMap.get(line.account_id);
+        const code = lineAccount?.code || '';
+        const type = (lineAccount?.account_type || '').toLowerCase();
+
         // Tagged fund/dept on either the line or parent entry lines
         const entryFundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
         const entryDeptId = line.department_id || entry.lines?.find(l => l.department_id)?.department_id;
@@ -234,41 +288,132 @@ const FundReports: React.FC = () => {
         if (selectedChild && entryChildId !== selectedChild) return;
         if (selectedDonor && entryDonorId !== selectedDonor) return;
 
-        const isRevenue = line.account?.account_type === 'revenue' || 
-                          line.account?.code?.startsWith('4') ||
-                          (Number(line.credit_amount) > 0 && !line.account?.code?.startsWith('1') && !line.account?.code?.startsWith('2'));
-        const isExpense = line.account?.account_type === 'expense' || 
-                          line.account?.code?.startsWith('5') ||
-                          (Number(line.debit_amount) > 0 && !line.account?.code?.startsWith('1') && !line.account?.code?.startsWith('2'));
+        // Double-entry classification:
+        // Revenue accounts are 4xxx or account_type = 'revenue'
+        const isRevenue = type === 'revenue' || code.startsWith('4');
+        // Expense accounts are 5xxx or account_type = 'expense'
+        const isExpense = type === 'expense' || code.startsWith('5');
 
-        if (isRevenue && Number(line.credit_amount) > 0) {
-          revenueLines.push({
-            date: normalizeDate(entry.entry_date),
-            entryNumber: entry.entry_number,
-            description: line.description || entry.description,
-            amount: Number(line.credit_amount || 0),
-            fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
-            dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
-          });
-        } else if (isExpense && Number(line.debit_amount) > 0) {
-          expenseLines.push({
-            date: normalizeDate(entry.entry_date),
-            entryNumber: entry.entry_number,
-            description: line.description || entry.description,
-            amount: Number(line.debit_amount || 0),
-            fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
-            dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
-          });
+        const cr = Number(line.credit_amount || 0);
+        const dr = Number(line.debit_amount || 0);
+
+        if (isRevenue) {
+          const streamKey = lineAccount?.id || code || '4000';
+          const defaultName = code === '4300' ? 'School Fees & Tuition' :
+                              code === '4240' ? 'Child Sponsorship Contributions' :
+                              code === '4260' ? 'In-Kind Donations' :
+                              code === '4220' ? 'Temporarily Restricted Donations' :
+                              code === '4210' ? 'Unrestricted Donations' :
+                              code === '4200' ? 'General Donations' :
+                              code === '4900' ? 'Inter-Departmental Allocation Inflow' : 'Operating Revenue';
+          const streamName = lineAccount?.name || defaultName;
+
+          if (!revenueStreamsMap.has(streamKey)) {
+            revenueStreamsMap.set(streamKey, {
+              accountId: streamKey,
+              code: code || '4xxx',
+              name: streamName,
+              category: lineAccount?.category,
+              grossCredits: 0,
+              adjustmentsDebits: 0,
+              netRevenue: 0,
+              count: 0
+            });
+          }
+
+          const stream = revenueStreamsMap.get(streamKey)!;
+          stream.grossCredits += cr;
+          stream.adjustmentsDebits += dr;
+          stream.netRevenue += (cr - dr); // CR increases revenue, DR decreases (contra-revenue/refund)
+          stream.count += 1;
+
+          if (cr > 0 || dr > 0) {
+            revenueLines.push({
+              date: normalizeDate(entry.entry_date),
+              entryNumber: entry.entry_number,
+              accountCode: code,
+              accountName: streamName,
+              description: line.description || entry.description,
+              credit: cr,
+              debit: dr,
+              amount: cr > 0 ? cr : -dr,
+              netAmount: cr - dr,
+              fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
+              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
+            });
+          }
+        } else if (isExpense) {
+          const streamKey = lineAccount?.id || code || '5000';
+          const streamName = lineAccount?.name || 'General Program Expenditure';
+
+          if (!expenseStreamsMap.has(streamKey)) {
+            expenseStreamsMap.set(streamKey, {
+              accountId: streamKey,
+              code: code || '5xxx',
+              name: streamName,
+              grossDebits: 0,
+              adjustmentsCredits: 0,
+              netExpense: 0,
+              count: 0
+            });
+          }
+
+          const stream = expenseStreamsMap.get(streamKey)!;
+          stream.grossDebits += dr;
+          stream.adjustmentsCredits += cr;
+          stream.netExpense += (dr - cr); // DR increases expense, CR decreases (rebate/recovery)
+          stream.count += 1;
+
+          if (dr > 0 || cr > 0) {
+            expenseLines.push({
+              date: normalizeDate(entry.entry_date),
+              entryNumber: entry.entry_number,
+              accountCode: code,
+              accountName: streamName,
+              description: line.description || entry.description,
+              debit: dr,
+              credit: cr,
+              amount: dr > 0 ? dr : -cr,
+              netAmount: dr - cr,
+              fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
+              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
+            });
+          }
         }
       });
     });
 
-    const totalRevenue = revenueLines.reduce((sum, r) => sum + r.amount, 0);
-    const totalExpense = expenseLines.reduce((sum, e) => sum + e.amount, 0);
-    const netChange = totalRevenue - totalExpense;
+    const totalGrossRevenue = Array.from(revenueStreamsMap.values()).reduce((sum, s) => sum + s.grossCredits, 0);
+    const totalRevenueAdjustments = Array.from(revenueStreamsMap.values()).reduce((sum, s) => sum + s.adjustmentsDebits, 0);
+    const totalNetRevenue = totalGrossRevenue - totalRevenueAdjustments;
 
-    return { revenueLines, expenseLines, totalRevenue, totalExpense, netChange };
-  }, [journalEntries, selectedFund, selectedDept, selectedChild, selectedDonor, funds, departments]);
+    const totalGrossExpense = Array.from(expenseStreamsMap.values()).reduce((sum, s) => sum + s.grossDebits, 0);
+    const totalExpenseAdjustments = Array.from(expenseStreamsMap.values()).reduce((sum, s) => sum + s.adjustmentsCredits, 0);
+    const totalNetExpense = totalGrossExpense - totalExpenseAdjustments;
+
+    const netChange = totalNetRevenue - totalNetExpense;
+
+    // Structured revenue stream summaries with calculated % share
+    const revenueStreams: RevenueStreamSummary[] = Array.from(revenueStreamsMap.values())
+      .map(s => ({
+        ...s,
+        percentage: totalNetRevenue > 0 ? Math.max(0, (s.netRevenue / totalNetRevenue) * 100) : 0
+      }))
+      .sort((a, b) => b.netRevenue - a.netRevenue);
+
+    return { 
+      revenueLines, 
+      expenseLines, 
+      revenueStreams,
+      totalGrossRevenue,
+      totalRevenueAdjustments,
+      totalRevenue: totalNetRevenue, 
+      totalGrossExpense,
+      totalExpenseAdjustments,
+      totalExpense: totalNetExpense, 
+      netChange 
+    };
+  }, [journalEntries, accountMap, selectedFund, selectedDept, selectedChild, selectedDonor, funds, departments]);
 
   // Tab 2: School Fee Records Computed
   const schoolFeeRecords = useMemo(() => {
@@ -385,12 +530,14 @@ const FundReports: React.FC = () => {
       summaryCardsHtml = `
         <div class="summary-grid">
           <div class="card in-card">
-            <div class="card-label">Total Revenues / Inflows</div>
+            <div class="card-label">Total Revenues / Inflows (Net)</div>
             <div class="card-val">${currency} ${activitiesData.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8.5px; opacity: 0.8; margin-top: 2px;">Gross CR: ${activitiesData.totalGrossRevenue.toLocaleString()} | Less DR Adjustments: ${activitiesData.totalRevenueAdjustments.toLocaleString()}</div>
           </div>
           <div class="card out-card">
-            <div class="card-label">Total Program Expenditures</div>
+            <div class="card-label">Total Program Expenditures (Net)</div>
             <div class="card-val">${currency} ${activitiesData.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8.5px; opacity: 0.8; margin-top: 2px;">Gross DR: ${activitiesData.totalGrossExpense.toLocaleString()} | Less CR Rebates: ${activitiesData.totalExpenseAdjustments.toLocaleString()}</div>
           </div>
           <div class="card net-card">
             <div class="card-label">Net Assets Change</div>
@@ -400,7 +547,44 @@ const FundReports: React.FC = () => {
       `;
 
       reportTableHtml = `
-        <h3 class="section-title">Inflow Ledger (Revenues)</h3>
+        <h3 class="section-title">Revenue Streams & Inflow Breakdown (Double-Entry Analysis)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 14%">Account Code</th>
+              <th style="width: 38%">Revenue Stream / Source</th>
+              <th style="width: 16%; text-align: right;">Gross Inflow (CR)</th>
+              <th style="width: 16%; text-align: right;">Adjustments (DR)</th>
+              <th style="width: 16%; text-align: right;">Net Recognized (${currency})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activitiesData.revenueStreams.length === 0 
+              ? '<tr><td colspan="5" class="empty-cell">No revenue stream records found matching filters</td></tr>'
+              : activitiesData.revenueStreams.map(s => `
+                <tr>
+                  <td><strong>${s.code}</strong></td>
+                  <td>${s.name} <small style="color: #64748b">(${s.percentage.toFixed(1)}%)</small></td>
+                  <td style="text-align: right;">${s.grossCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #b91c1c;">${s.adjustmentsDebits > 0 ? `(${s.adjustmentsDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+                  <td style="text-align: right; font-weight: bold; color: #047857;">${s.netRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')
+            }
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="2">TOTAL NET RECOGNIZED REVENUES</td>
+              <td style="text-align: right;">${activitiesData.totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; color: #b91c1c;">${activitiesData.totalRevenueAdjustments > 0 ? `(${activitiesData.totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+              <td style="text-align: right;">${currency} ${activitiesData.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div style="height: 18px;"></div>
+
+        <h3 class="section-title">Inflow Ledger (Transaction Line Items)</h3>
         <table>
           <thead>
             <tr>
@@ -431,7 +615,7 @@ const FundReports: React.FC = () => {
           </tfoot>
         </table>
 
-        <div style="height: 20px;"></div>
+        <div style="height: 18px;"></div>
 
         <h3 class="section-title">Outflow Ledger (Expenditures)</h3>
         <table>
@@ -625,6 +809,54 @@ const FundReports: React.FC = () => {
             <tr class="total-row">
               <td colspan="4">TOTAL INTERNAL TRANSFERS</td>
               <td style="text-align: right;">${currency} ${totalTransfers.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+    } else if (activeTab === 'treasury') {
+      reportTitle = 'Bank & Cash Positions (Treasury Liquidity Report)';
+      const totalLiquid = bankBalances.reduce((sum, b) => sum + b.balance, 0);
+      summaryCardsHtml = `
+        <div class="summary-grid">
+          <div class="card in-card">
+            <div class="card-label">Total Liquid Funds Available</div>
+            <div class="card-val">${currency} ${totalLiquid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </div>
+          <div class="card net-card">
+            <div class="card-label">Active Bank & Cash Accounts</div>
+            <div class="card-val">${bankBalances.length} Accounts</div>
+          </div>
+        </div>
+      `;
+
+      reportTableHtml = `
+        <h3 class="section-title">Bank & Cash Accounts Ledger Balances (Assets: Debits minus Credits)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 15%">Account Code</th>
+              <th style="width: 45%">Account Name</th>
+              <th style="width: 20%">Classification</th>
+              <th style="width: 20%; text-align: right;">Available Balance (${currency})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${bankBalances.length === 0 
+              ? '<tr><td colspan="4" class="empty-cell">No bank or cash accounts found</td></tr>'
+              : bankBalances.map(b => `
+                <tr>
+                  <td><strong>${b.account.code}</strong></td>
+                  <td><strong>${b.account.name}</strong><br><small style="color: #64748b">${b.account.description || 'Operating Account'}</small></td>
+                  <td>${b.account.category || 'Liquid Assets'}</td>
+                  <td style="text-align: right; font-weight: bold; color: ${b.balance >= 0 ? '#047857' : '#b91c1c'};">${b.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')
+            }
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="3">TOTAL AVAILABLE LIQUID ASSETS</td>
+              <td style="text-align: right;">${currency} ${totalLiquid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
             </tr>
           </tfoot>
         </table>
@@ -844,18 +1076,41 @@ const FundReports: React.FC = () => {
       csvRows.push(['STATEMENT OF ACTIVITIES - ' + businessName]);
       csvRows.push([`Period: ${startDate || 'Start'} to ${endDate || 'End'}`]);
       csvRows.push([]);
-      csvRows.push(['Type', 'Date', 'Fund', 'Department', 'Description', `Amount (${currency})`]);
       
-      activitiesData.revenueLines.forEach(r => {
-        csvRows.push(['Revenue', r.date, r.fund, r.dept, `"${(r.description || '').replace(/"/g, '""')}"`, r.amount.toFixed(2)]);
+      // 1. Revenue Streams Breakdown Section
+      csvRows.push(['REVENUE STREAMS & ALLOCATION BREAKDOWN (DOUBLE-ENTRY)']);
+      csvRows.push(['Account Code', 'Revenue Stream Name', `Gross Inflows (CR)`, `Adjustments (DR)`, `Net Recognized (${currency})`, 'Share %']);
+      activitiesData.revenueStreams.forEach(s => {
+        csvRows.push([
+          s.code,
+          `"${s.name.replace(/"/g, '""')}"`,
+          s.grossCredits.toFixed(2),
+          s.adjustmentsDebits.toFixed(2),
+          s.netRevenue.toFixed(2),
+          `${s.percentage.toFixed(1)}%`
+        ]);
       });
-      csvRows.push(['Total Revenue', '', '', '', '', activitiesData.totalRevenue.toFixed(2)]);
+      csvRows.push(['TOTAL NET REVENUES', '', activitiesData.totalGrossRevenue.toFixed(2), activitiesData.totalRevenueAdjustments.toFixed(2), activitiesData.totalRevenue.toFixed(2), '100.0%']);
       csvRows.push([]);
-      activitiesData.expenseLines.forEach(e => {
-        csvRows.push(['Expense', e.date, e.fund, e.dept, `"${(e.description || '').replace(/"/g, '""')}"`, e.amount.toFixed(2)]);
+
+      // 2. Inflow Ledger Section
+      csvRows.push(['INFLOW LEDGER (LINE ITEMS)']);
+      csvRows.push(['Type', 'Date', 'Code', 'Stream Name', 'Fund', 'Department', 'Description', `Amount (${currency})`]);
+      activitiesData.revenueLines.forEach(r => {
+        csvRows.push(['Revenue', r.date, r.accountCode || '', `"${(r.accountName || '').replace(/"/g, '""')}"`, r.fund, r.dept, `"${(r.description || '').replace(/"/g, '""')}"`, r.amount.toFixed(2)]);
       });
-      csvRows.push(['Total Expense', '', '', '', '', activitiesData.totalExpense.toFixed(2)]);
-      csvRows.push(['Net Assets Change', '', '', '', '', activitiesData.netChange.toFixed(2)]);
+      csvRows.push(['Total Revenue Inflow', '', '', '', '', '', '', activitiesData.totalRevenue.toFixed(2)]);
+      csvRows.push([]);
+
+      // 3. Outflow Ledger Section
+      csvRows.push(['OUTFLOW LEDGER (EXPENDITURES)']);
+      csvRows.push(['Type', 'Date', 'Code', 'Stream Name', 'Fund', 'Department', 'Description', `Amount (${currency})`]);
+      activitiesData.expenseLines.forEach(e => {
+        csvRows.push(['Expense', e.date, e.accountCode || '', `"${(e.accountName || '').replace(/"/g, '""')}"`, e.fund, e.dept, `"${(e.description || '').replace(/"/g, '""')}"`, e.amount.toFixed(2)]);
+      });
+      csvRows.push(['Total Expense Outflow', '', '', '', '', '', '', activitiesData.totalExpense.toFixed(2)]);
+      csvRows.push([]);
+      csvRows.push(['NET ASSETS CHANGE (SURPLUS / DEFICIT)', '', '', '', '', '', '', activitiesData.netChange.toFixed(2)]);
     } else if (activeTab === 'fees') {
       filename = `school_fees_report_${startDate || 'all'}_to_${endDate || 'all'}.csv`;
       csvRows.push(['SCHOOL FEES REPORT - ' + businessName]);
@@ -896,6 +1151,17 @@ const FundReports: React.FC = () => {
       });
       const total = filteredTransfers.reduce((s, t) => s + Number(t.amount || 0), 0);
       csvRows.push(['TOTAL', '', '', '', total.toFixed(2)]);
+    } else if (activeTab === 'treasury') {
+      filename = `treasury_bank_positions_${startDate || 'all'}_to_${endDate || 'all'}.csv`;
+      csvRows.push(['BANK & CASH POSITIONS (TREASURY LIQUIDITY) - ' + businessName]);
+      csvRows.push([`Generated on: ${new Date().toLocaleDateString()}`]);
+      csvRows.push([]);
+      csvRows.push(['Account Code', 'Account Name', 'Classification', 'Normal Balance', `Available Balance (${currency})`]);
+      bankBalances.forEach(b => {
+        csvRows.push([b.account.code, `"${b.account.name.replace(/"/g, '""')}"`, b.account.category || 'Liquid Assets', 'DEBIT (Asset)', b.balance.toFixed(2)]);
+      });
+      const totalLiquid = bankBalances.reduce((s, b) => s + b.balance, 0);
+      csvRows.push(['TOTAL LIQUID AVAILABLE ASSETS', '', '', '', totalLiquid.toFixed(2)]);
     }
 
     const csvContent = csvRows.map(row => row.join(',')).join('\n');
@@ -920,23 +1186,128 @@ const FundReports: React.FC = () => {
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-emerald-50 border border-emerald-100 p-5 rounded-2xl">
-            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block">Total Inflow / Revenues</span>
+            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block">Total Inflow / Revenues (Net)</span>
             <span className="text-2xl md:text-3xl font-bold text-emerald-950 mt-1 block">{currency} {activitiesData.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <span className="text-xs text-emerald-600 mt-1 block">{activitiesData.revenueLines.length} record(s)</span>
+            <span className="text-xs text-emerald-600 mt-1 block">
+              Gross CR: {currency} {activitiesData.totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 0 })} &middot; DR Contra: {currency} {activitiesData.totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+            </span>
           </div>
           <div className="bg-rose-50 border border-rose-100 p-5 rounded-2xl">
-            <span className="text-xs font-bold text-rose-800 uppercase tracking-wider block">Total Program Expenditures</span>
+            <span className="text-xs font-bold text-rose-800 uppercase tracking-wider block">Total Program Expenditures (Net)</span>
             <span className="text-2xl md:text-3xl font-bold text-rose-950 mt-1 block">{currency} {activitiesData.totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-            <span className="text-xs text-rose-600 mt-1 block">{activitiesData.expenseLines.length} record(s)</span>
+            <span className="text-xs text-rose-600 mt-1 block">
+              Gross DR: {currency} {activitiesData.totalGrossExpense.toLocaleString(undefined, { minimumFractionDigits: 0 })} &middot; CR Rebates: {currency} {activitiesData.totalExpenseAdjustments.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+            </span>
           </div>
           <div className={`p-5 rounded-2xl border ${activitiesData.netChange >= 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-amber-50 border-amber-100'}`}>
             <span className={`text-xs font-bold uppercase tracking-wider block ${activitiesData.netChange >= 0 ? 'text-indigo-800' : 'text-amber-800'}`}>
-              Net Assets Change
+              Net Assets Change ({activitiesData.netChange >= 0 ? 'Surplus' : 'Deficit'})
             </span>
             <span className={`text-2xl md:text-3xl font-bold mt-1 block ${activitiesData.netChange >= 0 ? 'text-indigo-950' : 'text-amber-950'}`}>
               {currency} {activitiesData.netChange.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
-            <span className="text-xs text-gray-500 mt-1 block">Revenue minus Expenses</span>
+            <span className="text-xs text-gray-500 mt-1 block">Recognized Net Revenues minus Net Expenses</span>
+          </div>
+        </div>
+
+        {/* Revenue Streams Breakdown Table adhering strictly to double-entry accounting */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-emerald-50/60 to-indigo-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <PieChart className="text-emerald-600" size={20} />
+                <h3 className="font-bold text-gray-900 text-base">
+                  Revenue Streams & Funding Inflows Breakdown
+                </h3>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Double-entry revenue recognition: Gross Credits (Inflows) minus Debits (Adjustments / Refunds)
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                {activitiesData.revenueStreams.length} Revenue Stream(s)
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50/80 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-6">Account Code</th>
+                  <th className="py-3.5 px-6">Revenue Stream Name</th>
+                  <th className="py-3.5 px-6 text-right">Gross Inflow (CR)</th>
+                  <th className="py-3.5 px-6 text-right">Adjustments (DR)</th>
+                  <th className="py-3.5 px-6 text-right">Net Recognized ({currency})</th>
+                  <th className="py-3.5 px-6 text-right">% Share</th>
+                  <th className="py-3.5 px-6 w-32">Allocation</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-sm">
+                {activitiesData.revenueStreams.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-gray-400 font-medium">
+                      No revenue stream transactions recorded in this period. Try clearing date filters or clicking "All Records".
+                    </td>
+                  </tr>
+                ) : (
+                  activitiesData.revenueStreams.map((stream, idx) => (
+                    <tr key={stream.accountId || idx} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-3.5 px-6 font-mono text-xs font-bold text-indigo-700">
+                        {stream.code}
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <span className="font-bold text-gray-900">{stream.name}</span>
+                        {stream.category && (
+                          <span className="text-[11px] text-gray-400 block">{stream.category}</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-gray-700">
+                        {currency} {stream.grossCredits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-rose-600">
+                        {stream.adjustmentsDebits > 0 
+                          ? `(${currency} ${stream.adjustmentsDebits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` 
+                          : '—'}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-extrabold text-emerald-700">
+                        {currency} {stream.netRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-semibold text-gray-800">
+                        {stream.percentage.toFixed(1)}%
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-emerald-500 h-full rounded-full"
+                            style={{ width: `${Math.min(100, Math.max(0, stream.percentage))}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {activitiesData.revenueStreams.length > 0 && (
+                <tfoot className="bg-gray-50 border-t-2 border-gray-200 text-xs font-bold uppercase tracking-wider text-gray-700">
+                  <tr>
+                    <td colSpan={2} className="py-3.5 px-6">Total Net Recognized Revenues</td>
+                    <td className="py-3.5 px-6 text-right font-bold text-gray-900">
+                      {currency} {activitiesData.totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-3.5 px-6 text-right font-bold text-rose-700">
+                      {activitiesData.totalRevenueAdjustments > 0 ? `(${currency} ${activitiesData.totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '—'}
+                    </td>
+                    <td className="py-3.5 px-6 text-right font-extrabold text-emerald-700 text-sm">
+                      {currency} {activitiesData.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-3.5 px-6 text-right">100.0%</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
           </div>
         </div>
 
@@ -1290,6 +1661,100 @@ const FundReports: React.FC = () => {
     );
   };
 
+  const renderTreasuryReport = () => {
+    const totalLiquid = bankBalances.reduce((sum, b) => sum + b.balance, 0);
+
+    return (
+      <div className="space-y-6">
+        {/* Bank & Cash Overview Cards with Transfer shortcut */}
+        <BankBalanceOverview showTransferAction={true} />
+
+        {/* Detailed Bank & Cash Accounts Ledger Table */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                <Landmark className="text-indigo-600" /> Bank & Liquid Asset Accounts Ledger
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Asset accounts normal balance is DEBIT: Real-time balance = Cumulative Debits minus Credits
+              </p>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-indigo-50 text-indigo-700">
+              {bankBalances.length} Liquid Accounts
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="py-3 px-6">Account Code</th>
+                  <th className="py-3 px-6">Account / Bank Name</th>
+                  <th className="py-3 px-6">Classification</th>
+                  <th className="py-3 px-6">Normal Accounting Balance</th>
+                  <th className="py-3 px-6 text-right">Liquid Balance ({currency})</th>
+                  <th className="py-3 px-6 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-sm">
+                {bankBalances.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-gray-400">
+                      No liquid bank or cash asset accounts found in Chart of Accounts.
+                    </td>
+                  </tr>
+                ) : (
+                  bankBalances.map(({ account, balance }) => {
+                    const isHealthy = balance >= 0;
+                    return (
+                      <tr key={account.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="py-3.5 px-6 font-mono text-xs font-bold text-indigo-700">
+                          {account.code}
+                        </td>
+                        <td className="py-3.5 px-6">
+                          <span className="font-bold text-gray-900 block">{account.name}</span>
+                          <span className="text-xs text-gray-400">{account.description || 'Operating Account'}</span>
+                        </td>
+                        <td className="py-3.5 px-6 text-gray-600">
+                          {account.category || 'Cash & Bank'}
+                        </td>
+                        <td className="py-3.5 px-6 font-mono text-xs text-gray-500">
+                          DEBIT (Assets)
+                        </td>
+                        <td className={`py-3.5 px-6 text-right font-extrabold text-base ${isHealthy ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {currency} {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-6 text-center">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            isHealthy ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                          }`}>
+                            {isHealthy ? <TrendingUp size={12} /> : <AlertCircle size={12} />}
+                            {isHealthy ? 'Solvent' : 'Overdrawn'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+              {bankBalances.length > 0 && (
+                <tfoot className="bg-gray-50 border-t-2 border-gray-200 text-xs font-bold uppercase tracking-wider text-gray-700">
+                  <tr>
+                    <td colSpan={4} className="py-3.5 px-6">TOTAL LIQUID BANK & CASH ASSETS</td>
+                    <td className="py-3.5 px-6 text-right font-extrabold text-emerald-700 text-base">
+                      {currency} {totalLiquid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Count active filters
   const activeFilterCount = [
     startDate !== currentYearStart && startDate ? 1 : 0,
@@ -1365,6 +1830,14 @@ const FundReports: React.FC = () => {
           }`}
         >
           Internal Transfers
+        </button>
+        <button
+          onClick={() => setActiveTab('treasury')}
+          className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'treasury' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Bank & Cash Positions
         </button>
       </div>
 
@@ -1525,6 +1998,7 @@ const FundReports: React.FC = () => {
           {activeTab === 'fees' && renderSchoolFeesReport()}
           {activeTab === 'donations' && renderDonationsReport()}
           {activeTab === 'transfers' && renderTransfersReport()}
+          {activeTab === 'treasury' && renderTreasuryReport()}
         </div>
       )}
 

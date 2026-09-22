@@ -661,6 +661,7 @@ export interface Donation {
   id: string;
   donor_id: string;
   fund_id?: string;
+  department_id?: string;
   payment_account_id?: string;
   amount: number;
   currency: string;
@@ -678,6 +679,7 @@ export interface Donation {
   donor?: Donor;
   fund?: FundAccount;
   child?: Child;
+  department?: Department;
   items?: DonationItem[];
 }
 

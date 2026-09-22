@@ -129,6 +129,7 @@ const Donations: React.FC = () => {
       amount: 0,
       payment_method: 'bank',
       payment_account_id: bankAccounts.length > 0 ? bankAccounts[0].id : '',
+      department_id: departments.length > 0 ? departments[0].id : '',
       is_anonymous: false
     });
     setDimensions({ donor_id: defaultDonor });
@@ -144,6 +145,7 @@ const Donations: React.FC = () => {
       amount: Number(d.amount),
       payment_method: d.payment_method || 'bank',
       payment_account_id: d.payment_account_id || '',
+      department_id: d.department_id || '',
       reference_number: d.reference_number || '',
       notes: d.notes || '',
       is_anonymous: !!d.is_anonymous
@@ -151,7 +153,8 @@ const Donations: React.FC = () => {
     setDimensions({
       donor_id: d.donor_id,
       fund_id: d.fund_id,
-      child_id: d.restricted_to_child_id
+      child_id: d.restricted_to_child_id,
+      department_id: d.department_id
     });
     if (isIK) {
       FundAccountingService.getDonationItems(d.id).then(items => {
@@ -286,6 +289,7 @@ const Donations: React.FC = () => {
       is_in_kind: donationMode === 'in_kind' ? 1 : 0,
       payment_method: donationMode === 'in_kind' ? 'in_kind' : (formData.payment_method || 'bank'),
       payment_account_id: donationMode === 'in_kind' ? undefined : (formData.payment_account_id || undefined),
+      department_id: formData.department_id || dimensions.department_id || (departments.length > 0 ? departments[0].id : null),
       donor_id: targetDonorId,
       fund_id: dimensions.fund_id || null,
       restricted_to_child_id: dimensions.child_id || null,
@@ -963,6 +967,26 @@ const Donations: React.FC = () => {
                   </div>
 
                   <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Target Department <span className="text-red-500">*</span></label>
+                      <select 
+                        className="w-full rounded-xl border-gray-300 focus:ring-emerald-500 focus:border-emerald-500 py-2 border font-medium text-gray-900"
+                        value={formData.department_id || dimensions.department_id || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData({...formData, department_id: val});
+                          setDimensions(prev => ({...prev, department_id: val}));
+                        }}
+                        required={donationMode === 'monetary'}
+                      >
+                        <option value="">-- Select Receiving Department --</option>
+                        {departments.map((dept) => (
+                          <option key={dept.id} value={dept.id}>
+                            {dept.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Deposit Bank / Asset Account <span className="text-red-500">*</span></label>
                       <select 
