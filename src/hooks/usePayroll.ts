@@ -40,11 +40,26 @@ export const usePayroll = () => {
     }
   }, [loadPayrollSettings]);
 
+  // ─── Runs ─────────────────────────────────────────────────────────────────
+  const loadPayrollRuns = useCallback(async (periodId?: string) => {
+    try {
+      setLoading(true);
+      const runsRaw = await PayrollService.getPayrollRuns(periodId);
+      const runs = Array.isArray(runsRaw) ? runsRaw : [];
+      setPayrollRuns(runs);
+    } catch {
+      toast.error('Failed to load payroll runs');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // ─── Periods ─────────────────────────────────────────────────────────────
   const loadPayrollPeriods = useCallback(async () => {
     try {
       setLoading(true);
-      const periods = await PayrollService.getPayrollPeriods();
+      const periodsRaw = await PayrollService.getPayrollPeriods();
+      const periods = Array.isArray(periodsRaw) ? periodsRaw : [];
       setPayrollPeriods(periods);
       // Auto-select most recent open/processing period
       const active = periods.find(p => p.status === 'open' || p.status === 'processing');
@@ -97,7 +112,7 @@ export const usePayroll = () => {
     } finally {
       setLoading(false);
     }
-  }, [loadPayrollPeriods]);
+  }, [loadPayrollPeriods, loadPayrollRuns]);
 
   const updatePayrollPeriod = useCallback(async (periodId: string, data: Partial<PayrollPeriod>) => {
     try {
@@ -157,19 +172,6 @@ export const usePayroll = () => {
       setLoading(false);
     }
   }, [loadPayrollPeriods, loadPayrollRuns]);
-
-  // ─── Runs ─────────────────────────────────────────────────────────────────
-  const loadPayrollRuns = useCallback(async (periodId?: string) => {
-    try {
-      setLoading(true);
-      const runs = await PayrollService.getPayrollRuns(periodId);
-      setPayrollRuns(runs);
-    } catch {
-      toast.error('Failed to load payroll runs');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const generatePayrollForPeriod = useCallback(async (periodId: string) => {
     try {

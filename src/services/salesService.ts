@@ -2,6 +2,7 @@ import { ApiService } from './api';
 import { Sale, SaleItem, Customer, Product } from '../types';
 import { AccountingService } from './accountingService';
 import { DoubleEntryService } from './doubleEntryService';
+import { BusinessSettingsService } from './businessSettingsService';
 
 export interface SalesFilters {
   customer_id?: string;
@@ -38,6 +39,7 @@ export interface CreateSaleData {
     discount_amount?: number;
   }>;
   subtotal?: number;
+  tax_rate?: number;
   tax_amount?: number;
   discount_amount?: number;
   total_amount?: number;
@@ -129,15 +131,32 @@ export class SalesService {
   static async createSale(saleData: CreateSaleData): Promise<Sale | null> {
     try {
       // Calculate totals
-      const subtotal = saleData.subtotal || saleData.items.reduce((sum, item) =>
+      const subtotal = saleData.subtotal !== undefined ? saleData.subtotal : saleData.items.reduce((sum, item) =>
         sum + (item.quantity * item.unit_price) - (item.discount_amount || 0), 0
       );
 
-      // No tax for school fees/child support unless specified
+      // Determine tax rate: picking from saleData, business settings, or default to 0
       const isNGOFee = saleData.sale_type && saleData.sale_type !== 'standard';
-      const taxRate = isNGOFee ? 0 : 0.16;
-      const taxAmount = saleData.tax_amount !== undefined ? saleData.tax_amount : (subtotal * taxRate);
-      const totalAmount = saleData.total_amount || (subtotal + taxAmount - (saleData.discount_amount || 0));
+      let taxRate = 0;
+      if (!isNGOFee) {
+        if (saleData.tax_rate !== undefined && saleData.tax_rate !== null) {
+          taxRate = Number(saleData.tax_rate) > 1 ? Number(saleData.tax_rate) / 100 : Math.max(0, Number(saleData.tax_rate));
+        } else {
+          try {
+            const settings = await BusinessSettingsService.getSettings();
+            if (settings && settings.tax_rate !== undefined && settings.tax_rate !== null) {
+              taxRate = Number(settings.tax_rate) > 1 ? Number(settings.tax_rate) / 100 : Math.max(0, Number(settings.tax_rate));
+            } else {
+              taxRate = 0;
+            }
+          } catch {
+            taxRate = 0;
+          }
+        }
+      }
+
+      const taxAmount = saleData.tax_amount !== undefined ? saleData.tax_amount : Math.round(subtotal * taxRate * 100) / 100;
+      const totalAmount = saleData.total_amount !== undefined ? saleData.total_amount : (subtotal + taxAmount - (saleData.discount_amount || 0));
 
       const isCredit = saleData.payment_method === 'credit';
       const paidAmount = isCredit ? 0 : totalAmount;
@@ -146,6 +165,7 @@ export class SalesService {
       const response = await ApiService.post<any>('sales', {
         ...saleData,
         subtotal,
+        tax_rate: taxRate,
         tax_amount: taxAmount,
         total_amount: totalAmount,
         paid_amount: paidAmount,

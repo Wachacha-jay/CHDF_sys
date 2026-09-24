@@ -17,12 +17,23 @@ import {
   TrendingUp,
   AlertCircle,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  ArrowRightLeft
 } from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
 import { Account, BankReconciliation as BankReconciliationType, JournalEntryLine } from '../../types';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+
+const formatDateSafe = (dateVal?: any) => {
+  if (!dateVal) return '-';
+  try {
+    const d = new Date(dateVal);
+    return isNaN(d.getTime()) ? '-' : format(d, 'MMM dd, yyyy');
+  } catch {
+    return '-';
+  }
+};
 
 const BankReconciliation: React.FC = () => {
   const [reconciliations, setReconciliations] = useState<BankReconciliationType[]>([]);
@@ -39,11 +50,12 @@ const BankReconciliation: React.FC = () => {
   const [currentReconciliation, setCurrentReconciliation] = useState<BankReconciliationType | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'deposits' | 'payments'>('all');
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount?: number | string | null) => {
+    const num = Number(amount || 0);
     return `KSh ${new Intl.NumberFormat('en-KE', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(amount)}`;
+    }).format(isNaN(num) ? 0 : num)}`;
   };
 
   useEffect(() => {
@@ -457,9 +469,7 @@ const BankReconciliation: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-600">
-                          {((line as any).journal_entry?.entry_date || line.created_at) 
-                            ? format(new Date((line as any).journal_entry?.entry_date || line.created_at), 'MMM dd, yyyy') 
-                            : '-'}
+                          {formatDateSafe((line as any).journal_entry?.entry_date || line.created_at)}
                         </td>
                         <td className="px-6 py-4 font-mono text-xs text-gray-500">{(line as any).journal_entry?.entry_number || '-'}</td>
                         <td className="px-6 py-4 text-gray-700 font-medium">{line.description || (line as any).journal_entry?.description}</td>
@@ -542,7 +552,7 @@ const BankReconciliation: React.FC = () => {
             <p className="text-sm font-bold text-white/70 uppercase tracking-widest">Last Reconciliation</p>
             <p className="text-xl font-bold">
               {reconciliations.length > 0 
-                ? format(new Date(reconciliations[0].statement_date), 'MMM dd, yyyy')
+                ? formatDateSafe(reconciliations[0].statement_date)
                 : 'Never'}
             </p>
           </div>
@@ -598,7 +608,7 @@ const BankReconciliation: React.FC = () => {
                 return (
                   <tr key={rec.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-8 py-5 font-bold text-gray-700">
-                      {format(new Date(rec.statement_date), 'MMM dd, yyyy')}
+                      {formatDateSafe(rec.statement_date)}
                     </td>
                     <td className="px-8 py-5">
                       <div className="flex flex-col">
@@ -606,11 +616,11 @@ const BankReconciliation: React.FC = () => {
                         <span className="text-xs text-gray-400 font-mono">{account?.code}</span>
                       </div>
                     </td>
-                    <td className="px-8 py-5 text-right font-black text-gray-900">{rec.statement_balance.toLocaleString()}</td>
-                    <td className="px-8 py-5 text-right font-medium text-gray-500">{rec.ledger_balance.toLocaleString()}</td>
+                    <td className="px-8 py-5 text-right font-black text-gray-900">{Number(rec.statement_balance || 0).toLocaleString()}</td>
+                    <td className="px-8 py-5 text-right font-medium text-gray-500">{Number(rec.ledger_balance || 0).toLocaleString()}</td>
                     <td className="px-8 py-5 text-right font-bold">
-                      <span className={rec.difference === 0 ? 'text-green-600' : 'text-orange-500'}>
-                        {rec.difference.toLocaleString()}
+                      <span className={Number(rec.difference || 0) === 0 ? 'text-green-600' : 'text-orange-500'}>
+                        {Number(rec.difference || 0).toLocaleString()}
                       </span>
                     </td>
                     <td className="px-8 py-5 text-center">

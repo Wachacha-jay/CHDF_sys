@@ -5,15 +5,20 @@ import crypto from 'crypto';
 
 const router = Router();
 
-// GET all purchases (with supplier name)
+// GET all purchases (with supplier name, filtered by supplier_id if provided)
 router.get('/', authenticate, async (req, res) => {
   try {
-    const [rows]: any = await pool.query(
-      `SELECT p.*, s.name as supplier_name 
+    const { supplier_id } = req.query;
+    let query = `SELECT p.*, s.name as supplier_name 
        FROM purchases p 
-       LEFT JOIN suppliers s ON p.supplier_id = s.id 
-       ORDER BY p.purchase_date DESC`
-    );
+       LEFT JOIN suppliers s ON p.supplier_id = s.id`;
+    const params: any[] = [];
+    if (supplier_id) {
+      query += ` WHERE p.supplier_id = ?`;
+      params.push(supplier_id);
+    }
+    query += ` ORDER BY p.purchase_date DESC`;
+    const [rows]: any = await pool.query(query, params);
     res.json({ success: true, data: rows });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

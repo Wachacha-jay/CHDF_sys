@@ -69,6 +69,15 @@ const PointOfSale: React.FC = () => {
     clearCart
   } = useCart();
 
+  const configuredTaxRate = Number(settings?.tax_rate || 0);
+  const effectiveTaxRate = posMode === 'retail' 
+    ? (configuredTaxRate > 1 ? configuredTaxRate / 100 : Math.max(0, configuredTaxRate)) 
+    : 0;
+  const taxPercentDisplay = (effectiveTaxRate * 100).toFixed((effectiveTaxRate * 100) % 1 === 0 ? 0 : 1);
+  const cartSubtotal = getTotal();
+  const cartTax = posMode === 'retail' ? Math.round(cartSubtotal * effectiveTaxRate * 100) / 100 : 0;
+  const cartGrandTotal = cartSubtotal + cartTax;
+
   useEffect(() => {
     loadProducts();
     loadCustomers();
@@ -281,6 +290,9 @@ const PointOfSale: React.FC = () => {
     try {
       setLoading(true);
       const selectedCustomer = customers.find(c => c.id === customerId);
+      const subtotal = cartSubtotal;
+      const taxAmount = cartTax;
+      const totalAmount = cartGrandTotal;
       
       const saleData = {
         sale_date: new Date().toISOString().split('T')[0],
@@ -294,6 +306,10 @@ const PointOfSale: React.FC = () => {
           quantity: item.quantity,
           unit_price: item.unitPrice
         })),
+        subtotal,
+        tax_rate: effectiveTaxRate,
+        tax_amount: taxAmount,
+        total_amount: totalAmount,
         ...dimensions
       };
 
@@ -316,7 +332,7 @@ const PointOfSale: React.FC = () => {
             </div>
           ), { duration: 5000 });
         } else {
-          const receipt = generateReceipt(response.sale_number, customerName, cart, getTotal(), paymentMethod);
+          const receipt = generateReceipt(response.sale_number, customerName, cart, totalAmount, paymentMethod);
           setCurrentReceipt(receipt);
           setShowReceipt(true);
           toast.success('Sale completed successfully!');
@@ -652,6 +668,23 @@ const PointOfSale: React.FC = () => {
 
         {/* Fixed Checkout Footer */}
         <div className="p-4 sm:p-5 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+          {posMode === 'retail' && (
+            <div className="space-y-1 mb-3 text-xs border-b border-gray-100 dark:border-slate-800 pb-2">
+              <div className="flex justify-between text-gray-500 dark:text-slate-400">
+                <span>Subtotal</span>
+                <span className="font-semibold text-gray-700 dark:text-slate-200">
+                  KSh {cartSubtotal.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex justify-between text-gray-500 dark:text-slate-400">
+                <span>Tax / VAT ({taxPercentDisplay}%)</span>
+                <span className="font-semibold text-gray-700 dark:text-slate-200">
+                  KSh {cartTax.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-baseline mb-4">
             <span className="text-xs font-black text-gray-400 dark:text-slate-500 uppercase tracking-widest">
               {posMode === 'distribution' ? 'Total Valuation' : 'Grand Total'}
@@ -659,7 +692,7 @@ const PointOfSale: React.FC = () => {
             <span className={`text-2xl sm:text-3xl font-black ${
               posMode === 'distribution' ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'
             }`}>
-              KSh {getTotal().toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              KSh {(posMode === 'distribution' ? cartSubtotal : cartGrandTotal).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
 

@@ -15,7 +15,7 @@ interface PayrollPeriodsProps {
 }
 
 const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
-  periods,
+  periods = [],
   onCreatePeriod,
   onUpdatePeriod,
   onDeletePeriod,
@@ -24,7 +24,29 @@ const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
   onSelectPeriod,
   selectedPeriod
 }) => {
-  const { currency } = useSettingsContext();
+  const { settings } = useSettingsContext();
+  const curr = settings?.default_currency || 'KES';
+
+  const formatDateSafe = (dateStr?: string | null) => {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+    } catch {
+      return '-';
+    }
+  };
+
+  const toInputDate = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+    } catch {
+      return '';
+    }
+  };
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingPeriod, setEditingPeriod] = useState<PayrollPeriod | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -68,9 +90,9 @@ const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
     setEditingPeriod(period);
     setEditFormData({
       period_name: period.period_name,
-      start_date: period.start_date ? new Date(period.start_date).toISOString().split('T')[0] : '',
-      end_date: period.end_date ? new Date(period.end_date).toISOString().split('T')[0] : '',
-      pay_date: period.pay_date ? new Date(period.pay_date).toISOString().split('T')[0] : '',
+      start_date: toInputDate(period.start_date),
+      end_date: toInputDate(period.end_date),
+      pay_date: toInputDate(period.pay_date),
       status: period.status
     });
   };
@@ -158,46 +180,47 @@ const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
 
       {/* Periods List */}
       <div className="space-y-4">
-        {periods.map((period) => (
-          <div
-            key={period.id}
-            className={`border rounded-xl p-4 cursor-pointer transition-all ${
-              selectedPeriod?.id === period.id
-                ? 'border-blue-500 bg-blue-50/50 shadow-sm ring-1 ring-blue-500'
-                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50/40'
-            }`}
-            onClick={() => onSelectPeriod(period)}
-          >
-            <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-              <div className="flex-1">
-                <div className="flex items-center space-x-3 mb-2">
-                  <Calendar className="h-5 w-5 text-gray-400" />
-                  <h3 className="text-lg font-bold text-gray-900">{period.period_name}</h3>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full ${getStatusColor(period.status)}`}>
-                    {getStatusIcon(period.status)}
-                    <span className="ml-1 capitalize">{period.status}</span>
-                  </span>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
-                  <div>
-                    <span className="font-medium text-gray-500">Period:</span> {new Date(period.start_date).toLocaleDateString()} - {new Date(period.end_date).toLocaleDateString()}
+        {Array.isArray(periods) && periods.length > 0 ? (
+          periods.map((period) => (
+            <div
+              key={period.id}
+              className={`border rounded-xl p-4 cursor-pointer transition-all ${
+                selectedPeriod?.id === period.id
+                  ? 'border-blue-500 bg-blue-50/50 shadow-sm ring-1 ring-blue-500'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50/40'
+              }`}
+              onClick={() => onSelectPeriod(period)}
+            >
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <Calendar className="h-5 w-5 text-gray-400" />
+                    <h3 className="text-lg font-bold text-gray-900">{period.period_name}</h3>
+                    <span className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full ${getStatusColor(period.status)}`}>
+                      {getStatusIcon(period.status)}
+                      <span className="ml-1 capitalize">{period.status}</span>
+                    </span>
                   </div>
-                  <div>
-                    <span className="font-medium text-gray-500">Pay Date:</span> {new Date(period.pay_date).toLocaleDateString()}
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center">
-                      <DollarSign className="h-4 w-4 mr-1 text-emerald-600" />
-                      <span className="font-semibold text-gray-800">Gross: {curr} {Number(period.total_gross_pay || 0).toLocaleString()}</span>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                    <div>
+                      <span className="font-medium text-gray-500">Period:</span> {formatDateSafe(period.start_date)} - {formatDateSafe(period.end_date)}
                     </div>
-                    <div className="flex items-center">
-                      <Users className="h-4 w-4 mr-1 text-blue-600" />
-                      <span className="font-semibold text-gray-800">Net: {curr} {Number(period.total_net_pay || 0).toLocaleString()}</span>
+                    <div>
+                      <span className="font-medium text-gray-500">Pay Date:</span> {formatDateSafe(period.pay_date)}
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center">
+                        <DollarSign className="h-4 w-4 mr-1 text-emerald-600" />
+                        <span className="font-semibold text-gray-800">Gross: {curr} {Number(period.total_gross_pay || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center">
+                        <Users className="h-4 w-4 mr-1 text-blue-600" />
+                        <span className="font-semibold text-gray-800">Net: {curr} {Number(period.total_net_pay || 0).toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
               {/* Action Buttons */}
               <div className="flex items-center gap-2 self-end sm:self-center" onClick={(e) => e.stopPropagation()}>

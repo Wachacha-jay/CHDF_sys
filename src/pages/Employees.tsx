@@ -103,7 +103,8 @@ const Employees: React.FC = () => {
     clearAllPayrollRuns
   } = usePayroll();
 
-  const isEmployeeActive = (emp: Employee) => {
+  const isEmployeeActive = (emp?: Employee | null) => {
+    if (!emp) return false;
     return Boolean(emp.is_active === true || (emp.is_active as any) === 1 || (emp.is_active as any) === '1');
   };
 

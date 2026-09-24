@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Truck, Mail, Phone, MapPin } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Truck, Mail, Phone, MapPin, Printer, FileText } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { ApiService } from '../services/api';
 import { SupplierService } from '../services/supplierService';
 import type { Supplier, Purchase } from '../types';
-import { FileText } from 'lucide-react';
 import { useSettingsContext } from '../contexts/SettingsContext';
 
 const Suppliers: React.FC = () => {
@@ -161,13 +160,152 @@ const Suppliers: React.FC = () => {
         filters: { supplier_id: supplier.id }
       });
       if (response.success) {
-        setSupplierOrders(response.data || []);
+        // Enforce strict filtering by supplier.id
+        const filtered = (response.data || []).filter(p => p.supplier_id === supplier.id);
+        setSupplierOrders(filtered);
       }
     } catch (error) {
       toast.error('Failed to load supplier orders');
     } finally {
       setLoadingOrders(false);
     }
+  };
+
+  const handlePrintStatement = () => {
+    if (!selectedSupplier) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Please allow popups to print statement');
+      return;
+    }
+
+    const totalOrdersAmount = supplierOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+    const totalPaidAmount = supplierOrders.reduce((sum, o) => sum + Number(o.paid_amount || 0), 0);
+    const totalBalanceDue = Math.max(0, totalOrdersAmount - totalPaidAmount);
+    const bName = settings?.business_name || 'Organization';
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Supplier Statement - ${selectedSupplier.name}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; color: #1e293b; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; }
+          .title { font-size: 24px; font-weight: bold; color: #0f172a; text-transform: uppercase; }
+          .subtitle { color: #64748b; font-size: 14px; margin-top: 4px; }
+          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+          .info-card { background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; }
+          .info-card h4 { margin: 0 0 10px 0; font-size: 13px; text-transform: uppercase; color: #64748b; }
+          .info-card p { margin: 4px 0; font-size: 14px; }
+          .summary-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 30px; }
+          .summary-card { padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center; }
+          .summary-card .label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600; }
+          .summary-card .val { font-size: 20px; font-weight: bold; margin-top: 6px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px; }
+          th { background: #f1f5f9; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #cbd5e1; }
+          td { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+          .text-right { text-align: right; }
+          .status { display: inline-block; padding: 3px 8px; border-radius: 9999px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+          .status-paid { background: #dcfce7; color: #15803d; }
+          .status-partial { background: #fef9c3; color: #a16207; }
+          .status-pending { background: #fee2e2; color: #b91c1c; }
+          .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 12px; }
+          @media print { body { margin: 20px; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">Supplier Account Statement</div>
+            <div class="subtitle">${bName}</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 13px; color: #64748b;">Date Generated: ${new Date().toLocaleDateString()}</div>
+          </div>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-card">
+            <h4>Supplier Details</h4>
+            <p><strong>Name:</strong> ${selectedSupplier.name}</p>
+            <p><strong>Code:</strong> ${selectedSupplier.code || '-'}</p>
+            <p><strong>Contact Person:</strong> ${selectedSupplier.contact_person || '-'}</p>
+            <p><strong>Phone:</strong> ${selectedSupplier.phone || '-'}</p>
+            <p><strong>Email:</strong> ${selectedSupplier.email || '-'}</p>
+            ${selectedSupplier.address ? `<p><strong>Address:</strong> ${selectedSupplier.address}</p>` : ''}
+          </div>
+          <div class="info-card">
+            <h4>Payment & Banking Details</h4>
+            <p><strong>Bank Name:</strong> ${selectedSupplier.bank_name || '-'}</p>
+            <p><strong>Account Number:</strong> ${selectedSupplier.account_number || '-'}</p>
+            <p><strong>Organization:</strong> ${selectedSupplier.organization_name || '-'}</p>
+          </div>
+        </div>
+
+        <div class="summary-cards">
+          <div class="summary-card" style="background: #f8fafc;">
+            <div class="label">Total Invoiced</div>
+            <div class="val" style="color: #0f172a;">${currency} ${totalOrdersAmount.toLocaleString()}</div>
+          </div>
+          <div class="summary-card" style="background: #f0fdf4;">
+            <div class="label" style="color: #15803d;">Total Paid</div>
+            <div class="val" style="color: #15803d;">${currency} ${totalPaidAmount.toLocaleString()}</div>
+          </div>
+          <div class="summary-card" style="background: ${totalBalanceDue > 0 ? '#fff1f2' : '#f8fafc'};">
+            <div class="label" style="color: ${totalBalanceDue > 0 ? '#be123c' : '#64748b'};">Balance Due</div>
+            <div class="val" style="color: ${totalBalanceDue > 0 ? '#be123c' : '#0f172a'};">${currency} ${totalBalanceDue.toLocaleString()}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Order / Purchase #</th>
+              <th>Date</th>
+              <th class="text-right">Total Amount</th>
+              <th class="text-right">Paid Amount</th>
+              <th class="text-right">Balance Due</th>
+              <th style="text-align: center;">Payment Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${supplierOrders.length === 0 ? '<tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 20px;">No orders found for this supplier.</td></tr>' : ''}
+            ${supplierOrders.map(order => {
+              const bal = Math.max(0, Number(order.total_amount || 0) - Number(order.paid_amount || 0));
+              const statusClass = order.payment_status === 'paid' ? 'status-paid' : order.payment_status === 'partial' ? 'status-partial' : 'status-pending';
+              return `
+                <tr>
+                  <td><strong>${order.purchase_number}</strong></td>
+                  <td>${new Date(order.purchase_date).toLocaleDateString()}</td>
+                  <td class="text-right">${currency} ${Number(order.total_amount || 0).toLocaleString()}</td>
+                  <td class="text-right">${currency} ${Number(order.paid_amount || 0).toLocaleString()}</td>
+                  <td class="text-right"><strong>${currency} ${bal.toLocaleString()}</strong></td>
+                  <td style="text-align: center;"><span class="status ${statusClass}">${order.payment_status}</span></td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="font-weight: bold; background: #f8fafc; border-top: 2px solid #cbd5e1;">
+              <td colspan="2">Summary Totals</td>
+              <td class="text-right">${currency} ${totalOrdersAmount.toLocaleString()}</td>
+              <td class="text-right">${currency} ${totalPaidAmount.toLocaleString()}</td>
+              <td class="text-right">${currency} ${totalBalanceDue.toLocaleString()}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div class="footer">
+          <p>Generated by ${bName} · Official Supplier Statement · ${new Date().toLocaleDateString()}</p>
+        </div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 300);
   };
 
   return (
@@ -478,44 +616,69 @@ const Suppliers: React.FC = () => {
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
                 </div>
               ) : supplierOrders.length > 0 ? (
-                <div className="overflow-x-auto w-full">
-                  <table className="w-full text-sm text-left min-w-[700px]">
-                    <thead className="bg-gray-50 text-gray-500 border-b border-gray-100">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">Order Number</th>
-                        <th className="px-4 py-3 font-semibold">Date</th>
-                        <th className="px-4 py-3 font-semibold">Total Amount</th>
-                        <th className="px-4 py-3 font-semibold">Paid Amount</th>
-                        <th className="px-4 py-3 font-semibold">Balance</th>
-                        <th className="px-4 py-3 font-semibold">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {supplierOrders.map((order) => {
-                        const balance = order.total_amount - order.paid_amount;
-                        const statusColors = {
-                          paid: 'bg-green-100 text-green-700',
-                          partial: 'bg-yellow-100 text-yellow-700',
-                          pending: 'bg-red-100 text-red-700',
-                          overdue: 'bg-red-200 text-red-800'
-                        };
-                        return (
-                          <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 font-medium text-gray-900">{order.purchase_number}</td>
-                            <td className="px-4 py-3 text-gray-600">{new Date(order.purchase_date).toLocaleDateString()}</td>
-                            <td className="px-4 py-3 font-medium text-gray-900">{currency} {order.total_amount.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-600">{currency} {order.paid_amount.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-900">{currency} {balance.toLocaleString()}</td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusColors[order.payment_status] || 'bg-gray-100 text-gray-700'}`}>
-                                {order.payment_status}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div>
+                  {/* Summary Cards */}
+                  {(() => {
+                    const totalInvoiced = supplierOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+                    const totalPaid = supplierOrders.reduce((sum, o) => sum + (Number(o.paid_amount) || 0), 0);
+                    const totalBalance = totalInvoiced - totalPaid;
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                          <div className="text-xs font-semibold uppercase text-slate-500">Total Invoiced</div>
+                          <div className="text-lg font-bold text-slate-900">{currency} {totalInvoiced.toLocaleString()}</div>
+                        </div>
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                          <div className="text-xs font-semibold uppercase text-emerald-700">Total Paid</div>
+                          <div className="text-lg font-bold text-emerald-900">{currency} {totalPaid.toLocaleString()}</div>
+                        </div>
+                        <div className={`border rounded-lg p-3 ${totalBalance > 0 ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`text-xs font-semibold uppercase ${totalBalance > 0 ? 'text-amber-700' : 'text-slate-500'}`}>Balance Due</div>
+                          <div className={`text-lg font-bold ${totalBalance > 0 ? 'text-amber-900' : 'text-slate-900'}`}>{currency} {totalBalance.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="overflow-x-auto w-full">
+                    <table className="w-full text-sm text-left min-w-[700px]">
+                      <thead className="bg-gray-50 text-gray-500 border-b border-gray-100">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold">Order Number</th>
+                          <th className="px-4 py-3 font-semibold">Date</th>
+                          <th className="px-4 py-3 font-semibold">Total Amount</th>
+                          <th className="px-4 py-3 font-semibold">Paid Amount</th>
+                          <th className="px-4 py-3 font-semibold">Balance</th>
+                          <th className="px-4 py-3 font-semibold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {supplierOrders.map((order) => {
+                          const balance = Number(order.total_amount || 0) - Number(order.paid_amount || 0);
+                          const statusColors = {
+                            paid: 'bg-green-100 text-green-700',
+                            partial: 'bg-yellow-100 text-yellow-700',
+                            pending: 'bg-red-100 text-red-700',
+                            overdue: 'bg-red-200 text-red-800'
+                          };
+                          return (
+                            <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-3 font-medium text-gray-900">{order.purchase_number}</td>
+                              <td className="px-4 py-3 text-gray-600">{order.purchase_date ? new Date(order.purchase_date).toLocaleDateString() : '-'}</td>
+                              <td className="px-4 py-3 font-medium text-gray-900">{currency} {Number(order.total_amount || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-gray-600">{currency} {Number(order.paid_amount || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-gray-900">{currency} {balance.toLocaleString()}</td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded-full text-xs font-bold uppercase ${statusColors[order.payment_status] || 'bg-gray-100 text-gray-700'}`}>
+                                  {order.payment_status}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : (
                 <div className="text-center py-12">
@@ -525,10 +688,19 @@ const Suppliers: React.FC = () => {
               )}
             </div>
             
-            <div className="p-4 border-t border-gray-100 bg-gray-50 text-right">
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={handlePrintStatement}
+                disabled={supplierOrders.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Printer className="w-4 h-4" />
+                Print Statement
+              </button>
               <button
                 onClick={() => setShowOrdersModal(false)}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
               >
                 Close
               </button>
