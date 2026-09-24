@@ -692,7 +692,7 @@ export interface InternalTransfer {
   amount: number;
   transfer_date: string;
   description: string;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'draft' | 'pending' | 'approved' | 'rejected';
   transfer_type?: 'direct_transfer' | 'internal_loan' | 'loan_repayment';
   approved_by?: string;
   created_by?: string;

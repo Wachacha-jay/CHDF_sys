@@ -662,9 +662,19 @@ export class FundAccountingService {
 
   // Internal Transfers & Loans
   static async recordTransfer(transfer: Partial<InternalTransfer>): Promise<InternalTransfer | null> {
-    const payload = { ...transfer, status: 'pending' };
+    const payload = { status: 'pending', ...transfer };
     const response = await ApiService.create<InternalTransfer>('internal_transfers', payload);
     return response.success ? response.data : null;
+  }
+
+  static async updateTransfer(id: string, transfer: Partial<InternalTransfer>): Promise<InternalTransfer | null> {
+    const response = await ApiService.update<InternalTransfer>('internal_transfers', id, transfer);
+    return response.success ? response.data : null;
+  }
+
+  static async deleteTransfer(id: string): Promise<boolean> {
+    const response = await ApiService.delete('internal_transfers', id);
+    return response.success;
   }
 
   static async approveTransfer(transferId: string, approverId: string): Promise<{ success: boolean; error?: string }> {

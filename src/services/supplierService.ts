@@ -215,7 +215,7 @@ export class SupplierService {
   }
 
   // Payment operations for purchases
-  static async recordPurchasePayment(purchaseId: string, amount: number, method: string = 'bank', date?: string): Promise<boolean> {
+  static async recordPurchasePayment(purchaseId: string, amount: number, method: string = 'bank', date?: string, accountId?: string): Promise<boolean> {
     try {
       const purchase = await this.getPurchaseById(purchaseId);
       if (!purchase) return false;
@@ -240,7 +240,7 @@ export class SupplierService {
       });
 
       if (updateResponse) {
-        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date);
+        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date, accountId);
       }
 
       return !!updateResponse;

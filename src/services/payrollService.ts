@@ -62,6 +62,36 @@ export class PayrollService {
     }
   }
 
+  static async updatePayrollPeriod(id: string, data: Partial<PayrollPeriod>): Promise<PayrollPeriod | null> {
+    try {
+      const response = await apiClient.put<any>(`/payroll/periods/${id}`, data);
+      return response.data || response;
+    } catch (error) {
+      console.error('Error updating payroll period:', error);
+      return null;
+    }
+  }
+
+  static async deletePayrollPeriod(id: string): Promise<boolean> {
+    try {
+      await apiClient.delete(`/payroll/periods/${id}`);
+      return true;
+    } catch (error) {
+      console.error('Error deleting payroll period:', error);
+      return false;
+    }
+  }
+
+  static async refreshPayrollPeriod(id: string): Promise<PayrollPeriod | null> {
+    try {
+      const response = await apiClient.post<any>(`/payroll/periods/${id}/refresh`, {});
+      return response.data || response;
+    } catch (error) {
+      console.error('Error refreshing payroll period:', error);
+      return null;
+    }
+  }
+
   /**
    * Close a payroll period via the dedicated backend route
    * which also posts the consolidated journal entry.

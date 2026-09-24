@@ -25,7 +25,7 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     const [purchases]: any = await pool.query(
-      `SELECT p.*, s.name as supplier_name 
+      `SELECT p.*, s.name as supplier_name, s.code as supplier_code, s.email as supplier_email, s.phone as supplier_phone, s.address as supplier_address 
        FROM purchases p 
        LEFT JOIN suppliers s ON p.supplier_id = s.id 
        WHERE p.id = ?`,
@@ -36,13 +36,33 @@ router.get('/:id', authenticate, async (req, res) => {
       return;
     }
     const [items]: any = await pool.query(
-      `SELECT pi.*, pr.name as product_name 
+      `SELECT pi.*, pr.name as product_name, pr.sku as product_sku 
        FROM purchase_items pi 
        LEFT JOIN products pr ON pi.product_id = pr.id 
        WHERE pi.purchase_id = ?`,
       [id]
     );
-    res.json({ success: true, data: { ...purchases[0], items } });
+    const p = purchases[0];
+    const formattedData = {
+      ...p,
+      supplier: p.supplier_id ? {
+        id: p.supplier_id,
+        name: p.supplier_name,
+        code: p.supplier_code,
+        email: p.supplier_email,
+        phone: p.supplier_phone,
+        address: p.supplier_address
+      } : null,
+      items: items.map((item: any) => ({
+        ...item,
+        product: item.product_id ? {
+          id: item.product_id,
+          name: item.product_name,
+          sku: item.product_sku
+        } : null
+      }))
+    };
+    res.json({ success: true, data: formattedData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

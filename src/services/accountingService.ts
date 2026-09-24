@@ -493,26 +493,28 @@ export class AccountingService {
   static async getUnreconciledLines(accountId: string, asOfDate?: string): Promise<JournalEntryLine[]> {
     const response = await ApiService.get<JournalEntryLine>('journal_entry_lines', {
       filters: { 
-        account_id: accountId,
-        is_reconciled: 0
+        account_id: accountId
       },
       orderBy: { column: 'created_at', ascending: true }
     });
 
     if (response.success && response.data) {
-      let lines = response.data;
-      // Fetch all journal entries to check dates (not ideal but works with generic CRUD)
+      const lines = response.data;
+      // Fetch all journal entries to check dates
       const entries = await this.getJournalEntries();
       const entryMap = new Map(entries.map(e => [e.id, e]));
       
-      const filtered = lines.map(line => ({
-        ...line,
-        journal_entry: entryMap.get(line.journal_entry_id)
-      })).filter(line => {
-        if (!asOfDate) return true;
-        const entry = entryMap.get(line.journal_entry_id);
-        return entry && entry.entry_date <= asOfDate;
-      });
+      const filtered = lines
+        .filter(line => !line.is_reconciled || line.is_reconciled === 0 || (line.is_reconciled as any) === '0' || (line.is_reconciled as any) === false)
+        .map(line => ({
+          ...line,
+          journal_entry: entryMap.get(line.journal_entry_id)
+        })).filter(line => {
+          if (!asOfDate) return true;
+          const entry = entryMap.get(line.journal_entry_id);
+          const lineDate = entry?.entry_date || (line.created_at ? line.created_at.split('T')[0] : '');
+          return !lineDate || lineDate <= asOfDate;
+        });
 
       return filtered;
     }
@@ -538,9 +540,12 @@ export class AccountingService {
     return balance;
   }
 
-  static async finalizeReconciliation(reconciliationId: string, lineIds: string[]): Promise<boolean> {
+  static async finalizeReconciliation(reconciliationId: string, lineIds: string[], finalDifference: number = 0): Promise<boolean> {
     try {
-      await this.updateBankReconciliation(reconciliationId, { status: 'completed' });
+      await this.updateBankReconciliation(reconciliationId, { 
+        status: 'completed',
+        difference: finalDifference
+      });
       for (const id of lineIds) {
         await ApiService.update('journal_entry_lines', id, {
           is_reconciled: true,

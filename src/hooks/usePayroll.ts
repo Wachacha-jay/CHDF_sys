@@ -99,6 +99,65 @@ export const usePayroll = () => {
     }
   }, [loadPayrollPeriods]);
 
+  const updatePayrollPeriod = useCallback(async (periodId: string, data: Partial<PayrollPeriod>) => {
+    try {
+      setLoading(true);
+      const updated = await PayrollService.updatePayrollPeriod(periodId, data);
+      if (updated) {
+        toast.success('Payroll period updated');
+        await loadPayrollPeriods();
+        return updated;
+      }
+      toast.error('Failed to update payroll period');
+      return null;
+    } catch {
+      toast.error('Failed to update payroll period');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollPeriods]);
+
+  const deletePayrollPeriod = useCallback(async (periodId: string) => {
+    try {
+      setLoading(true);
+      const success = await PayrollService.deletePayrollPeriod(periodId);
+      if (success) {
+        toast.success('Payroll period deleted');
+        await loadPayrollPeriods();
+        setCurrentPeriod(prev => prev?.id === periodId ? null : prev);
+        return true;
+      }
+      toast.error('Failed to delete payroll period');
+      return false;
+    } catch {
+      toast.error('Failed to delete payroll period');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollPeriods]);
+
+  const refreshPayrollPeriod = useCallback(async (periodId: string) => {
+    try {
+      setLoading(true);
+      const refreshed = await PayrollService.refreshPayrollPeriod(periodId);
+      if (refreshed) {
+        toast.success('Payroll period totals refreshed ✓');
+        await loadPayrollPeriods();
+        await loadPayrollRuns(periodId);
+        return refreshed;
+      }
+      toast.error('Failed to refresh payroll period');
+      return null;
+    } catch {
+      toast.error('Failed to refresh payroll period');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollPeriods, loadPayrollRuns]);
+
   // ─── Runs ─────────────────────────────────────────────────────────────────
   const loadPayrollRuns = useCallback(async (periodId?: string) => {
     try {
@@ -245,6 +304,9 @@ export const usePayroll = () => {
     updatePayrollSettings,
     loadPayrollPeriods,
     createPayrollPeriod,
+    updatePayrollPeriod,
+    deletePayrollPeriod,
+    refreshPayrollPeriod,
     closePayrollPeriod,
     loadPayrollRuns,
     generatePayrollForPeriod,

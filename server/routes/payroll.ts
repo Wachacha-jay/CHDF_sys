@@ -920,6 +920,138 @@ router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> =
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 8B. UPDATE a payroll period (edit dates, name, status)
+// ─────────────────────────────────────────────────────────────────────────────
+router.put('/periods/:id', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const { id: periodId } = req.params;
+  const { period_name, start_date, end_date, pay_date, status } = req.body;
+
+  try {
+    const fields: string[] = [];
+    const values: any[] = [];
+    if (period_name !== undefined) { fields.push('period_name = ?'); values.push(period_name); }
+    if (start_date !== undefined) { fields.push('start_date = ?'); values.push(start_date); }
+    if (end_date !== undefined) { fields.push('end_date = ?'); values.push(end_date); }
+    if (pay_date !== undefined) { fields.push('pay_date = ?'); values.push(pay_date); }
+    if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+
+    if (fields.length === 0) {
+      res.status(400).json({ success: false, error: 'No fields provided for update' });
+      return;
+    }
+    values.push(periodId);
+    await pool.query(`UPDATE payroll_periods SET ${fields.join(', ')} WHERE id = ?`, values);
+    const [updated]: any = await pool.query('SELECT * FROM payroll_periods WHERE id = ?', [periodId]);
+    if (updated.length === 0) {
+      res.status(404).json({ success: false, error: 'Payroll period not found' });
+      return;
+    }
+    res.json({ success: true, message: 'Payroll period updated', data: updated[0] });
+  } catch (error: any) {
+    console.error('Error updating payroll period:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8C. DELETE a payroll period (and associated runs)
+// ─────────────────────────────────────────────────────────────────────────────
+router.delete('/periods/:id', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const { id: periodId } = req.params;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Check if period exists
+    const [existing]: any = await connection.query('SELECT * FROM payroll_periods WHERE id = ?', [periodId]);
+    if (existing.length === 0) {
+      await connection.rollback();
+      res.status(404).json({ success: false, error: 'Payroll period not found' });
+      return;
+    }
+
+    // 1. Delete allowances and deductions for runs linked to this period
+    await connection.query(`
+      DELETE FROM payroll_allowances WHERE payroll_run_id IN (
+        SELECT id FROM payroll_runs WHERE payroll_period_id = ?
+      )
+    `, [periodId]);
+
+    await connection.query(`
+      DELETE FROM payroll_deductions WHERE payroll_run_id IN (
+        SELECT id FROM payroll_runs WHERE payroll_period_id = ?
+      )
+    `, [periodId]);
+
+    // 2. Delete payroll runs
+    await connection.query('DELETE FROM payroll_runs WHERE payroll_period_id = ?', [periodId]);
+
+    // 3. Delete payroll journal entries linked to period if any
+    try {
+      await connection.query('DELETE FROM payroll_journal_entries WHERE payroll_period_id = ?', [periodId]);
+    } catch (_) {}
+
+    // 4. Delete the payroll period
+    await connection.query('DELETE FROM payroll_periods WHERE id = ?', [periodId]);
+
+    await connection.commit();
+    res.json({ success: true, message: 'Payroll period deleted successfully' });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error('Error deleting payroll period:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8D. REFRESH / RECALCULATE a payroll period totals from runs
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/periods/:id/refresh', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const { id: periodId } = req.params;
+  try {
+    const [runsRows]: any = await pool.query(
+      'SELECT * FROM payroll_runs WHERE payroll_period_id = ?', [periodId]
+    );
+
+    const totalGross = runsRows.reduce((s: number, r: any) => s + Number(r.gross_pay || 0), 0);
+    const totalNet = runsRows.reduce((s: number, r: any) => s + Number(r.net_pay || 0), 0);
+    const totalTax = runsRows.reduce((s: number, r: any) => s + Number(r.tax_deduction || 0), 0);
+    const totalNSSF = runsRows.reduce((s: number, r: any) => s + Number(r.nssf_deduction || 0), 0);
+    const totalNHIF = runsRows.reduce((s: number, r: any) => s + Number(r.nhif_deduction || 0), 0);
+    const totalHousingLevy = runsRows.reduce((s: number, r: any) => s + Number(r.housing_levy_deduction || 0), 0);
+    const totalSacco = runsRows.reduce((s: number, r: any) => s + Number(r.sacco_welfare_deduction || 0), 0);
+
+    await pool.query(
+      `UPDATE payroll_periods SET 
+        total_gross_pay = ?, total_net_pay = ?, total_tax = ?,
+        total_nhif = ?, total_nssf = ?, total_housing_levy = ?, total_sacco_welfare = ?
+      WHERE id = ?`,
+      [totalGross, totalNet, totalTax, totalNHIF, totalNSSF, totalHousingLevy, totalSacco, periodId]
+    );
+
+    const [updated]: any = await pool.query('SELECT * FROM payroll_periods WHERE id = ?', [periodId]);
+    if (updated.length === 0) {
+      res.status(404).json({ success: false, error: 'Payroll period not found' });
+      return;
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Payroll period totals recalculated (${runsRows.length} runs aggregated)`, 
+      data: updated[0] 
+    });
+  } catch (error: any) {
+    console.error('Error refreshing payroll period:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 9. GET payslip (single run with employee, period & payment details)
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> => {

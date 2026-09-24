@@ -15,7 +15,9 @@ import {
   DollarSign,
   TrendingDown,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
 import { Account, BankReconciliation as BankReconciliationType, JournalEntryLine } from '../../types';
@@ -57,19 +59,15 @@ const BankReconciliation: React.FC = () => {
       ]);
       setReconciliations(recs);
       
-      // Filter for bank and cash accounts (usually Assets -> Current Assets -> Cash/Bank)
-      const flat = (accs: Account[]): Account[] => {
-        let result: Account[] = [];
-        accs.forEach(acc => {
-          result.push(acc);
-          if (acc.children) result = result.concat(flat(acc.children));
-        });
-        return result;
-      };
-      
-      const bankAccs = flat(allAccounts).filter(acc => 
+      // Filter for bank and cash accounts (Assets -> Cash / Bank / Mpesa)
+      const flatAccounts = AccountingService.flattenAccounts(allAccounts);
+      const bankAccs = flatAccounts.filter(acc => 
         acc.account_type === 'asset' && 
-        (acc.name.toLowerCase().includes('bank') || acc.name.toLowerCase().includes('cash'))
+        (acc.name.toLowerCase().includes('bank') || 
+         acc.name.toLowerCase().includes('cash') || 
+         acc.name.toLowerCase().includes('mpesa') ||
+         acc.code.startsWith('10') ||
+         acc.code.startsWith('111'))
       );
       setBankAccounts(bankAccs);
     } catch (error) {
@@ -87,6 +85,42 @@ const BankReconciliation: React.FC = () => {
     setSelectedLines(new Set());
     setStep(1);
     setShowWizard(true);
+  };
+
+  const handleResumeDraft = async (rec: BankReconciliation) => {
+    try {
+      setLoading(true);
+      setSelectedAccountId(rec.account_id);
+      setStatementDate(rec.statement_date);
+      setStatementBalance(Number(rec.statement_balance || 0));
+      const balance = await AccountingService.getAccountBalanceAsOf(rec.account_id, rec.statement_date);
+      const lines = await AccountingService.getUnreconciledLines(rec.account_id, rec.statement_date);
+      setLedgerBalance(balance);
+      setUnreconciledLines(lines);
+      setCurrentReconciliation(rec);
+      setSelectedLines(new Set());
+      setStep(2);
+      setShowWizard(true);
+    } catch (err) {
+      toast.error('Failed to resume draft reconciliation');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteDraft = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this reconciliation draft?')) return;
+    try {
+      setLoading(true);
+      await AccountingService.deleteBankReconciliation(id);
+      toast.success('Draft deleted');
+      loadInitialData();
+    } catch {
+      toast.error('Failed to delete draft');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleStep1Submit = async (e: React.FormEvent) => {
@@ -133,44 +167,44 @@ const BankReconciliation: React.FC = () => {
   const calculateTotals = () => {
     let clearedDeposits = 0;
     let clearedPayments = 0;
+    let unclearedDeposits = 0;
+    let unclearedPayments = 0;
     
     unreconciledLines.forEach(line => {
+      const debit = Number(line.debit_amount || 0);
+      const credit = Number(line.credit_amount || 0);
       if (selectedLines.has(line.id)) {
-        if (line.debit_amount > 0) clearedDeposits += line.debit_amount;
-        if (line.credit_amount > 0) clearedPayments += line.credit_amount;
+        clearedDeposits += debit;
+        clearedPayments += credit;
+      } else {
+        unclearedDeposits += debit;
+        unclearedPayments += credit;
       }
     });
     
-    // Adjusted balance = Statement Balance - Uncleared Deposits + Uncleared Payments
-    // But usually we compare: Statement Balance vs Book Balance (Ledger Balance)
-    // Book Balance as of Date + Cleared items? No.
-    // Reconciliation is: Statement Balance - Cleared Items = Adjusted Balance should equal Ledger Balance?
-    // Let's use simpler: Total Cleared = Deposits - Payments.
-    // Book Balance + Cleared = Adjusted? No.
-    
-    // Accounting Rule:
-    // Adjusted Bank Balance = Statement Balance + Deposits in Transit - Outstanding Checks
-    // Adjusted Book Balance = Book Balance + Bank Interest/Collections - Bank Fees/NSF Checks
-    
-    // In our case, we are matching what's in the book against the statement.
-    // So "Difference" = Statement Balance - (Ledger Balance + Adjusted Cleared)
-    
+    // Standard GAAP Accounting Bank Reconciliation:
+    // Adjusted Bank Balance = Statement Ending Balance + Uncleared Deposits (Deposits in transit) - Uncleared Payments (Outstanding checks)
+    const adjustedBankBalance = Number(statementBalance || 0) + unclearedDeposits - unclearedPayments;
+    // Difference: Adjusted Bank Balance vs Ledger (Book) Balance
+    const currentDifference = adjustedBankBalance - Number(ledgerBalance || 0);
     const clearedAmount = clearedDeposits - clearedPayments;
-    const currentDifference = statementBalance - (ledgerBalance + clearedAmount);
     
     return {
       clearedDeposits,
       clearedPayments,
       clearedAmount,
+      unclearedDeposits,
+      unclearedPayments,
+      adjustedBankBalance,
       difference: currentDifference
     };
   };
 
-  const { clearedDeposits, clearedPayments, difference } = calculateTotals();
+  const { clearedDeposits, clearedPayments, clearedAmount, adjustedBankBalance, difference } = calculateTotals();
 
   const handleFinalize = async () => {
     if (Math.abs(difference) > 0.01) {
-      if (!window.confirm(`There is a difference of ${difference}. Are you sure you want to finalize this reconciliation?`)) {
+      if (!window.confirm(`There is an unreconciled difference of ${formatCurrency(difference)}. Are you sure you want to finalize this reconciliation?`)) {
         return;
       }
     }
@@ -178,7 +212,7 @@ const BankReconciliation: React.FC = () => {
     try {
       setLoading(true);
       if (currentReconciliation) {
-        await AccountingService.finalizeReconciliation(currentReconciliation.id, Array.from(selectedLines));
+        await AccountingService.finalizeReconciliation(currentReconciliation.id, Array.from(selectedLines), difference);
         toast.success('Reconciliation completed successfully');
         setShowWizard(false);
         loadInitialData();
@@ -311,7 +345,7 @@ const BankReconciliation: React.FC = () => {
 
               <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 group hover:border-blue-200 transition-all">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Book Balance</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Book (Ledger) Balance</p>
                   <History className="w-4 h-4 text-blue-500" />
                 </div>
                 <p className="text-2xl font-black text-gray-900">{formatCurrency(ledgerBalance)}</p>
@@ -320,20 +354,22 @@ const BankReconciliation: React.FC = () => {
 
               <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 group hover:border-indigo-200 transition-all">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Cleared Net</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Adjusted Bank Balance</p>
                   <ArrowRightLeft className="w-4 h-4 text-indigo-500" />
                 </div>
-                <p className={`text-2xl font-black ${(clearedDeposits - clearedPayments) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {formatCurrency(clearedDeposits - clearedPayments)}
+                <p className="text-2xl font-black text-gray-900">
+                  {formatCurrency(adjustedBankBalance)}
                 </p>
-                <div className={`mt-2 h-1 w-12 rounded-full ${(clearedDeposits - clearedPayments) >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+                <p className="text-[10px] text-gray-400 mt-1">Statement + Uncleared In - Uncleared Out</p>
               </div>
 
               <div className={`p-6 rounded-3xl border-2 transition-all duration-500 ${Math.abs(difference) < 0.01 
                 ? 'bg-gradient-to-br from-emerald-500 to-teal-600 border-emerald-600 shadow-xl shadow-emerald-100 text-white' 
                 : 'bg-white border-orange-200 shadow-sm'}`}>
                 <div className="flex items-center justify-between mb-3">
-                  <p className={`text-xs font-bold uppercase tracking-widest ${Math.abs(difference) < 0.01 ? 'text-white/70' : 'text-orange-500'}`}>Discrepancy</p>
+                  <p className={`text-xs font-bold uppercase tracking-widest ${Math.abs(difference) < 0.01 ? 'text-white/70' : 'text-orange-500'}`}>
+                    {Math.abs(difference) < 0.01 ? 'In Balance' : 'Discrepancy'}
+                  </p>
                   {Math.abs(difference) < 0.01 
                     ? <CheckCircle2 className="w-5 h-5 text-white" />
                     : <AlertCircle className="w-5 h-5 text-orange-500 animate-pulse" />
@@ -421,7 +457,9 @@ const BankReconciliation: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-600">
-                          {line.created_at ? format(new Date(line.created_at), 'MMM dd, yyyy') : '-'}
+                          {((line as any).journal_entry?.entry_date || line.created_at) 
+                            ? format(new Date((line as any).journal_entry?.entry_date || line.created_at), 'MMM dd, yyyy') 
+                            : '-'}
                         </td>
                         <td className="px-6 py-4 font-mono text-xs text-gray-500">{(line as any).journal_entry?.entry_number || '-'}</td>
                         <td className="px-6 py-4 text-gray-700 font-medium">{line.description || (line as any).journal_entry?.description}</td>
@@ -583,9 +621,34 @@ const BankReconciliation: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-8 py-5 text-center">
-                        <button className="p-2 text-gray-400 hover:text-green-600 transition-colors bg-white border border-gray-100 rounded-lg shadow-sm">
+                      <div className="flex items-center justify-center gap-2">
+                        {rec.status === 'draft' ? (
+                          <>
+                            <button 
+                              onClick={() => handleResumeDraft(rec)}
+                              title="Resume matching draft"
+                              className="px-3 py-1 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-bold transition-colors border border-green-200"
+                            >
+                              Resume
+                            </button>
+                            <button 
+                              onClick={(e) => handleDeleteDraft(rec.id, e)}
+                              title="Delete draft reconciliation"
+                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-gray-100"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <button 
+                            onClick={() => handleResumeDraft(rec)}
+                            title="View completed reconciliation"
+                            className="p-1.5 text-gray-400 hover:text-green-600 transition-colors bg-white border border-gray-100 rounded-lg shadow-sm"
+                          >
                             <ChevronRight className="w-4 h-4" />
-                        </button>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

@@ -91,6 +91,9 @@ const Employees: React.FC = () => {
     updatePayrollSettings,
     loadPayrollPeriods,
     createPayrollPeriod,
+    updatePayrollPeriod,
+    deletePayrollPeriod,
+    refreshPayrollPeriod,
     closePayrollPeriod,
     loadPayrollRuns,
     generatePayrollForPeriod,
@@ -797,6 +800,9 @@ const Employees: React.FC = () => {
           <PayrollPeriods
             periods={payrollPeriods}
             onCreatePeriod={createPayrollPeriod}
+            onUpdatePeriod={updatePayrollPeriod}
+            onDeletePeriod={deletePayrollPeriod}
+            onRefreshPeriod={refreshPayrollPeriod}
             onClosePeriod={closePayrollPeriod}
             onSelectPeriod={handleSelectPeriod}
             selectedPeriod={currentPeriod}

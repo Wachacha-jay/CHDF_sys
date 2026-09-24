@@ -227,17 +227,18 @@ export class DoubleEntryService {
    */
   static async postPurchase(purchase: Purchase): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
-      };
-      return flatten(accounts).find(a => a.code === code);
+    const flatten = (accs: any[]): any[] => {
+      return accs.reduce((prev, curr) => {
+        return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
+      }, []);
     };
+    const flat = flatten(accounts);
+    const findAccount = (code: string) => flat.find(a => a.code === code);
 
-    const apAccount = findAccount('2110'); // Accounts Payable
-    const inventoryAccount = findAccount('1130'); // Inventory
+    const apAccount = findAccount('2000') || findAccount('2110') || findAccount('2100') ||
+      flat.find(a => a.account_type === 'liability' && /payable/i.test(a.name));
+    const inventoryAccount = findAccount('1200') || findAccount('1130') ||
+      flat.find(a => a.account_type === 'asset' && /inventory/i.test(a.name));
 
     if (!apAccount || !inventoryAccount) {
       console.error('Required accounts not found for purchase posting');
@@ -273,25 +274,29 @@ export class DoubleEntryService {
   /**
    * Post a payment to supplier
    */
-  static async postSupplierPayment(purchase: Purchase, amount: number, method: string = 'bank', date?: string): Promise<void> {
+  static async postSupplierPayment(purchase: Purchase, amount: number, method: string = 'bank', date?: string, accountId?: string): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
-      };
-      return flatten(accounts).find(a => a.code === code);
+    const flatten = (accs: any[]): any[] => {
+      return accs.reduce((prev, curr) => {
+        return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
+      }, []);
     };
+    const flat = flatten(accounts);
+    const findAccount = (code: string) => flat.find(a => a.code === code);
 
-    const apAccount = findAccount('2110'); // Accounts Payable
-    const cashAccount = findAccount('1110'); // Cash
-    const mpesaAccount = findAccount('1111'); // Bank - Mpesa/Card
+    const apAccount = findAccount('2000') || findAccount('2110') || findAccount('2100') ||
+      flat.find(a => a.account_type === 'liability' && /payable/i.test(a.name));
 
-    // Select credit account based on method
-    let creditAccount = mpesaAccount;
-    if (method === 'cash') creditAccount = cashAccount;
-    else if (!creditAccount) creditAccount = cashAccount;
+    let creditAccount = accountId ? flat.find(a => a.id === accountId) : null;
+    if (!creditAccount) {
+      const cashAccount = findAccount('1000') || findAccount('1110') ||
+        flat.find(a => a.account_type === 'asset' && /cash/i.test(a.name));
+      const mpesaAccount = findAccount('1111') || findAccount('1050') ||
+        flat.find(a => a.account_type === 'asset' && (/bank/i.test(a.name) || /mpesa/i.test(a.name)));
+
+      if (method === 'cash') creditAccount = cashAccount || mpesaAccount;
+      else creditAccount = mpesaAccount || cashAccount;
+    }
 
     if (!apAccount || !creditAccount) {
       console.error('Required accounts not found for supplier payment posting');
