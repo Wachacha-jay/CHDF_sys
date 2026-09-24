@@ -160,8 +160,6 @@ const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
     }
   };
 
-  const curr = currency || 'KES';
-
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex justify-between items-center mb-6">
@@ -280,16 +278,15 @@ const PayrollPeriods: React.FC<PayrollPeriodsProps> = ({
               </div>
             </div>
           </div>
-        ))}
-
-        {periods.length === 0 && (
-          <div className="text-center py-8">
-            <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No payroll periods</h3>
-            <p className="text-gray-500">Create your first payroll period to get started.</p>
-          </div>
-        )}
-      </div>
+        ))
+      ) : (
+        <div className="text-center py-8">
+          <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No payroll periods</h3>
+          <p className="text-gray-500">Create your first payroll period to get started.</p>
+        </div>
+      )}
+    </div>
 
       {/* Create Period Modal */}
       {showCreateModal && (
