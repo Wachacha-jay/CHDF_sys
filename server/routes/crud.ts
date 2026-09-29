@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import pool from '../config/db';
 import { authenticate } from '../middleware/auth';
 
@@ -276,6 +277,11 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
             const [suppliers]: any = await pool.query('SELECT * FROM suppliers WHERE id = ?', [row.supplier_id]);
             row.supplier = suppliers[0] || null;
         }
+    } else if (table === 'users') {
+        for (let row of rows) {
+            delete row.password_hash;
+            row.name = [row.first_name, row.last_name].filter(Boolean).join(' ') || row.username || row.email;
+        }
     }
 
     res.json({ success: true, data: rows });
@@ -342,6 +348,9 @@ router.get('/:table/:id', authenticate, async (req, res): Promise<void> => {
                 description: item.product_description
             }
         }));
+    } else if (table === 'users' && result) {
+        delete result.password_hash;
+        result.name = [result.first_name, result.last_name].filter(Boolean).join(' ') || result.username || result.email;
     }
 
     res.json({ success: true, data: result });
@@ -640,6 +649,53 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
         updateData.sku = null;
       }
     }
+
+    // User-specific handling
+    if (table === 'users') {
+      delete updateData.name; // virtual field, not in users table
+
+      // Hash password if provided and not empty
+      if (updateData.password !== undefined) {
+        const rawPassword = String(updateData.password || '').trim();
+        if (rawPassword.length > 0) {
+          const salt = await bcrypt.genSalt(10);
+          updateData.password_hash = await bcrypt.hash(rawPassword, salt);
+        }
+        delete updateData.password;
+      }
+
+      // Foreign keys: convert empty strings to null
+      if (updateData.role_id === '') updateData.role_id = null;
+      if (updateData.employee_id === '') updateData.employee_id = null;
+
+      // Uniqueness check for email
+      if (updateData.email) {
+        const emailVal = String(updateData.email).trim();
+        const [existingEmail]: any = await pool.query(
+          'SELECT id FROM users WHERE email = ? AND id != ?',
+          [emailVal, id]
+        );
+        if (existingEmail && existingEmail.length > 0) {
+          res.status(400).json({ success: false, error: 'Email is already used by another account' });
+          return;
+        }
+        updateData.email = emailVal;
+      }
+
+      // Uniqueness check for username
+      if (updateData.username) {
+        const usernameVal = String(updateData.username).trim();
+        const [existingUsername]: any = await pool.query(
+          'SELECT id FROM users WHERE username = ? AND id != ?',
+          [usernameVal, id]
+        );
+        if (existingUsername && existingUsername.length > 0) {
+          res.status(400).json({ success: false, error: 'Username is already used by another account' });
+          return;
+        }
+        updateData.username = usernameVal;
+      }
+    }
     
     const keys = Object.keys(updateData);
     const values = Object.values(updateData).map(val => (val === '' ? null : val));
@@ -655,9 +711,14 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
     await pool.query(query, [...values, id]);
     
     const [rows]: any = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [id]);
-    const label = rows[0]?.name || rows[0]?.title || rows[0]?.code || rows[0]?.entry_number || (rows[0]?.first_name ? `${rows[0].first_name} ${rows[0].last_name || ''}`.trim() : id);
+    const updatedRow = rows[0];
+    if (table === 'users' && updatedRow) {
+      delete updatedRow.password_hash;
+      updatedRow.name = [updatedRow.first_name, updatedRow.last_name].filter(Boolean).join(' ') || updatedRow.username || updatedRow.email;
+    }
+    const label = updatedRow?.name || updatedRow?.title || updatedRow?.code || updatedRow?.entry_number || (updatedRow?.first_name ? `${updatedRow.first_name} ${updatedRow.last_name || ''}`.trim() : id);
     logCrudActivity(req, 'UPDATE', table, id, `Updated ${table}: ${label}`);
-    res.json({ success: true, data: rows[0] });
+    res.json({ success: true, data: updatedRow });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -671,11 +732,33 @@ router.delete('/:table/:id', authenticate, async (req, res): Promise<void> => {
     return;
   }
 
+  // Prevent self-deletion of currently logged in user
+  if (table === 'users' && (req as any).user?.id === id) {
+    res.status(400).json({ success: false, error: 'You cannot delete your own user account' });
+    return;
+  }
+
   try {
     await pool.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
     logCrudActivity(req, 'DELETE', table, id, `Deleted ${table} record`);
     res.json({ success: true, data: true });
   } catch (error: any) {
+    // If foreign key constraint prevents deletion (e.g. user created sales, purchases, audit records), soft-deactivate instead
+    if (table === 'users' && (error.code === 'ER_ROW_IS_REFERENCED_2' || error.errno === 1451)) {
+      try {
+        await pool.query('UPDATE users SET is_active = 0 WHERE id = ?', [id]);
+        logCrudActivity(req, 'DEACTIVATE', table, id, `Deactivated user account due to linked records`);
+        res.json({
+          success: true,
+          data: true,
+          message: 'Account has associated transaction records and has been deactivated instead of deleted.'
+        });
+        return;
+      } catch (deactErr: any) {
+        res.status(500).json({ success: false, error: deactErr.message });
+        return;
+      }
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });

@@ -3,7 +3,12 @@ export interface User {
   email: string;
   username?: string;
   name?: string;
+  first_name?: string;
+  last_name?: string;
   role?: string;
+  role_id?: string;
+  employee_id?: string;
+  is_active?: boolean | number;
   permissions?: string[];
   avatar?: string;
   created_at?: string;

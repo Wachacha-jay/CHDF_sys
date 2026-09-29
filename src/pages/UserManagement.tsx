@@ -19,11 +19,18 @@ const UserManagement: React.FC = () => {
   // Modals
   const [showUserModal, setShowUserModal] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   
   // Selection
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [rolePerms, setRolePerms] = useState<string[]>([]);
+  
+  // Search & loading
+  const [searchTerm, setSearchTerm] = useState('');
+  const [savingUser, setSavingUser] = useState(false);
+  const [deletingUser, setDeletingUser] = useState(false);
   
   // Form States
   const [userForm, setUserForm] = useState({
@@ -33,7 +40,8 @@ const UserManagement: React.FC = () => {
     role_id: '',
     employee_id: '',
     first_name: '',
-    last_name: ''
+    last_name: '',
+    is_active: 1
   });
 
   const [roleForm, setRoleForm] = useState({
@@ -41,7 +49,7 @@ const UserManagement: React.FC = () => {
     description: ''
   });
 
-  const { register: registerUser } = useAuthContext();
+  const { user: currentUser, register: registerUser } = useAuthContext();
 
   useEffect(() => {
     loadData();
@@ -79,19 +87,127 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  const handleOpenAddUser = () => {
+    setSelectedUser(null);
+    setUserForm({
+      username: '',
+      email: '',
+      password: '',
+      role_id: roles[0]?.id || '',
+      employee_id: '',
+      first_name: '',
+      last_name: '',
+      is_active: 1
+    });
+    setShowUserModal(true);
+  };
+
+  const handleEditUser = (user: User) => {
+    setSelectedUser(user);
+    let firstName = user.first_name || '';
+    let lastName = user.last_name || '';
+    if (!firstName && !lastName && user.name) {
+      const parts = user.name.split(' ');
+      firstName = parts[0] || '';
+      lastName = parts.slice(1).join(' ') || '';
+    }
+    setUserForm({
+      username: user.username || '',
+      email: user.email || '',
+      password: '', // Blank unless admin intends to change password
+      role_id: (user as any).role_id || '',
+      employee_id: (user as any).employee_id || '',
+      first_name: firstName,
+      last_name: lastName,
+      is_active: (user as any).is_active === 0 || (user as any).is_active === false ? 0 : 1
+    });
+    setShowUserModal(true);
+  };
+
+  const handlePromptDeleteUser = (user: User) => {
+    if (user.id === currentUser?.id) {
+      toast.error('You cannot delete your own logged-in account.');
+      return;
+    }
+    setUserToDelete(user);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setDeletingUser(true);
+    try {
+      const response = await ApiService.delete('users', userToDelete.id);
+      if (response.success) {
+        if ((response as any).message) {
+          toast.success((response as any).message);
+        } else {
+          toast.success('User account removed successfully');
+        }
+        setShowDeleteModal(false);
+        setUserToDelete(null);
+        loadData();
+      } else {
+        toast.error(response.error || 'Failed to delete user');
+      }
+    } catch (error: any) {
+      toast.error(error?.message || 'Error deleting user');
+    } finally {
+      setDeletingUser(false);
+    }
+  };
+
   const handleSaveUser = async () => {
+    if (!userForm.email.trim() || !userForm.username.trim()) {
+      toast.error('Official email and username are required');
+      return;
+    }
+
+    if (!selectedUser && (!userForm.password || userForm.password.length < 6)) {
+      toast.error('Password is required and must be at least 6 characters');
+      return;
+    }
+
+    if (selectedUser && userForm.password && userForm.password.length < 6) {
+      toast.error('New password must be at least 6 characters');
+      return;
+    }
+
+    setSavingUser(true);
     try {
       if (selectedUser) {
-        // Update user (logic to be implemented if needed, focusing on creation per request)
-        const response = await ApiService.update('users', selectedUser.id, userForm);
+        const payload: any = {
+          first_name: userForm.first_name.trim(),
+          last_name: userForm.last_name.trim(),
+          username: userForm.username.trim(),
+          email: userForm.email.trim(),
+          role_id: userForm.role_id || null,
+          employee_id: userForm.employee_id || null,
+          is_active: userForm.is_active
+        };
+        if (userForm.password && userForm.password.trim() !== '') {
+          payload.password = userForm.password.trim();
+        }
+
+        const response = await ApiService.update('users', selectedUser.id, payload);
         if (response.success) {
-          toast.success('User updated successfully');
+          toast.success('User details updated successfully');
           setShowUserModal(false);
           loadData();
+        } else {
+          toast.error(response.error || 'Failed to update user');
         }
       } else {
         // Register new user
-        const response = await registerUser(userForm);
+        const response = await registerUser({
+          email: userForm.email.trim(),
+          username: userForm.username.trim(),
+          password: userForm.password,
+          role_id: userForm.role_id,
+          employee_id: userForm.employee_id || undefined,
+          first_name: userForm.first_name.trim(),
+          last_name: userForm.last_name.trim()
+        });
         if (response.success) {
           toast.success('User registered successfully');
           setShowUserModal(false);
@@ -100,8 +216,10 @@ const UserManagement: React.FC = () => {
           toast.error(response.error || 'Registration failed');
         }
       }
-    } catch (error) {
-      toast.error('Error saving user');
+    } catch (error: any) {
+      toast.error(error?.message || 'Error saving user');
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -201,24 +319,14 @@ const UserManagement: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
               <input 
                 type="text" 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search users by name, email or username..." 
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm"
               />
             </div>
             <button 
-              onClick={() => {
-                setSelectedUser(null);
-                setUserForm({
-                  username: '',
-                  email: '',
-                  password: '',
-                  role_id: '',
-                  employee_id: '',
-                  first_name: '',
-                  last_name: ''
-                });
-                setShowUserModal(true);
-              }}
+              onClick={handleOpenAddUser}
               className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center shadow-sm transition-colors font-medium text-sm"
             >
               <UserPlus className="w-4 h-4 mr-2" />
@@ -238,51 +346,90 @@ const UserManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 text-sm">
-              {users.map(user => {
-                const role = roles.find(r => r.id === (user as any).role_id);
-                return (
-                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center">
-                        <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold mr-3 border border-indigo-200">
-                          {user.name?.charAt(0).toUpperCase() || '?'}
+              {users
+                .filter(user => {
+                  if (!searchTerm.trim()) return true;
+                  const term = searchTerm.toLowerCase().trim();
+                  const displayName = (user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || '').toLowerCase();
+                  const username = (user.username || '').toLowerCase();
+                  const email = (user.email || '').toLowerCase();
+                  return displayName.includes(term) || username.includes(term) || email.includes(term);
+                })
+                .map(user => {
+                  const role = roles.find(r => r.id === (user as any).role_id);
+                  const isCurrentUser = user.id === currentUser?.id;
+                  const displayName = user.name || [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || user.email;
+                  const isActive = (user as any).is_active === undefined || (user as any).is_active === 1 || (user as any).is_active === true;
+                  return (
+                    <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold mr-3 border border-indigo-200 shrink-0">
+                            {displayName.charAt(0).toUpperCase() || '?'}
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900 flex items-center gap-1.5">
+                              {displayName}
+                              {isCurrentUser && (
+                                <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-semibold">You</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-gray-500">{user.email}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{user.name}</p>
-                          <p className="text-xs text-gray-500">{user.email}</p>
+                      </td>
+                      <td className="px-6 py-4 text-gray-600 font-mono">{user.username || '-'}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          role?.name === 'Super Admin' ? 'bg-purple-100 text-purple-700' :
+                          role?.name === 'Admin' ? 'bg-blue-100 text-blue-700' :
+                          role?.name === 'Finance Manager' ? 'bg-emerald-100 text-emerald-700' :
+                          role?.name === 'Data Entry Officer' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
+                        }`}>
+                          {role?.name || 'No Role Assigned'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {isActive ? (
+                          <span className="flex items-center text-xs text-emerald-600 font-medium">
+                            <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                            Active
+                          </span>
+                        ) : (
+                          <span className="flex items-center text-xs text-red-500 font-medium">
+                            <XCircle className="w-3.5 h-3.5 mr-1" />
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex justify-end space-x-2">
+                          <button 
+                            type="button"
+                            onClick={() => handleEditUser(user)}
+                            title="Edit User Details & Password"
+                            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => handlePromptDeleteUser(user)}
+                            title={isCurrentUser ? "You cannot delete your own logged-in account" : "Delete User Account"}
+                            disabled={isCurrentUser}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              isCurrentUser 
+                                ? 'text-gray-200 cursor-not-allowed opacity-50' 
+                                : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                            }`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-gray-600 font-mono">{user.username || '-'}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        role?.name === 'Super Admin' ? 'bg-purple-100 text-purple-700' :
-                        role?.name === 'Admin' ? 'bg-blue-100 text-blue-700' :
-                        role?.name === 'Finance Manager' ? 'bg-emerald-100 text-emerald-700' :
-                        role?.name === 'Data Entry Officer' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
-                      }`}>
-                        {role?.name || 'No Role Assigned'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="flex items-center text-xs text-emerald-600 font-medium">
-                        <CheckCircle className="w-3.5 h-3.5 mr-1" />
-                        Active
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end space-x-2">
-                        <button className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
           </div>
@@ -540,36 +687,139 @@ const UserManagement: React.FC = () => {
                 </div>
               </div>
 
-              {!selectedUser && (
+              {/* Password field - enabled for both create and edit */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center justify-between">
+                  <span>{selectedUser ? 'Change Password' : 'Secure Password'}</span>
+                  {selectedUser && (
+                    <span className="text-xs text-indigo-600 font-normal">Optional for existing account</span>
+                  )}
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <input 
+                    type="password" 
+                    value={userForm.password}
+                    onChange={(e) => setUserForm(prev => ({ ...prev, password: e.target.value }))}
+                    className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-sm"
+                    placeholder={selectedUser ? 'Enter new password to change login credentials (or leave blank)' : 'Enter a strong password (min 6 characters)'}
+                  />
+                </div>
+                <p className="text-[11px] text-gray-500 mt-2 italic px-1">
+                  {selectedUser 
+                    ? 'Leave empty to preserve existing password. Enter a new password if you wish to reset or update this account’s login password.' 
+                    : 'Note: Passwords must be at least 6 characters.'}
+                </p>
+              </div>
+
+              {/* Account Status toggle when editing */}
+              {selectedUser && (
                 <div>
-                  <label className="block text-sm font-bold text-gray-700 mb-2">Secure Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input 
-                      type="password" 
-                      value={userForm.password}
-                      onChange={(e) => setUserForm(prev => ({ ...prev, password: e.target.value }))}
-                      className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                      placeholder="Enter a strong password"
-                    />
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Account Login Status</label>
+                  <div className="flex gap-4">
+                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium cursor-pointer transition-all ${
+                      userForm.is_active === 1 
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold shadow-sm' 
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}>
+                      <input 
+                        type="radio" 
+                        name="account_status" 
+                        checked={userForm.is_active === 1} 
+                        onChange={() => setUserForm(prev => ({ ...prev, is_active: 1 }))}
+                        className="sr-only"
+                      />
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                      Active (Login Enabled)
+                    </label>
+                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium cursor-pointer transition-all ${
+                      userForm.is_active === 0 
+                        ? 'border-red-500 bg-red-50 text-red-700 font-bold shadow-sm' 
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}>
+                      <input 
+                        type="radio" 
+                        name="account_status" 
+                        checked={userForm.is_active === 0} 
+                        onChange={() => setUserForm(prev => ({ ...prev, is_active: 0 }))}
+                        className="sr-only"
+                      />
+                      <XCircle className="w-4 h-4 text-red-500" />
+                      Suspended (Login Blocked)
+                    </label>
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-2 italic px-1">Note: Passwords must be at least 8 characters with a mix of letters and symbols.</p>
                 </div>
               )}
             </div>
 
             <div className="p-6 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3">
               <button 
+                type="button"
                 onClick={() => setShowUserModal(false)}
+                disabled={savingUser}
                 className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium transition-colors"
               >
                 Cancel
               </button>
               <button 
+                type="button"
                 onClick={handleSaveUser}
-                className="bg-indigo-600 text-white px-8 py-2 rounded-lg hover:bg-indigo-700 shadow-md font-bold transition-all transform active:scale-95"
+                disabled={savingUser}
+                className="bg-indigo-600 text-white px-8 py-2 rounded-lg hover:bg-indigo-700 shadow-md font-bold transition-all transform active:scale-95 disabled:opacity-50 flex items-center gap-2"
               >
-                {selectedUser ? 'Save Updates' : 'Finish & Create Account'}
+                {savingUser ? 'Saving...' : (selectedUser ? 'Save Updates' : 'Finish & Create Account')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {showDeleteModal && userToDelete && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-gray-100 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Delete User Account</h3>
+                <p className="text-xs text-gray-500">Confirm account removal or deactivation</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <p className="text-sm text-gray-700 leading-relaxed">
+                Are you sure you want to delete the user account for{' '}
+                <strong className="text-gray-900">
+                  {userToDelete.name || [userToDelete.first_name, userToDelete.last_name].filter(Boolean).join(' ') || userToDelete.email}
+                </strong>{' '}
+                (<span className="font-mono text-xs text-gray-600">{userToDelete.username || userToDelete.email}</span>)?
+              </p>
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 p-3 rounded-xl leading-relaxed">
+                Note: If this user has recorded transactions (such as sales, purchases, or audit logs), the account will be safely deactivated instead of deleted to protect audit history.
+              </p>
+            </div>
+
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end space-x-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setUserToDelete(null);
+                }}
+                disabled={deletingUser}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteUser}
+                disabled={deletingUser}
+                className="bg-red-600 text-white px-5 py-2 rounded-lg hover:bg-red-700 shadow-md font-bold text-sm transition-all flex items-center disabled:opacity-50"
+              >
+                {deletingUser ? 'Deleting...' : 'Confirm Delete'}
               </button>
             </div>
           </div>
