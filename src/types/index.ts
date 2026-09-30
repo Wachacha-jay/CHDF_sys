@@ -133,6 +133,12 @@ export interface Supplier {
   tax_number?: string;
   payment_terms: number;
   is_active: boolean;
+  department_id?: string;
+  department?: { id: string; name: string };
+  expense_account_id?: string;
+  expense_account?: Account;
+  service_ids?: string[];
+  withholding_tax_rate?: number;
   total_orders?: number;
   total_purchases?: number;
   created_by?: string;
@@ -314,6 +320,12 @@ export interface Purchase {
   total_amount: number;
   paid_amount: number;
   payment_status: 'pending' | 'partial' | 'paid' | 'overdue';
+  department_id?: string;
+  department?: { id: string; name: string };
+  expense_account_id?: string;
+  expense_account?: Account;
+  wht_rate?: number;
+  wht_amount?: number;
   notes?: string;
   created_by?: string;
   created_at: string;

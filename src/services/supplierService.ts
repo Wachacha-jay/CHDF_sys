@@ -20,6 +20,10 @@ export interface CreatePurchaseData {
   supplier_id: string;
   purchase_date: string;
   due_date?: string;
+  department_id?: string;
+  expense_account_id?: string;
+  wht_rate?: number;
+  wht_amount?: number;
   items: Array<{
     product_id: string;
     quantity: number;
@@ -215,12 +219,21 @@ export class SupplierService {
   }
 
   // Payment operations for purchases
-  static async recordPurchasePayment(purchaseId: string, amount: number, method: string = 'bank', date?: string, accountId?: string): Promise<boolean> {
+  static async recordPurchasePayment(
+    purchaseId: string, 
+    amount: number, 
+    method: string = 'bank', 
+    date?: string, 
+    accountId?: string,
+    whtRate: number = 0,
+    whtAmount: number = 0
+  ): Promise<boolean> {
     try {
       const purchase = await this.getPurchaseById(purchaseId);
       if (!purchase) return false;
 
       const newPaidAmount = purchase.paid_amount + amount;
+      const newWhtAmount = (purchase.wht_amount || 0) + (whtAmount || 0);
       let paymentStatus: 'pending' | 'partial' | 'paid' | 'overdue' = 'pending';
 
       if (newPaidAmount >= purchase.total_amount) {
@@ -236,11 +249,13 @@ export class SupplierService {
 
       const updateResponse = await this.updatePurchase(purchaseId, {
         paid_amount: newPaidAmount,
+        wht_rate: whtRate,
+        wht_amount: newWhtAmount,
         payment_status: paymentStatus
       });
 
       if (updateResponse) {
-        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date, accountId);
+        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date, accountId, whtRate, whtAmount);
       }
 
       return !!updateResponse;

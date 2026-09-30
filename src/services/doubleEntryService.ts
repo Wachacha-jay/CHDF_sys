@@ -237,10 +237,19 @@ export class DoubleEntryService {
 
     const apAccount = findAccount('2000') || findAccount('2110') || findAccount('2100') ||
       flat.find(a => a.account_type === 'liability' && /payable/i.test(a.name));
-    const inventoryAccount = findAccount('1200') || findAccount('1130') ||
-      flat.find(a => a.account_type === 'asset' && /inventory/i.test(a.name));
 
-    if (!apAccount || !inventoryAccount) {
+    // If purchase has an expense account specified, debit that expense account; otherwise fallback to inventory asset
+    let debitAccount: any = null;
+    if (purchase.expense_account_id) {
+      debitAccount = flat.find(a => a.id === purchase.expense_account_id);
+    }
+    if (!debitAccount) {
+      debitAccount = findAccount('1200') || findAccount('1130') ||
+        flat.find(a => a.account_type === 'asset' && /inventory/i.test(a.name)) ||
+        findAccount('5000') || flat.find(a => a.account_type === 'expense');
+    }
+
+    if (!apAccount || !debitAccount) {
       console.error('Required accounts not found for purchase posting');
       return;
     }
@@ -251,16 +260,18 @@ export class DoubleEntryService {
       reference: purchase.purchase_number,
       lines: [
         {
-          account_id: inventoryAccount.id,
-          description: `Inventory increase from ${purchase.purchase_number}`,
+          account_id: debitAccount.id,
+          description: `${debitAccount.name} from ${purchase.purchase_number}`,
           debit_amount: purchase.total_amount,
-          credit_amount: 0
+          credit_amount: 0,
+          department_id: purchase.department_id || undefined
         },
         {
           account_id: apAccount.id,
           description: `Liability to supplier for ${purchase.purchase_number}`,
           debit_amount: 0,
-          credit_amount: purchase.total_amount
+          credit_amount: purchase.total_amount,
+          department_id: purchase.department_id || undefined
         }
       ],
       is_posted: true
@@ -272,9 +283,17 @@ export class DoubleEntryService {
   }
 
   /**
-   * Post a payment to supplier
+   * Post a payment to supplier with Withholding Tax (WHT) support
    */
-  static async postSupplierPayment(purchase: Purchase, amount: number, method: string = 'bank', date?: string, accountId?: string): Promise<void> {
+  static async postSupplierPayment(
+    purchase: Purchase, 
+    amount: number, 
+    method: string = 'bank', 
+    date?: string, 
+    accountId?: string,
+    whtRate: number = 0,
+    whtAmount: number = 0
+  ): Promise<void> {
     const accounts = await AccountingService.getAccounts();
     const flatten = (accs: any[]): any[] => {
       return accs.reduce((prev, curr) => {
@@ -303,24 +322,42 @@ export class DoubleEntryService {
       return;
     }
 
+    const netPaymentAmount = Math.max(0, amount - (whtAmount || 0));
+    const lines: any[] = [
+      {
+        account_id: apAccount.id,
+        description: `Reduction of AP for ${purchase.purchase_number}`,
+        debit_amount: amount,
+        credit_amount: 0,
+        department_id: purchase.department_id || undefined
+      },
+      {
+        account_id: creditAccount.id,
+        description: `Payment for ${purchase.purchase_number} via ${method}`,
+        debit_amount: 0,
+        credit_amount: netPaymentAmount,
+        department_id: purchase.department_id || undefined
+      }
+    ];
+
+    if (whtAmount > 0) {
+      const whtAccount = findAccount('2150') || flat.find(a => a.account_type === 'liability' && /withholding/i.test(a.name));
+      if (whtAccount) {
+        lines.push({
+          account_id: whtAccount.id,
+          description: `Withholding Tax (${whtRate}%) on ${purchase.purchase_number}`,
+          debit_amount: 0,
+          credit_amount: whtAmount,
+          department_id: purchase.department_id || undefined
+        });
+      }
+    }
+
     const created = await AccountingService.createJournalEntry({
       entry_date: date || new Date().toISOString().split('T')[0],
-      description: `Payment to supplier for ${purchase.purchase_number}`,
+      description: `Payment to supplier for ${purchase.purchase_number}${whtAmount > 0 ? ` (WHT: ${whtRate}%)` : ''}`,
       reference: purchase.purchase_number,
-      lines: [
-        {
-          account_id: apAccount.id,
-          description: `Reduction of AP for ${purchase.purchase_number}`,
-          debit_amount: amount,
-          credit_amount: 0
-        },
-        {
-          account_id: creditAccount.id,
-          description: `Payment for ${purchase.purchase_number} via ${method}`,
-          debit_amount: 0,
-          credit_amount: amount
-        }
-      ],
+      lines,
       is_posted: true
     });
 

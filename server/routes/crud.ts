@@ -161,6 +161,46 @@ async function ensureInKindSchema() {
       console.warn('Could not inspect or alter internal_transfers table:', itErr);
     }
 
+    // 10. Ensure suppliers & purchases procurement columns
+    try {
+      await pool.query(`
+        INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
+          (UUID(), '2150', 'Withholding Tax (WHT) Payable', 'liability', 1)
+      `);
+
+      const [suppCols]: any = await pool.query('SHOW COLUMNS FROM suppliers');
+      const suppColNames = new Set(suppCols.map((c: any) => c.Field));
+      if (!suppColNames.has('department_id')) {
+        await pool.query('ALTER TABLE suppliers ADD COLUMN department_id CHAR(36) NULL');
+      }
+      if (!suppColNames.has('expense_account_id')) {
+        await pool.query('ALTER TABLE suppliers ADD COLUMN expense_account_id CHAR(36) NULL');
+      }
+      if (!suppColNames.has('service_ids')) {
+        await pool.query('ALTER TABLE suppliers ADD COLUMN service_ids JSON NULL');
+      }
+      if (!suppColNames.has('withholding_tax_rate')) {
+        await pool.query('ALTER TABLE suppliers ADD COLUMN withholding_tax_rate DECIMAL(5,2) DEFAULT 0.00');
+      }
+
+      const [purchCols]: any = await pool.query('SHOW COLUMNS FROM purchases');
+      const purchColNames = new Set(purchCols.map((c: any) => c.Field));
+      if (!purchColNames.has('department_id')) {
+        await pool.query('ALTER TABLE purchases ADD COLUMN department_id CHAR(36) NULL');
+      }
+      if (!purchColNames.has('expense_account_id')) {
+        await pool.query('ALTER TABLE purchases ADD COLUMN expense_account_id CHAR(36) NULL');
+      }
+      if (!purchColNames.has('wht_rate')) {
+        await pool.query('ALTER TABLE purchases ADD COLUMN wht_rate DECIMAL(5,2) DEFAULT 0.00');
+      }
+      if (!purchColNames.has('wht_amount')) {
+        await pool.query('ALTER TABLE purchases ADD COLUMN wht_amount DECIMAL(12,4) DEFAULT 0.00');
+      }
+    } catch (procureErr) {
+      console.warn('Could not inspect or alter suppliers/purchases procurement columns:', procureErr);
+    }
+
     inKindSchemaEnsured = true;
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
@@ -276,6 +316,34 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         for (let row of rows) {
             const [suppliers]: any = await pool.query('SELECT * FROM suppliers WHERE id = ?', [row.supplier_id]);
             row.supplier = suppliers[0] || null;
+            if (row.department_id) {
+                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                row.department = depts[0] || null;
+            }
+            if (row.expense_account_id) {
+                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
+                row.expense_account = accs[0] || null;
+            }
+        }
+    } else if (table === 'suppliers') {
+        for (let row of rows) {
+            if (row.service_ids) {
+                try {
+                    row.service_ids = typeof row.service_ids === 'string' ? JSON.parse(row.service_ids) : row.service_ids;
+                } catch (_) {
+                    row.service_ids = [];
+                }
+            } else {
+                row.service_ids = [];
+            }
+            if (row.department_id) {
+                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                row.department = depts[0] || null;
+            }
+            if (row.expense_account_id) {
+                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
+                row.expense_account = accs[0] || null;
+            }
         }
     } else if (table === 'users') {
         for (let row of rows) {
@@ -348,6 +416,32 @@ router.get('/:table/:id', authenticate, async (req, res): Promise<void> => {
                 description: item.product_description
             }
         }));
+        if (result.department_id) {
+            const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [result.department_id]);
+            result.department = depts[0] || null;
+        }
+        if (result.expense_account_id) {
+            const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [result.expense_account_id]);
+            result.expense_account = accs[0] || null;
+        }
+    } else if (table === 'suppliers' && result) {
+        if (result.service_ids) {
+            try {
+                result.service_ids = typeof result.service_ids === 'string' ? JSON.parse(result.service_ids) : result.service_ids;
+            } catch (_) {
+                result.service_ids = [];
+            }
+        } else {
+            result.service_ids = [];
+        }
+        if (result.department_id) {
+            const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [result.department_id]);
+            result.department = depts[0] || null;
+        }
+        if (result.expense_account_id) {
+            const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [result.expense_account_id]);
+            result.expense_account = accs[0] || null;
+        }
     } else if (table === 'users' && result) {
         delete result.password_hash;
         result.name = [result.first_name, result.last_name].filter(Boolean).join(' ') || result.username || result.email;
@@ -539,6 +633,10 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
           total_amount: Number(req.body.total_amount || 0),
           paid_amount: Number(req.body.paid_amount || 0),
           payment_status: req.body.payment_status || 'pending',
+          department_id: req.body.department_id || null,
+          expense_account_id: req.body.expense_account_id || null,
+          wht_rate: Number(req.body.wht_rate || 0),
+          wht_amount: Number(req.body.wht_amount || 0),
           notes: req.body.notes || null,
           created_by: (req as any).user?.id || null
         };
@@ -562,10 +660,10 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `, [itemId, purchasePayload.id, item.product_id, qty, unitCost, Number(item.discount_amount || 0), Number(item.tax_amount || 0), totalLine]);
 
-          // Increment product inventory stock & update cost price if provided
+          // Increment product inventory stock ONLY for physical goods (not services)
           await connection.query(`
             UPDATE products 
-            SET current_stock = current_stock + ?,
+            SET current_stock = CASE WHEN is_service = 1 THEN current_stock ELSE current_stock + ? END,
                 cost_price = CASE WHEN ? > 0 THEN ? ELSE cost_price END
             WHERE id = ?
           `, [qty, unitCost, unitCost, item.product_id]);
@@ -610,6 +708,25 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       (values as any[]).splice(itemsIdx, 1);
     }
 
+    if (table === 'suppliers') {
+      const stripCols = ['department', 'expense_account', 'services', 'total_orders', 'total_purchases'];
+      stripCols.forEach(col => {
+        const idx = keys.indexOf(col);
+        if (idx !== -1) {
+          keys.splice(idx, 1);
+          (values as any[]).splice(idx, 1);
+        }
+      });
+      const sIdx = keys.indexOf('service_ids');
+      if (sIdx !== -1 && (Array.isArray(values[sIdx]) || typeof values[sIdx] === 'object')) {
+        values[sIdx] = JSON.stringify(values[sIdx]);
+      }
+      const dIdx = keys.indexOf('department_id');
+      if (dIdx !== -1 && values[dIdx] === '') values[dIdx] = null;
+      const eIdx = keys.indexOf('expense_account_id');
+      if (eIdx !== -1 && values[eIdx] === '') values[eIdx] = null;
+    }
+
     const placeholders = keys.map(() => '?').join(', ');
     const sanitizedValues = values.map(val => (val === '' ? null : val));
 
@@ -648,6 +765,20 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
       if (updateData.sku !== undefined && (!updateData.sku || String(updateData.sku).trim() === '')) {
         updateData.sku = null;
       }
+    }
+
+    // Supplier-specific handling
+    if (table === 'suppliers') {
+      delete updateData.department;
+      delete updateData.expense_account;
+      delete updateData.services;
+      delete updateData.total_orders;
+      delete updateData.total_purchases;
+      if (Array.isArray(updateData.service_ids) || (updateData.service_ids && typeof updateData.service_ids === 'object')) {
+        updateData.service_ids = JSON.stringify(updateData.service_ids);
+      }
+      if (updateData.department_id === '') updateData.department_id = null;
+      if (updateData.expense_account_id === '') updateData.expense_account_id = null;
     }
 
     // User-specific handling
