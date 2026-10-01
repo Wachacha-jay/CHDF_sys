@@ -883,6 +883,12 @@ router.delete('/:table/:id', authenticate, async (req, res): Promise<void> => {
   }
 
   try {
+    if (table === 'sales') {
+      await pool.query('DELETE FROM sale_items WHERE sale_id = ?', [id]);
+    } else if (table === 'purchases') {
+      await pool.query('DELETE FROM purchase_items WHERE purchase_id = ?', [id]);
+    }
+
     await pool.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
     logCrudActivity(req, 'DELETE', table, id, `Deleted ${table} record`);
     res.json({ success: true, data: true });

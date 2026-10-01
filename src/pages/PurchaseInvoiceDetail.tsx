@@ -5,7 +5,8 @@ import { BusinessSettingsService } from '../services/businessSettingsService';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import type { Purchase, BusinessSettings } from '../types';
 import RecordPaymentModal from '../components/inventory/RecordPaymentModal';
-import { ArrowLeft, Printer, CreditCard } from 'lucide-react';
+import { ArrowLeft, Printer, CreditCard, Trash2 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 
 const PurchaseInvoiceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -182,6 +183,28 @@ const PurchaseInvoiceDetail: React.FC = () => {
   const totalAmount = Number(invoice.total_amount || 0);
   const paidAmount = Number(invoice.paid_amount || 0);
   const balanceDue = Math.max(0, totalAmount - paidAmount);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteInvoice = async () => {
+    if (!invoice) return;
+    if (!window.confirm(`Are you sure you want to delete Purchase Invoice #${invoice.purchase_number}? This will permanently remove the invoice and its items.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const success = await SupplierService.deletePurchase(invoice.id);
+      if (success) {
+        toast.success(`Purchase Invoice #${invoice.purchase_number} deleted successfully`);
+        navigate('/invoices');
+      } else {
+        toast.error('Failed to delete purchase invoice');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error deleting purchase invoice');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -216,6 +239,15 @@ const PurchaseInvoiceDetail: React.FC = () => {
               Record Payment
             </button>
           )}
+          <button
+            onClick={handleDeleteInvoice}
+            disabled={deleting}
+            className="flex items-center gap-2 px-4 py-2 bg-rose-50 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-100 shadow-sm text-sm font-semibold transition-colors disabled:opacity-50"
+            title="Delete Invoice"
+          >
+            <Trash2 size={16} />
+            {deleting ? 'Deleting...' : 'Delete'}
+          </button>
         </div>
       </div>
 

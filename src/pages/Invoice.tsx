@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Download, Printer, Mail, Phone, MapPin, Building2, Receipt } from 'lucide-react';
+import { Download, Printer, Mail, Phone, MapPin, Building2, Receipt, ArrowLeft, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { SalesService } from '../services/salesService';
 import { BusinessSettingsService } from '../services/businessSettingsService';
@@ -258,34 +258,75 @@ const Invoice: React.FC = () => {
     );
   }
 
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteInvoice = async () => {
+    if (!sale) return;
+    if (!window.confirm(`Are you sure you want to delete Invoice #${sale.sale_number}? This will permanently remove the invoice and its line items.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const success = await SalesService.deleteSale(sale.id);
+      if (success) {
+        toast.success(`Invoice #${sale.sale_number} deleted successfully`);
+        navigate('/invoices');
+      } else {
+        toast.error('Failed to delete invoice');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error deleting invoice');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Invoice</h1>
-          <p className="text-gray-600">Invoice #{sale.sale_number}</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/invoices')}
+            className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors"
+            title="Back to Invoices"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Invoice</h1>
+            <p className="text-gray-600">Invoice #{sale.sale_number}</p>
+          </div>
         </div>
         <div className="flex space-x-3">
           <button
             onClick={printInvoice}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
           >
             <Printer className="h-4 w-4 mr-2" />
             Print
           </button>
           <button
             onClick={downloadInvoice}
-            className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 shadow-sm transition-colors text-sm font-medium"
           >
             <Download className="h-4 w-4 mr-2" />
             Download
           </button>
           <button
             onClick={sendInvoiceEmail}
-            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors text-sm font-medium"
           >
             <Mail className="h-4 w-4 mr-2" />
             Email
+          </button>
+          <button
+            onClick={handleDeleteInvoice}
+            disabled={deleting}
+            className="flex items-center px-4 py-2 bg-rose-50 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-100 shadow-sm transition-colors text-sm font-semibold disabled:opacity-50"
+            title="Delete Invoice"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            {deleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </div>

@@ -3,11 +3,13 @@ import {
   X, Building2, Mail, Phone, MapPin, User, FileText, 
   CreditCard, Clock, CheckCircle2, AlertCircle, Printer, 
   Calendar, Layers, ShieldCheck, DollarSign, ArrowUpRight,
-  TrendingDown, TrendingUp, Tag
+  TrendingDown, TrendingUp, Tag, Trash2
 } from 'lucide-react';
 import type { Supplier, Purchase, Product } from '../../types';
 import RecordPaymentModal from '../inventory/RecordPaymentModal';
 import { useNavigate } from 'react-router-dom';
+import { SupplierService } from '../../services/supplierService';
+import { toast } from 'react-hot-toast';
 
 interface SupplierDetailModalProps {
   open: boolean;
@@ -607,6 +609,28 @@ const SupplierDetailModal: React.FC<SupplierDetailModalProps> = ({
                                     <CreditCard className="w-3.5 h-3.5" /> Pay
                                   </button>
                                 )}
+                                <button
+                                  onClick={async () => {
+                                    if (!window.confirm(`Are you sure you want to delete Purchase Invoice #${purchase.purchase_number}? This action cannot be undone.`)) {
+                                      return;
+                                    }
+                                    try {
+                                      const success = await SupplierService.deletePurchase(purchase.id);
+                                      if (success) {
+                                        toast.success(`Purchase Invoice #${purchase.purchase_number} deleted successfully`);
+                                        onRefreshPurchases();
+                                      } else {
+                                        toast.error('Failed to delete purchase invoice');
+                                      }
+                                    } catch (err: any) {
+                                      toast.error(err?.message || 'Error deleting invoice');
+                                    }
+                                  }}
+                                  className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors text-xs font-medium"
+                                  title="Delete Purchase Invoice"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                               </div>
                             </td>
                           </tr>

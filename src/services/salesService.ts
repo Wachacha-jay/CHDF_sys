@@ -128,6 +128,16 @@ export class SalesService {
     return response.success ? response.data : null;
   }
 
+  static async deleteSale(id: string): Promise<boolean> {
+    try {
+      const response = await ApiService.delete('sales', id);
+      return response.success;
+    } catch (error) {
+      console.error('Error deleting sale:', error);
+      return false;
+    }
+  }
+
   static async createSale(saleData: CreateSaleData): Promise<Sale | null> {
     try {
       // Calculate totals

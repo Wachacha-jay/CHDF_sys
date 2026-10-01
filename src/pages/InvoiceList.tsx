@@ -5,7 +5,8 @@ import { useSettingsContext } from '../contexts/SettingsContext';
 import { useNavigate } from 'react-router-dom';
 import type { Sale, Purchase } from '../types';
 import CreatePurchaseInvoiceModal from '../components/invoices/CreatePurchaseInvoiceModal';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2, Eye, AlertTriangle } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 
 const InvoiceList: React.FC = () => {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -16,9 +17,36 @@ const InvoiceList: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [personSearch, setPersonSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; number: string; type: 'sale' | 'purchase' } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   
   const navigate = useNavigate();
   const { settings } = useSettingsContext();
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      let success = false;
+      if (deleteTarget.type === 'sale') {
+        success = await SalesService.deleteSale(deleteTarget.id);
+      } else {
+        success = await SupplierService.deletePurchase(deleteTarget.id);
+      }
+
+      if (success) {
+        toast.success(`${deleteTarget.type === 'sale' ? 'Sales Invoice' : 'Purchase Invoice'} #${deleteTarget.number} deleted successfully`);
+        setDeleteTarget(null);
+        loadData();
+      } else {
+        toast.error(`Failed to delete invoice #${deleteTarget.number}`);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error occurred while deleting invoice');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const loadData = () => {
     setLoading(true);
@@ -177,7 +205,24 @@ const InvoiceList: React.FC = () => {
                   <td className="px-4 py-3 font-bold">{settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {inv.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                   <td className="px-4 py-3">{getStatusBadge(inv.payment_status)}</td>
                   <td className="px-4 py-3">
-                    <button className="text-blue-600 hover:text-blue-900 font-medium text-sm border border-blue-200 bg-blue-50 px-3 py-1 rounded hover:bg-blue-100 transition-colors" onClick={() => navigate(`/invoice/${inv.id}`)}>View</button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        className="text-blue-600 hover:text-blue-900 font-medium text-xs border border-blue-200 bg-blue-50 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-xs" 
+                        onClick={() => navigate(`/invoice/${inv.id}`)}
+                        title="View Invoice"
+                      >
+                        <Eye size={13} />
+                        View
+                      </button>
+                      <button 
+                        className="text-rose-600 hover:text-rose-900 font-medium text-xs border border-rose-200 bg-rose-50 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition-colors flex items-center gap-1 shadow-xs" 
+                        onClick={() => setDeleteTarget({ id: inv.id, number: inv.sale_number, type: 'sale' })}
+                        title="Delete Invoice"
+                      >
+                        <Trash2 size={13} />
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -190,7 +235,24 @@ const InvoiceList: React.FC = () => {
                   <td className="px-4 py-3 font-bold">{settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {inv.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                   <td className="px-4 py-3">{getStatusBadge(inv.payment_status)}</td>
                   <td className="px-4 py-3">
-                    <button className="text-blue-600 hover:text-blue-900 font-medium text-sm border border-blue-200 bg-blue-50 px-3 py-1 rounded hover:bg-blue-100 transition-colors" onClick={() => navigate(`/purchase-invoice/${inv.id}`)}>View</button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        className="text-blue-600 hover:text-blue-900 font-medium text-xs border border-blue-200 bg-blue-50 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-xs" 
+                        onClick={() => navigate(`/purchase-invoice/${inv.id}`)}
+                        title="View Invoice"
+                      >
+                        <Eye size={13} />
+                        View
+                      </button>
+                      <button 
+                        className="text-rose-600 hover:text-rose-900 font-medium text-xs border border-rose-200 bg-rose-50 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition-colors flex items-center gap-1 shadow-xs" 
+                        onClick={() => setDeleteTarget({ id: inv.id, number: inv.purchase_number, type: 'purchase' })}
+                        title="Delete Invoice"
+                      >
+                        <Trash2 size={13} />
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -215,6 +277,44 @@ const InvoiceList: React.FC = () => {
           loadData();
         }}
       />
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mb-4 border border-rose-100 shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-bold text-gray-900">Confirm Invoice Deletion</h3>
+            <p className="text-sm text-gray-600 mt-2 leading-relaxed">
+              Are you sure you want to delete <strong className="text-gray-900 font-semibold">{deleteTarget.type === 'sale' ? 'Sales Invoice' : 'Purchase Invoice'} #{deleteTarget.number}</strong>?
+            </p>
+            <div className="mt-3 bg-amber-50 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <span>This will permanently remove the invoice and all its line items. This action cannot be undone.</span>
+            </div>
+            <div className="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Trash2 size={14} />
+                {deleting ? 'Deleting...' : 'Delete Invoice'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

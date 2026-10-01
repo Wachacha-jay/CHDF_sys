@@ -873,6 +873,28 @@ const Suppliers: React.FC = () => {
                                   <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Paid
                                 </span>
                               )}
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm(`Are you sure you want to delete Purchase Invoice #${invoice.purchase_number}? This action cannot be undone.`)) {
+                                    return;
+                                  }
+                                  try {
+                                    const success = await SupplierService.deletePurchase(invoice.id);
+                                    if (success) {
+                                      toast.success(`Purchase Invoice #${invoice.purchase_number} deleted successfully`);
+                                      loadAllData();
+                                    } else {
+                                      toast.error('Failed to delete purchase invoice');
+                                    }
+                                  } catch (err: any) {
+                                    toast.error(err?.message || 'Error deleting invoice');
+                                  }
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors text-xs font-medium"
+                                title="Delete Purchase Invoice"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>
