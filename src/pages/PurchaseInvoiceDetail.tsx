@@ -129,11 +129,12 @@ const PurchaseInvoiceDetail: React.FC = () => {
           <div class="totals">
             <table>
               <tr><td>Subtotal:</td><td style="text-align: right;">${currency} ${Number(invoice.subtotal || 0).toFixed(2)}</td></tr>
-              <tr><td>Tax:</td><td style="text-align: right;">${currency} ${Number(invoice.tax_amount || 0).toFixed(2)}</td></tr>
-              <tr><td>Discount:</td><td style="text-align: right;">${currency} ${Number(invoice.discount_amount || 0).toFixed(2)}</td></tr>
-              <tr class="total-row"><td><strong>Total:</strong></td><td style="text-align: right;"><strong>${currency} ${Number(invoice.total_amount || 0).toFixed(2)}</strong></td></tr>
-              <tr><td>Paid:</td><td style="text-align: right;" class="highlight">${currency} ${Number(invoice.paid_amount || 0).toFixed(2)}</td></tr>
-              <tr class="total-row"><td><strong>Balance:</strong></td><td style="text-align: right;"><strong class="warning">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</strong></td></tr>
+              ${Number(invoice.tax_amount || 0) > 0 ? `<tr><td>VAT (${invoice.vat_rate || 0}%):</td><td style="text-align: right;">+${currency} ${Number(invoice.tax_amount || 0).toFixed(2)}</td></tr>` : ''}
+              ${Number(invoice.discount_amount || 0) > 0 ? `<tr><td>Discount:</td><td style="text-align: right;">-${currency} ${Number(invoice.discount_amount || 0).toFixed(2)}</td></tr>` : ''}
+              <tr class="total-row"><td><strong>Gross Total Billed:</strong></td><td style="text-align: right;"><strong>${currency} ${Number(invoice.total_amount || 0).toFixed(2)}</strong></td></tr>
+              ${Number(invoice.wht_amount || 0) > 0 ? `<tr><td style="color: #92400e;">WHT Withheld (${invoice.wht_rate || 0}%):</td><td style="text-align: right; color: #92400e;">-${currency} ${Number(invoice.wht_amount || 0).toFixed(2)}</td></tr>` : ''}
+              <tr><td>Paid Amount:</td><td style="text-align: right;" class="highlight">${currency} ${Number(invoice.paid_amount || 0).toFixed(2)}</td></tr>
+              <tr class="total-row"><td><strong>Balance Due:</strong></td><td style="text-align: right;"><strong class="warning">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</strong></td></tr>
             </table>
           </div>
 
@@ -297,8 +298,8 @@ const PurchaseInvoiceDetail: React.FC = () => {
                 </tr>
                 {taxAmount > 0 && (
                   <tr>
-                    <td className="pr-4 text-gray-500">Tax (VAT):</td>
-                    <td className="font-mono font-medium">{currency} {taxAmount.toFixed(2)}</td>
+                    <td className="pr-4 text-gray-500">VAT ({invoice.vat_rate || 0}% on Goods):</td>
+                    <td className="font-mono font-semibold text-blue-700">+{currency} {taxAmount.toFixed(2)}</td>
                   </tr>
                 )}
                 {discountAmount > 0 && (
@@ -308,9 +309,15 @@ const PurchaseInvoiceDetail: React.FC = () => {
                   </tr>
                 )}
                 <tr className="pt-2 border-t border-gray-200">
-                  <td className="pr-4 text-gray-900 font-bold text-base">Total Amount:</td>
+                  <td className="pr-4 text-gray-900 font-bold text-base">Gross Total Billed:</td>
                   <td className="font-bold text-base text-gray-900 font-mono">{currency} {totalAmount.toFixed(2)}</td>
                 </tr>
+                {Number(invoice.wht_amount || 0) > 0 && (
+                  <tr>
+                    <td className="pr-4 text-amber-800 font-medium">WHT Withheld ({invoice.wht_rate || 0}% on Services):</td>
+                    <td className="font-mono font-bold text-amber-800">-{currency} {Number(invoice.wht_amount || 0).toFixed(2)}</td>
+                  </tr>
+                )}
                 <tr>
                   <td className="pr-4 text-gray-500">Amount Paid:</td>
                   <td className="font-mono font-semibold text-emerald-600">{currency} {paidAmount.toFixed(2)}</td>

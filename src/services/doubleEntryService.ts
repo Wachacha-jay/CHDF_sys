@@ -254,26 +254,59 @@ export class DoubleEntryService {
       return;
     }
 
-    const created = await AccountingService.createJournalEntry({
-      entry_date: purchase.purchase_date,
-      description: `Purchase from supplier: ${purchase.purchase_number}`,
-      reference: purchase.purchase_number,
-      lines: [
-        {
-          account_id: debitAccount.id,
-          description: `${debitAccount.name} from ${purchase.purchase_number}`,
-          debit_amount: purchase.total_amount,
+    const taxAmount = Number(purchase.tax_amount || 0);
+    const subtotalExpense = Number(purchase.subtotal || (purchase.total_amount - taxAmount));
+    const lines: any[] = [];
+
+    if (taxAmount > 0) {
+      const vatInputAccount = findAccount('1140') || findAccount('1150') ||
+        flat.find(a => a.account_type === 'asset' && /vat.*input|input.*vat/i.test(a.name));
+
+      // 1. Debit Expense / Inventory asset for subtotal
+      lines.push({
+        account_id: debitAccount.id,
+        description: `${debitAccount.name} from ${purchase.purchase_number}`,
+        debit_amount: subtotalExpense,
+        credit_amount: 0,
+        department_id: purchase.department_id || undefined
+      });
+
+      // 2. Debit VAT Input Asset for VAT on goods
+      if (vatInputAccount) {
+        lines.push({
+          account_id: vatInputAccount.id,
+          description: `VAT Input on ${purchase.purchase_number}`,
+          debit_amount: taxAmount,
           credit_amount: 0,
           department_id: purchase.department_id || undefined
-        },
-        {
-          account_id: apAccount.id,
-          description: `Liability to supplier for ${purchase.purchase_number}`,
-          debit_amount: 0,
-          credit_amount: purchase.total_amount,
-          department_id: purchase.department_id || undefined
-        }
-      ],
+        });
+      } else {
+        lines[0].debit_amount = purchase.total_amount;
+      }
+    } else {
+      lines.push({
+        account_id: debitAccount.id,
+        description: `${debitAccount.name} from ${purchase.purchase_number}`,
+        debit_amount: purchase.total_amount,
+        credit_amount: 0,
+        department_id: purchase.department_id || undefined
+      });
+    }
+
+    // 3. Credit Accounts Payable for gross total liability
+    lines.push({
+      account_id: apAccount.id,
+      description: `Liability to supplier for ${purchase.purchase_number}`,
+      debit_amount: 0,
+      credit_amount: purchase.total_amount,
+      department_id: purchase.department_id || undefined
+    });
+
+    const created = await AccountingService.createJournalEntry({
+      entry_date: purchase.purchase_date,
+      description: `Purchase from supplier: ${purchase.purchase_number}${taxAmount > 0 ? ` (VAT: ${taxAmount.toFixed(2)})` : ''}`,
+      reference: purchase.purchase_number,
+      lines,
       is_posted: true
     });
 

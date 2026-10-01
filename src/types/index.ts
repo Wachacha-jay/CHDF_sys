@@ -44,6 +44,7 @@ export interface BusinessSettings {
   favicon_url?: string;
   default_currency: string;
   tax_rate: number;
+  wht_rate?: number;
   receipt_prefix: string;
   invoice_prefix: string;
   product_code_prefix: string;
@@ -324,6 +325,7 @@ export interface Purchase {
   department?: { id: string; name: string };
   expense_account_id?: string;
   expense_account?: Account;
+  vat_rate?: number;
   wht_rate?: number;
   wht_amount?: number;
   notes?: string;

@@ -76,10 +76,18 @@ async function ensureInKindSchema() {
       } catch (_) {}
     }
 
-    // 5. Ensure business_settings logo_url and favicon_url are LONGTEXT for data/image URLs
+    // 5. Ensure business_settings logo_url and favicon_url are LONGTEXT for data/image URLs, and tax_rate / wht_rate exist
     try {
       await pool.query('ALTER TABLE business_settings MODIFY COLUMN logo_url LONGTEXT');
       await pool.query('ALTER TABLE business_settings MODIFY COLUMN favicon_url LONGTEXT');
+      const [bsCols]: any = await pool.query('SHOW COLUMNS FROM business_settings');
+      const bsColNames = new Set(bsCols.map((c: any) => c.Field));
+      if (bsColNames.has('tax_rate')) {
+        await pool.query('ALTER TABLE business_settings MODIFY COLUMN tax_rate DECIMAL(8,4) DEFAULT 0.0000');
+      }
+      if (!bsColNames.has('wht_rate')) {
+        await pool.query('ALTER TABLE business_settings ADD COLUMN wht_rate DECIMAL(8,4) DEFAULT 0.0000');
+      }
     } catch (err) {
       // Ignore if already adjusted
     }
@@ -165,7 +173,8 @@ async function ensureInKindSchema() {
     try {
       await pool.query(`
         INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
-          (UUID(), '2150', 'Withholding Tax (WHT) Payable', 'liability', 1)
+          (UUID(), '2150', 'Withholding Tax (WHT) Payable', 'liability', 1),
+          (UUID(), '1140', 'VAT Input Tax', 'asset', 1)
       `);
 
       const [suppCols]: any = await pool.query('SHOW COLUMNS FROM suppliers');
@@ -190,6 +199,9 @@ async function ensureInKindSchema() {
       }
       if (!purchColNames.has('expense_account_id')) {
         await pool.query('ALTER TABLE purchases ADD COLUMN expense_account_id CHAR(36) NULL');
+      }
+      if (!purchColNames.has('vat_rate')) {
+        await pool.query('ALTER TABLE purchases ADD COLUMN vat_rate DECIMAL(5,2) DEFAULT 0.00');
       }
       if (!purchColNames.has('wht_rate')) {
         await pool.query('ALTER TABLE purchases ADD COLUMN wht_rate DECIMAL(5,2) DEFAULT 0.00');
@@ -635,6 +647,7 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
           payment_status: req.body.payment_status || 'pending',
           department_id: req.body.department_id || null,
           expense_account_id: req.body.expense_account_id || null,
+          vat_rate: Number(req.body.vat_rate || 0),
           wht_rate: Number(req.body.wht_rate || 0),
           wht_amount: Number(req.body.wht_amount || 0),
           notes: req.body.notes || null,

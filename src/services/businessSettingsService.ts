@@ -49,7 +49,8 @@ export class BusinessSettingsService {
     const defaultSettings: Partial<BusinessSettings> = {
       business_name: 'My Business',
       default_currency: 'KES',
-      tax_rate: 0.16,
+      tax_rate: 0.00,
+      wht_rate: 0.00,
       receipt_prefix: 'RCP',
       invoice_prefix: 'INV',
       product_code_prefix: 'PRD',

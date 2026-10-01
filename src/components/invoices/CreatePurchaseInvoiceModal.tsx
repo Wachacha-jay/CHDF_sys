@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { SupplierService } from '../../services/supplierService';
 import { ApiService } from '../../services/api';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
 import type { Supplier, Product, Department, Account } from '../../types';
 import { toast } from 'react-hot-toast';
-import { Plus, Trash2, Building2, Tag, BookOpen, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Building2, Sparkles, Percent, ShieldCheck, Receipt, Package, Briefcase } from 'lucide-react';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 
 interface CreatePurchaseInvoiceModalProps {
@@ -15,7 +15,7 @@ interface CreatePurchaseInvoiceModalProps {
 }
 
 const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({ open, onClose, onSuccess }) => {
-  const { currency } = useSettingsContext();
+  const { currency, settings } = useSettingsContext();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -24,7 +24,23 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [expenseAccountId, setExpenseAccountId] = useState('');
-  const [whtRate, setWhtRate] = useState<number>(0);
+  
+  // Tax Rates: VAT for goods (defaults to business settings tax_rate or 0)
+  // WHT for services (defaults to supplier WHT, business settings wht_rate, or 0)
+  const defaultBizVat = useMemo(() => {
+    if (!settings?.tax_rate) return 0;
+    const r = Number(settings.tax_rate);
+    return r > 1 ? r : r * 100;
+  }, [settings?.tax_rate]);
+
+  const defaultBizWht = useMemo(() => {
+    if (!settings?.wht_rate) return 0;
+    const r = Number(settings.wht_rate);
+    return r > 1 ? r : r * 100;
+  }, [settings?.wht_rate]);
+
+  const [vatRate, setVatRate] = useState<number>(defaultBizVat);
+  const [whtRate, setWhtRate] = useState<number>(defaultBizWht);
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   
@@ -33,6 +49,9 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
 
   useEffect(() => {
     if (open) {
+      setVatRate(defaultBizVat);
+      setWhtRate(defaultBizWht);
+
       ApiService.get<Supplier>('suppliers', { filters: { is_active: true } }).then(res => {
         if (res.success && res.data) setSuppliers(res.data);
       });
@@ -47,7 +66,7 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
         setExpenseAccounts(flat.filter(a => a.account_type === 'expense'));
       });
     }
-  }, [open]);
+  }, [open, defaultBizVat, defaultBizWht]);
 
   // When supplier changes, auto-fill department, default expense account, and default WHT rate
   const handleSupplierChange = (supId: string) => {
@@ -56,7 +75,13 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
     if (sup) {
       if (sup.department_id) setDepartmentId(sup.department_id);
       if (sup.expense_account_id) setExpenseAccountId(sup.expense_account_id);
-      setWhtRate(Number(sup.withholding_tax_rate) || 0);
+      
+      // Default WHT from supplier if configured, else default to business settings wht_rate (default 0)
+      if (sup.withholding_tax_rate !== undefined && sup.withholding_tax_rate !== null && Number(sup.withholding_tax_rate) > 0) {
+        setWhtRate(Number(sup.withholding_tax_rate));
+      } else {
+        setWhtRate(defaultBizWht);
+      }
     }
   };
 
@@ -86,6 +111,53 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
     }
   };
 
+  // Dynamic breakdown of goods vs services
+  const breakdown = useMemo(() => {
+    let goodsSubtotal = 0;
+    let servicesSubtotal = 0;
+    let hasGoods = false;
+    let hasServices = false;
+
+    items.forEach(item => {
+      const p = products.find(prod => prod.id === item.product_id);
+      const lineTotal = (Number(item.quantity) || 0) * (Number(item.unit_cost) || 0);
+      if (p?.is_service) {
+        hasServices = true;
+        servicesSubtotal += lineTotal;
+      } else {
+        hasGoods = true;
+        goodsSubtotal += lineTotal;
+      }
+    });
+
+    const totalSubtotal = goodsSubtotal + servicesSubtotal;
+
+    // VAT applies on goods base (or total if all lines are goods or general)
+    const applicableVatBase = hasGoods ? goodsSubtotal : (hasServices ? 0 : totalSubtotal);
+    // WHT applies on services base (or total if all lines are services)
+    const applicableWhtBase = hasServices ? servicesSubtotal : (hasGoods ? 0 : totalSubtotal);
+
+    const calculatedVatAmount = (applicableVatBase * (Number(vatRate) || 0)) / 100;
+    const calculatedWhtAmount = (applicableWhtBase * (Number(whtRate) || 0)) / 100;
+
+    const grossTotal = totalSubtotal + calculatedVatAmount;
+    const netPayable = Math.max(0, grossTotal - calculatedWhtAmount);
+
+    return {
+      goodsSubtotal,
+      servicesSubtotal,
+      totalSubtotal,
+      hasGoods,
+      hasServices,
+      applicableVatBase,
+      applicableWhtBase,
+      calculatedVatAmount,
+      calculatedWhtAmount,
+      grossTotal,
+      netPayable
+    };
+  }, [items, products, vatRate, whtRate]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSupplierId) {
@@ -102,7 +174,12 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
       supplier_id: selectedSupplierId,
       department_id: departmentId || undefined,
       expense_account_id: expenseAccountId || undefined,
+      vat_rate: Number(vatRate) || 0,
+      tax_amount: breakdown.calculatedVatAmount,
       wht_rate: Number(whtRate) || 0,
+      wht_amount: breakdown.calculatedWhtAmount,
+      subtotal: breakdown.totalSubtotal,
+      total_amount: breakdown.grossTotal,
       purchase_date: purchaseDate,
       notes: notes,
       items: items.map(item => ({
@@ -120,7 +197,8 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
       setSelectedSupplierId('');
       setDepartmentId('');
       setExpenseAccountId('');
-      setWhtRate(0);
+      setVatRate(defaultBizVat);
+      setWhtRate(defaultBizWht);
       setNotes('');
       setItems([{ product_id: '', quantity: 1, unit_cost: 0 }]);
       onSuccess();
@@ -131,9 +209,6 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
 
   if (!open) return null;
 
-  const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.unit_cost), 0);
-  const taxAmount = totalAmount * 0.16; // 16% VAT
-
   const selectedSupplierObj = suppliers.find(s => s.id === selectedSupplierId);
 
   return (
@@ -142,7 +217,7 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
         <div className="flex justify-between items-center mb-5 pb-3 border-b border-gray-100">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Create Purchase / Service Invoice</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Record billed supplies or services with Fund & GL allocation</p>
+            <p className="text-xs text-gray-500 mt-0.5">Record billed supplies or services with VAT, WHT, and Fund GL allocation</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 font-bold text-2xl leading-none">&times;</button>
         </div>
@@ -308,13 +383,111 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
               })}
             </div>
           </div>
+
+          {/* Taxes & Withholdings (VAT on Goods & WHT on Services) */}
+          <div className="bg-gradient-to-r from-slate-50 to-blue-50/30 border border-slate-200 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 flex items-center">
+                <Receipt className="w-3.5 h-3.5 mr-1.5 text-blue-600" />
+                Taxation & Withholding Calculations
+              </span>
+              <div className="flex items-center gap-2">
+                {breakdown.hasGoods && (
+                  <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full flex items-center">
+                    <Package className="w-2.5 h-2.5 mr-1" /> Goods: {currency} {breakdown.goodsSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                )}
+                {breakdown.hasServices && (
+                  <span className="text-[10px] font-semibold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full flex items-center">
+                    <Briefcase className="w-2.5 h-2.5 mr-1" /> Services: {currency} {breakdown.servicesSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* VAT for Goods */}
+              <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1.5 shadow-xs">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-800 flex items-center">
+                    <Percent className="w-3 h-3 mr-1 text-blue-600" />
+                    VAT Rate for Goods (%)
+                  </label>
+                  <span className="text-[10px] text-gray-500 font-medium">Default: {defaultBizVat}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={vatRate}
+                      onChange={e => setVatRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-sm font-bold bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      placeholder="0.00"
+                    />
+                    <span className="absolute right-2.5 top-1.5 text-xs text-gray-400 font-bold">%</span>
+                  </div>
+                  <div className="text-right min-w-[90px]">
+                    <span className="block text-[10px] text-gray-400 uppercase font-semibold">VAT Amount</span>
+                    <span className="text-xs font-bold text-blue-700">
+                      +{currency} {breakdown.calculatedVatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  {breakdown.hasGoods 
+                    ? `Applied to physical goods base (${currency} ${breakdown.goodsSubtotal.toFixed(2)})`
+                    : 'Picks from Business Settings (defaults to 0%)'}
+                </p>
+              </div>
+
+              {/* WHT for Services */}
+              <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-1.5 shadow-xs">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-amber-900 flex items-center">
+                    <ShieldCheck className="w-3 h-3 mr-1 text-amber-600" />
+                    Withholding Tax (WHT) (%)
+                  </label>
+                  <span className="text-[10px] text-amber-700 font-medium">Default: {defaultBizWht}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={whtRate}
+                      onChange={e => setWhtRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full border border-amber-300 rounded-md px-2.5 py-1.5 text-sm font-bold bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                      placeholder="0.00"
+                    />
+                    <span className="absolute right-2.5 top-1.5 text-xs text-gray-400 font-bold">%</span>
+                  </div>
+                  <div className="text-right min-w-[90px]">
+                    <span className="block text-[10px] text-amber-600 uppercase font-semibold">WHT Withheld</span>
+                    <span className="text-xs font-bold text-amber-900">
+                      -{currency} {breakdown.calculatedWhtAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-amber-800/80">
+                  {breakdown.hasServices 
+                    ? `Withheld on services base (${currency} ${breakdown.servicesSubtotal.toFixed(2)})`
+                    : 'Picks from Supplier / Business Settings (defaults to 0%)'}
+                </p>
+              </div>
+            </div>
+          </div>
           
           {/* Notes & Summary */}
           <div className="border-t border-gray-100 pt-4 flex justify-between items-start gap-6">
             <div className="flex-1">
               <label className="block mb-1 text-xs font-semibold text-gray-700">Internal Reference / Notes (Optional)</label>
               <textarea 
-                rows={2} 
+                rows={3} 
                 value={notes} 
                 onChange={e => setNotes(e.target.value)} 
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
@@ -322,23 +495,35 @@ const CreatePurchaseInvoiceModal: React.FC<CreatePurchaseInvoiceModalProps> = ({
               />
             </div>
             
-            <div className="w-72 bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2 text-sm">
-              <div className="flex justify-between text-slate-600">
-                <span>Subtotal:</span>
+            <div className="w-80 bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2 text-sm">
+              <div className="flex justify-between text-slate-600 text-xs">
+                <span>Subtotal (Items & Services):</span>
                 <span className="font-semibold text-slate-900">
-                  {currency || 'KES'} {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {currency || 'KES'} {breakdown.totalSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Tax (16% VAT):</span>
-                <span className="font-semibold text-slate-900">
-                  {currency || 'KES'} {taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <div className="flex justify-between text-slate-600 text-xs">
+                <span>VAT ({vatRate}% on Goods):</span>
+                <span className="font-semibold text-blue-700">
+                  +{currency || 'KES'} {breakdown.calculatedVatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex justify-between text-base font-extrabold text-slate-900 border-t border-slate-200 pt-2">
-                <span>Total Invoice:</span>
-                <span className="text-blue-600">
-                  {currency || 'KES'} {(totalAmount + taxAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <div className="flex justify-between text-sm font-bold text-slate-900 border-t border-slate-200 pt-1.5">
+                <span>Gross Invoice Total:</span>
+                <span className="text-slate-900 font-extrabold">
+                  {currency || 'KES'} {breakdown.grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              {breakdown.calculatedWhtAmount > 0 && (
+                <div className="flex justify-between text-amber-900 text-xs bg-amber-50/80 px-2 py-1 rounded-md border border-amber-200/60 font-medium">
+                  <span>WHT Withheld ({whtRate}%):</span>
+                  <span>-{currency || 'KES'} {breakdown.calculatedWhtAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm font-extrabold text-slate-900 border-t border-slate-200 pt-1.5">
+                <span>Net Payable to Vendor:</span>
+                <span className="text-emerald-700 font-extrabold">
+                  {currency || 'KES'} {breakdown.netPayable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>

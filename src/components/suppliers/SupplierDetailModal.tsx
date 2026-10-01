@@ -592,7 +592,7 @@ const SupplierDetailModal: React.FC<SupplierDetailModalProps> = ({
                                 <button
                                   onClick={() => {
                                     onClose();
-                                    navigate(`/purchases/${purchase.id}`);
+                                    navigate(`/purchase-invoice/${purchase.id}`);
                                   }}
                                   className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors text-xs font-medium"
                                   title="View Invoice Detail"

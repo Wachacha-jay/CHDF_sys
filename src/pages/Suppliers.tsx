@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Plus, Search, Edit, Trash2, Truck, Mail, Phone, MapPin, 
   FileText, Eye, Building2, Tag, Percent, 
@@ -17,6 +18,7 @@ import CreatePurchaseInvoiceModal from '../components/invoices/CreatePurchaseInv
 import RecordPaymentModal from '../components/inventory/RecordPaymentModal';
 
 const Suppliers: React.FC = () => {
+  const navigate = useNavigate();
   const { settings } = useSettingsContext();
   const currency = (settings?.default_currency && settings.default_currency !== 'USD') ? settings.default_currency : 'KES';
   
@@ -137,7 +139,7 @@ const Suppliers: React.FC = () => {
         organization_name: '',
         department_id: '',
         expense_account_id: '',
-        withholding_tax_rate: 0,
+        withholding_tax_rate: Number(settings?.wht_rate) || 0,
         service_ids: [],
         bank_name: '',
         account_number: '',
@@ -848,21 +850,30 @@ const Suppliers: React.FC = () => {
                             </span>
                           </td>
                           <td className="px-5 py-3.5 text-right">
-                            {balance > 0.01 ? (
+                            <div className="flex justify-end items-center gap-1.5">
                               <button
-                                onClick={() => {
-                                  setSelectedInvoiceForPayment(invoice);
-                                  setShowRecordPaymentModal(true);
-                                }}
-                                className="inline-flex items-center px-2.5 py-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
+                                onClick={() => navigate(`/purchase-invoice/${invoice.id}`)}
+                                className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors text-xs font-medium"
+                                title="View Purchase Invoice"
                               >
-                                Record Pay
+                                <Eye className="w-4 h-4" />
                               </button>
-                            ) : (
-                              <span className="text-xs text-emerald-600 font-semibold flex items-center justify-end">
-                                <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Paid
-                              </span>
-                            )}
+                              {balance > 0.01 ? (
+                                <button
+                                  onClick={() => {
+                                    setSelectedInvoiceForPayment(invoice);
+                                    setShowRecordPaymentModal(true);
+                                  }}
+                                  className="inline-flex items-center px-2.5 py-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
+                                >
+                                  Record Pay
+                                </button>
+                              ) : (
+                                <span className="text-xs text-emerald-600 font-semibold flex items-center justify-end">
+                                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Paid
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

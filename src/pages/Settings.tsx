@@ -212,7 +212,7 @@ const Settings: React.FC = () => {
 
                   {activeTab === 'financial' && (
                     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                      <h2 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-2">Currency & Tax</h2>
+                      <h2 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-2">Currency, Tax & Withholdings</h2>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-sm font-semibold text-gray-700 mb-1">Default Currency</label>
@@ -224,16 +224,38 @@ const Settings: React.FC = () => {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-sm font-semibold text-gray-700 mb-1">Tax Rate (%)</label>
-                          <input type="number" step="0.01" {...register('tax_rate', { valueAsNumber: true })} className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-                        </div>
-                        <div>
                           <label className="block text-sm font-semibold text-gray-700 mb-1">Fiscal Year Start</label>
                           <select {...register('fiscal_year_start', { valueAsNumber: true })} className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none">
                             {Array.from({ length: 12 }, (_, i) => (
                               <option key={i + 1} value={i + 1}>{new Date(2024, i, 1).toLocaleString('default', { month: 'long' })}</option>
                             ))}
                           </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Default VAT Rate (%)</label>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            min="0" 
+                            max="100" 
+                            {...register('tax_rate', { valueAsNumber: true })} 
+                            className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-semibold" 
+                            placeholder="0.00" 
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">Default Value Added Tax rate for suppliers of goods (defaults to 0.00%).</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Default Withholding Tax (WHT) Rate (%)</label>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            min="0" 
+                            max="100" 
+                            {...register('wht_rate', { valueAsNumber: true })} 
+                            className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-semibold" 
+                            placeholder="0.00" 
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">Default tax rate withheld for service providers and professional fees (defaults to 0.00%).</p>
                         </div>
                       </div>
                     </div>

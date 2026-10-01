@@ -22,13 +22,19 @@ export interface CreatePurchaseData {
   due_date?: string;
   department_id?: string;
   expense_account_id?: string;
+  vat_rate?: number;
+  tax_amount?: number;
   wht_rate?: number;
   wht_amount?: number;
+  subtotal?: number;
+  total_amount?: number;
   items: Array<{
     product_id: string;
     quantity: number;
     unit_cost: number;
     discount_amount?: number;
+    tax_amount?: number;
+    total_amount?: number;
   }>;
   discount_amount?: number;
   notes?: string;
@@ -169,17 +175,28 @@ export class SupplierService {
 
   static async createPurchase(purchaseData: CreatePurchaseData): Promise<Purchase | null> {
     try {
-      const subtotal = purchaseData.items.reduce((sum, item) =>
-        sum + (item.quantity * item.unit_cost) - (item.discount_amount || 0), 0
-      );
-      const taxAmount = subtotal * 0.16;
-      const totalAmount = subtotal + taxAmount - (purchaseData.discount_amount || 0);
+      const subtotal = purchaseData.subtotal !== undefined
+        ? Number(purchaseData.subtotal)
+        : purchaseData.items.reduce((sum, item) =>
+            sum + (item.quantity * item.unit_cost) - (item.discount_amount || 0), 0
+          );
+      
+      const taxAmount = purchaseData.tax_amount !== undefined
+        ? Number(purchaseData.tax_amount)
+        : (subtotal * (Number(purchaseData.vat_rate || 0) / 100));
+
+      const totalAmount = purchaseData.total_amount !== undefined
+        ? Number(purchaseData.total_amount)
+        : (subtotal + taxAmount - (purchaseData.discount_amount || 0));
 
       const response = await ApiService.post<Purchase>('purchases', {
         ...purchaseData,
         subtotal,
         tax_amount: taxAmount,
         total_amount: totalAmount,
+        vat_rate: purchaseData.vat_rate ?? 0,
+        wht_rate: purchaseData.wht_rate ?? 0,
+        wht_amount: purchaseData.wht_amount ?? 0,
         paid_amount: 0,
         payment_status: 'pending'
       });
