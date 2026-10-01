@@ -143,11 +143,13 @@ async function ensureInKindSchema() {
       `);
     }
 
-    // 8. Ensure inter-departmental clearing accounts exist
+    // 8. Ensure inter-departmental clearing and equity grant accounts exist
     await pool.query(`
       INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
         (UUID(), '1300', 'Inter-departmental Receivables', 'asset', 1),
         (UUID(), '2300', 'Inter-departmental Payables', 'liability', 1),
+        (UUID(), '3810', 'Inter-departmental Grants Out (Equity)', 'equity', 1),
+        (UUID(), '3820', 'Inter-departmental Grants In (Equity)', 'equity', 1),
         (UUID(), '4900', 'Internal Transfer In (Revenue)', 'revenue', 1),
         (UUID(), '5900', 'Internal Transfer Out (Expense)', 'expense', 1)
     `);
@@ -157,7 +159,9 @@ async function ensureInKindSchema() {
       const [itCols]: any = await pool.query('SHOW COLUMNS FROM internal_transfers');
       const itColNames = new Set(itCols.map((c: any) => c.Field));
       if (!itColNames.has('transfer_type')) {
-        await pool.query("ALTER TABLE internal_transfers ADD COLUMN transfer_type ENUM('direct_transfer', 'internal_loan', 'loan_repayment') DEFAULT 'direct_transfer'");
+        await pool.query("ALTER TABLE internal_transfers ADD COLUMN transfer_type ENUM('direct_transfer', 'internal_loan', 'loan_repayment', 'grant_transfer') DEFAULT 'internal_loan'");
+      } else {
+        await pool.query("ALTER TABLE internal_transfers MODIFY COLUMN transfer_type ENUM('direct_transfer', 'internal_loan', 'loan_repayment', 'grant_transfer') DEFAULT 'internal_loan'");
       }
       if (!itColNames.has('from_bank_account_id')) {
         await pool.query('ALTER TABLE internal_transfers ADD COLUMN from_bank_account_id CHAR(36) NULL');

@@ -712,7 +712,7 @@ export interface InternalTransfer {
   transfer_date: string;
   description: string;
   status: 'draft' | 'pending' | 'approved' | 'rejected';
-  transfer_type?: 'direct_transfer' | 'internal_loan' | 'loan_repayment';
+  transfer_type?: 'internal_loan' | 'grant_transfer' | 'loan_repayment' | 'direct_transfer';
   approved_by?: string;
   created_by?: string;
   created_at: string;

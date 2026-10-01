@@ -727,20 +727,47 @@ export class FundAccountingService {
         findAccount('2300') ||
         flat.find(a => /payable|due.to/i.test(a.name) && a.account_type === 'liability');
 
-    const transferIn =
-        findAccount('4900') ||
-        flat.find(a => /transfer.in|inter.?dept.+revenue/i.test(a.name));
+    let grantsOut =
+        findAccount('3810') ||
+        flat.find(a => /grant.+out|transfer.+out/i.test(a.name) && a.account_type === 'equity');
 
-    const transferOut =
-        findAccount('5900') ||
-        flat.find(a => /transfer.out|inter.?dept.+expense/i.test(a.name));
+    let grantsIn =
+        findAccount('3820') ||
+        flat.find(a => /grant.+in|transfer.+in/i.test(a.name) && a.account_type === 'equity');
+
+    // Auto-create 3810 / 3820 Equity accounts if not yet created in DB
+    if (!grantsOut) {
+      try {
+        const created = await ApiService.create<Account>('accounts', {
+          code: '3810',
+          name: 'Inter-departmental Grants Out (Equity)',
+          account_type: 'equity',
+          is_system: true
+        });
+        if (created.success && created.data) grantsOut = created.data;
+      } catch (e) {
+        console.warn('Could not auto-create 3810 account:', e);
+      }
+    }
+
+    if (!grantsIn) {
+      try {
+        const created = await ApiService.create<Account>('accounts', {
+          code: '3820',
+          name: 'Inter-departmental Grants In (Equity)',
+          account_type: 'equity',
+          is_system: true
+        });
+        if (created.success && created.data) grantsIn = created.data;
+      } catch (e) {
+        console.warn('Could not auto-create 3820 account:', e);
+      }
+    }
 
     const missing: string[] = [];
     if (!defaultBankAccount)  missing.push('Bank/Cash (1111 or 1110)');
     if (!interDeptReceivable) missing.push('Inter-Dept Receivable (1300)');
     if (!interDeptPayable)    missing.push('Inter-Dept Payable (2300)');
-    if (!transferIn)          missing.push('Transfer In (4900)');
-    if (!transferOut)         missing.push('Transfer Out (5900)');
 
     if (missing.length > 0) {
         throw new Error(
@@ -756,140 +783,158 @@ export class FundAccountingService {
     const fromName = deptName(transfer.from_department_id);
     const toName   = deptName(transfer.to_department_id);
 
-    const lines: any[] = [];
-    const type = transfer.transfer_type || 'direct_transfer';
+    const type = transfer.transfer_type || 'internal_loan';
+    const refCode = (transfer.id || '').slice(0, 8).toUpperCase();
 
-    if (type === 'direct_transfer') {
-        if (transfer.from_bank_account_id || transfer.to_bank_account_id) {
-            // Source Dept: DR Transfer Out (5900), CR Source Bank
-            lines.push(
-                {
-                    account_id: transferOut.id,
-                    description: `Direct Transfer Out to ${toName}`,
-                    debit_amount: transfer.amount,
-                    credit_amount: 0,
-                    department_id: transfer.from_department_id
-                },
-                {
-                    account_id: sourceBank.id,
-                    description: `Transfer payout from ${sourceBank.name} to ${toName}`,
-                    debit_amount: 0,
-                    credit_amount: transfer.amount,
-                    department_id: transfer.from_department_id
-                }
-            );
-            // Dest Dept: DR Dest Bank, CR Transfer In (4900)
-            lines.push(
-                {
-                    account_id: destBank.id,
-                    description: `Transfer received into ${destBank.name} from ${fromName}`,
-                    debit_amount: transfer.amount,
-                    credit_amount: 0,
-                    department_id: transfer.to_department_id
-                },
-                {
-                    account_id: transferIn.id,
-                    description: `Direct Transfer In from ${fromName}`,
-                    debit_amount: 0,
-                    credit_amount: transfer.amount,
-                    department_id: transfer.to_department_id
-                }
-            );
-        } else {
-            lines.push(
-                {
-                    account_id: transferOut.id,
-                    description: `Direct Transfer Out → ${toName}`,
-                    debit_amount: transfer.amount,
-                    credit_amount: 0,
-                    department_id: transfer.from_department_id
-                },
-                {
-                    account_id: transferIn.id,
-                    description: `Direct Transfer In ← ${fromName}`,
-                    debit_amount: 0,
-                    credit_amount: transfer.amount,
-                    department_id: transfer.to_department_id
-                }
-            );
+    // ─────────────────────────────────────────────────────────────────────────────
+    // TWO LINKED JOURNAL ENTRIES:
+    // Outflow / Disbursement Voucher (Source Department) -> Exact amount (e.g. KES 167k)
+    // Inflow / Receipt Voucher (Destination Department)   -> Exact amount (e.g. KES 167k)
+    // Neither income nor revenue! Eliminates doubling (334k -> 167k).
+    // ─────────────────────────────────────────────────────────────────────────────
+    const outflowLines: any[] = [];
+    const inflowLines: any[] = [];
+    let outflowDesc = '';
+    let inflowDesc = '';
+
+    if (type === 'internal_loan') {
+      // ── TYPE 1: LOAN (BALANCE SHEET ASSETS & LIABILITIES) ──────────────────────
+      // Lender Dept: DR Due-From (1300 Asset), CR Source Bank
+      outflowDesc = `Interdepartmental Loan Disbursement → ${toName}: ${transfer.description}`;
+      outflowLines.push(
+        {
+          account_id: interDeptReceivable.id,
+          description: `Loan Receivable from ${toName}`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.from_department_id
+        },
+        {
+          account_id: sourceBank.id,
+          description: `Funds disbursed from ${sourceBank.name} to ${toName}`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.from_department_id
         }
-    } else if (type === 'internal_loan') {
-        // Lender Dept: DR Due-From (1300), CR Paying Bank
-        lines.push(
-            {
-                account_id: interDeptReceivable.id,
-                description: `Loan Receivable from ${toName}`,
-                debit_amount: transfer.amount,
-                credit_amount: 0,
-                department_id: transfer.from_department_id
-            },
-            {
-                account_id: sourceBank.id,
-                description: `Funds disbursed from ${sourceBank.name} to ${toName}`,
-                debit_amount: 0,
-                credit_amount: transfer.amount,
-                department_id: transfer.from_department_id
-            }
-        );
-        // Borrower Dept: DR Receiving Bank, CR Due-To (2300)
-        lines.push(
-            {
-                account_id: destBank.id,
-                description: `Loan received in ${destBank.name} from ${fromName}`,
-                debit_amount: transfer.amount,
-                credit_amount: 0,
-                department_id: transfer.to_department_id
-            },
-            {
-                account_id: interDeptPayable.id,
-                description: `Loan Payable to ${fromName}`,
-                debit_amount: 0,
-                credit_amount: transfer.amount,
-                department_id: transfer.to_department_id
-            }
-        );
+      );
+
+      // Borrower Dept: DR Receiving Bank, CR Due-To (2300 Liability)
+      inflowDesc = `Interdepartmental Loan Receipt ← ${fromName}: ${transfer.description}`;
+      inflowLines.push(
+        {
+          account_id: destBank.id,
+          description: `Loan received in ${destBank.name} from ${fromName}`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.to_department_id
+        },
+        {
+          account_id: interDeptPayable.id,
+          description: `Loan Payable to ${fromName}`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.to_department_id
+        }
+      );
+    } else if (type === 'grant_transfer' || type === 'direct_transfer') {
+      // ── TYPE 2: GRANT (EQUITY / NET ASSET MOVEMENT) ────────────────────────────
+      const grantOutAcc = grantsOut || interDeptReceivable;
+      const grantInAcc = grantsIn || interDeptPayable;
+
+      // Grantor Dept: DR Grants Out (3810 Equity), CR Source Bank
+      outflowDesc = `Interdepartmental Grant Disbursement → ${toName}: ${transfer.description}`;
+      outflowLines.push(
+        {
+          account_id: grantOutAcc.id,
+          description: `Grant Out to ${toName} (Net Asset Allocation)`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.from_department_id
+        },
+        {
+          account_id: sourceBank.id,
+          description: `Grant payout from ${sourceBank.name} to ${toName}`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.from_department_id
+        }
+      );
+
+      // Recipient Dept: DR Receiving Bank, CR Grants In (3820 Equity)
+      inflowDesc = `Interdepartmental Grant Receipt ← ${fromName}: ${transfer.description}`;
+      inflowLines.push(
+        {
+          account_id: destBank.id,
+          description: `Grant received into ${destBank.name} from ${fromName}`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.to_department_id
+        },
+        {
+          account_id: grantInAcc.id,
+          description: `Grant In from ${fromName} (Net Asset Allocation)`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.to_department_id
+        }
+      );
     } else if (type === 'loan_repayment') {
-        // Repayer (Borrower) Dept: DR Due-To (2300), CR Paying Bank
-        lines.push(
-            {
-                account_id: interDeptPayable.id,
-                description: `Loan Repayment to ${toName}`,
-                debit_amount: transfer.amount,
-                credit_amount: 0,
-                department_id: transfer.from_department_id
-            },
-            {
-                account_id: sourceBank.id,
-                description: `Repayment sent from ${sourceBank.name} to ${toName}`,
-                debit_amount: 0,
-                credit_amount: transfer.amount,
-                department_id: transfer.from_department_id
-            }
-        );
-        // Receiving (Lender) Dept: DR Receiving Bank, CR Due-From (1300)
-        lines.push(
-            {
-                account_id: destBank.id,
-                description: `Repayment received in ${destBank.name} from ${fromName}`,
-                debit_amount: transfer.amount,
-                credit_amount: 0,
-                department_id: transfer.to_department_id
-            },
-            {
-                account_id: interDeptReceivable.id,
-                description: `Loan Receivable settled from ${fromName}`,
-                debit_amount: 0,
-                credit_amount: transfer.amount,
-                department_id: transfer.to_department_id
-            }
-        );
+      // ── TYPE 3: LOAN REPAYMENT (BALANCE SHEET SETTLEMENT) ──────────────────────
+      // Borrower Dept: DR Due-To (2300 Liability), CR Source Bank
+      outflowDesc = `Interdepartmental Loan Repayment → ${toName}: ${transfer.description}`;
+      outflowLines.push(
+        {
+          account_id: interDeptPayable.id,
+          description: `Loan Repayment to ${toName} (Liability Settled)`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.from_department_id
+        },
+        {
+          account_id: sourceBank.id,
+          description: `Repayment payout from ${sourceBank.name} to ${toName}`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.from_department_id
+        }
+      );
+
+      // Lender Dept: DR Receiving Bank, CR Due-From (1300 Asset)
+      inflowDesc = `Interdepartmental Loan Repayment Received ← ${fromName}: ${transfer.description}`;
+      inflowLines.push(
+        {
+          account_id: destBank.id,
+          description: `Repayment received into ${destBank.name} from ${fromName}`,
+          debit_amount: transfer.amount,
+          credit_amount: 0,
+          department_id: transfer.to_department_id
+        },
+        {
+          account_id: interDeptReceivable.id,
+          description: `Loan Receivable settled from ${fromName}`,
+          debit_amount: 0,
+          credit_amount: transfer.amount,
+          department_id: transfer.to_department_id
+        }
+      );
     }
 
+    // Post Outflow Voucher
     await AccountingService.createJournalEntry({
       entry_date: transfer.transfer_date,
-      description: `Interdepartmental ${type.replace(/_/g, ' ')} — ${fromName} → ${toName}: ${transfer.description}`,
+      description: outflowDesc,
+      reference: `ITR-${refCode}-OUT`,
       is_posted: true,
-      lines: lines
+      lines: outflowLines
+    });
+
+    // Post Inflow Voucher
+    await AccountingService.createJournalEntry({
+      entry_date: transfer.transfer_date,
+      description: inflowDesc,
+      reference: `ITR-${refCode}-IN`,
+      is_posted: true,
+      lines: inflowLines
     });
   }
 
@@ -1060,11 +1105,15 @@ export class FundAccountingService {
           const type = (acc?.account_type || '').toLowerCase();
           const code = acc?.code || '';
 
-          // Revenue (4xxx) & Transfers In (4900): Credit increases recognized allocation, Debit decreases
-          if (type === 'revenue' || code.startsWith('4')) {
+          // Revenue (4xxx) & Grants In (3820): Credit increases recognized allocation, Debit decreases
+          if (type === 'revenue' || code.startsWith('4') || code === '3820') {
             sum.allocated += (Number(line.credit_amount || 0) - Number(line.debit_amount || 0));
           }
-          // Expense (5xxx) & Transfers Out (5900): Debit increases expenditure, Credit decreases
+          // Grants Out (3810): Debit reduces allocated pool, Credit restores
+          else if (code === '3810') {
+            sum.allocated -= (Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
+          }
+          // Expense (5xxx): Debit increases expenditure, Credit decreases
           else if (type === 'expense' || code.startsWith('5')) {
             sum.expenditures += (Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
           }

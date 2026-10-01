@@ -435,7 +435,10 @@ export interface Database {
           amount: number;
           transfer_date: string;
           description: string;
-          status: 'pending' | 'approved' | 'rejected';
+          status: 'draft' | 'pending' | 'approved' | 'rejected';
+          transfer_type?: 'internal_loan' | 'grant_transfer' | 'loan_repayment' | 'direct_transfer';
+          from_bank_account_id?: string | null;
+          to_bank_account_id?: string | null;
           approved_by: string | null;
           created_by: string | null;
           created_at: string;

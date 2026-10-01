@@ -34,7 +34,7 @@ const InternalTransfers: React.FC = () => {
     amount: 0,
     transfer_date: new Date().toISOString().split('T')[0],
     description: '',
-    transfer_type: 'direct_transfer'
+    transfer_type: 'internal_loan' as 'internal_loan' | 'grant_transfer' | 'loan_repayment' | 'direct_transfer'
   });
 
   const loadData = async () => {
@@ -85,7 +85,7 @@ const InternalTransfers: React.FC = () => {
       amount: 0,
       transfer_date: new Date().toISOString().split('T')[0],
       description: '',
-      transfer_type: 'direct_transfer'
+      transfer_type: 'internal_loan'
     });
     setShowModal(true);
   };
@@ -100,7 +100,7 @@ const InternalTransfers: React.FC = () => {
       amount: Number(t.amount || 0),
       transfer_date: t.transfer_date ? new Date(t.transfer_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       description: t.description || '',
-      transfer_type: t.transfer_type || 'direct_transfer'
+      transfer_type: t.transfer_type || 'internal_loan'
     });
     setShowModal(true);
   };
@@ -368,7 +368,30 @@ const InternalTransfers: React.FC = () => {
                   <tr key={t.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="font-bold text-gray-900">{new Date(t.transfer_date).toLocaleDateString()}</div>
-                      <div className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">{(t.transfer_type || 'direct_transfer').replace(/_/g, ' ')}</div>
+                      <div className="mt-1">
+                        {(() => {
+                          const type = t.transfer_type || 'internal_loan';
+                          if (type === 'internal_loan') {
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                Inter-Dept Loan
+                              </span>
+                            );
+                          }
+                          if (type === 'grant_transfer' || type === 'direct_transfer') {
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Inter-Dept Grant
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                              Loan Repayment
+                            </span>
+                          );
+                        })()}
+                      </div>
                       {t.description && (
                         <div className="text-xs text-gray-400 max-w-xs truncate mt-0.5" title={t.description}>
                           {t.description}
@@ -513,16 +536,35 @@ const InternalTransfers: React.FC = () => {
 
             <form onSubmit={(e) => { e.preventDefault(); handleSaveTransfer('pending'); }} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Transfer Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Transfer Classification <span className="text-red-500">*</span>
+                </label>
                 <select
-                  className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border"
+                  className="w-full rounded-xl border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 py-2.5 border font-semibold text-gray-800"
                   value={formData.transfer_type}
                   onChange={e => setFormData({ ...formData, transfer_type: e.target.value as any })}
                 >
-                  <option value="direct_transfer">Direct Balance Transfer</option>
-                  <option value="internal_loan">Internal Loan (Track Payable / Receivable)</option>
-                  <option value="loan_repayment">Loan Repayment</option>
+                  <option value="internal_loan">Inter-Departmental Loan (Repayable — Balance Sheet: Due To / Due From)</option>
+                  <option value="grant_transfer">Inter-Departmental Grant (Non-repayable — Net Assets / Equity)</option>
+                  <option value="loan_repayment">Loan Repayment (Settle Outstanding Inter-Departmental Loan)</option>
                 </select>
+                <div className="text-xs mt-1.5 p-2.5 rounded-lg bg-gray-50 border border-gray-100">
+                  {formData.transfer_type === 'internal_loan' && (
+                    <div className="text-indigo-700 font-medium">
+                      • <strong>Balance Sheet Only:</strong> Lends operational cash. Posts Dr Due From (1300 Asset) / Cr Bank and Dr Bank / Cr Due To (2300 Liability). Neither income nor expense.
+                    </div>
+                  )}
+                  {formData.transfer_type === 'grant_transfer' && (
+                    <div className="text-emerald-700 font-medium">
+                      • <strong>Equity / Net Assets:</strong> Permanent grant not expected to be repaid. Posts Dr Grants Out (3810 Equity) / Cr Bank and Dr Bank / Cr Grants In (3820 Equity). Neither revenue nor expense.
+                    </div>
+                  )}
+                  {formData.transfer_type === 'loan_repayment' && (
+                    <div className="text-purple-700 font-medium">
+                      • <strong>Balance Sheet Settlement:</strong> Extinguishes borrower's Due To (2300 Liability) and settles lender's Due From (1300 Asset).
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Department Selection */}
