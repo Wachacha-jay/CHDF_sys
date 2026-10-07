@@ -21,6 +21,7 @@ const Invoice: React.FC = () => {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [recordPaymentMethod, setRecordPaymentMethod] = useState('cash');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -45,7 +46,7 @@ const Invoice: React.FC = () => {
     }
   };
 
-  const displayCurrency = (businessSettings?.default_currency === 'KES' || businessSettings?.default_currency === 'KSh' || !businessSettings?.default_currency) ? 'KSh' : businessSettings.default_currency;
+  const displayCurrency = (!businessSettings || businessSettings?.default_currency === 'KES' || businessSettings?.default_currency === 'KSh' || !businessSettings?.default_currency) ? 'KSh' : businessSettings.default_currency;
 
   const handleMpesaPayment = async () => {
     if (!phoneNumber) {
@@ -257,8 +258,6 @@ const Invoice: React.FC = () => {
       </div>
     );
   }
-
-  const [deleting, setDeleting] = useState(false);
 
   const handleDeleteInvoice = async () => {
     if (!sale) return;

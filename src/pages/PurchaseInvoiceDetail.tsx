@@ -16,6 +16,7 @@ const PurchaseInvoiceDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showPayment, setShowPayment] = useState(false);
   const [business, setBusiness] = useState<BusinessSettings | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
 
   const currency = (settings?.default_currency && settings.default_currency !== 'USD') 
@@ -183,7 +184,6 @@ const PurchaseInvoiceDetail: React.FC = () => {
   const totalAmount = Number(invoice.total_amount || 0);
   const paidAmount = Number(invoice.paid_amount || 0);
   const balanceDue = Math.max(0, totalAmount - paidAmount);
-  const [deleting, setDeleting] = useState(false);
 
   const handleDeleteInvoice = async () => {
     if (!invoice) return;
