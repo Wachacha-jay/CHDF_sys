@@ -595,6 +595,8 @@ export interface Child {
   guardian_id?: string;
   status: 'active' | 'graduated' | 'inactive';
   enrollment_date: string;
+  expected_term_fee?: number;
+  expected_annual_fee?: number;
   created_at: string;
   updated_at: string;
   guardian?: Guardian;
@@ -740,3 +742,63 @@ export interface FixedAsset {
   updated_at: string;
   department?: Department;
 }
+
+export interface SchoolFeeStructure {
+  id: string;
+  academic_year: number;
+  term: 'Term 1' | 'Term 2' | 'Term 3' | string;
+  class_name?: string;
+  amount: number;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SchoolFeePayment {
+  id: string;
+  receipt_number: string;
+  child_id: string;
+  academic_year: number;
+  term: 'Term 1' | 'Term 2' | 'Term 3' | string;
+  amount: number;
+  payment_date: string;
+  payment_method: 'mpesa' | 'cash' | 'bank' | string;
+  reference_number?: string;
+  bank_account_id?: string;
+  department_id?: string;
+  fund_id?: string;
+  journal_entry_id?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+  child?: Child;
+  bank_account?: Account;
+  department?: Department;
+  fund?: FundAccount;
+}
+
+export interface StudentFeeTermSummary {
+  term: 'Term 1' | 'Term 2' | 'Term 3';
+  opening_balance: number; // positive = arrears, negative = credit
+  expected_fee: number;
+  total_billed: number; // opening_balance + expected_fee
+  paid_amount: number;
+  closing_balance: number; // total_billed - paid_amount (positive = balance due, negative = overpaid credit)
+  status: 'paid' | 'partial' | 'unpaid' | 'overpaid';
+  payments: SchoolFeePayment[];
+}
+
+export interface StudentFeeYearSummary {
+  child_id: string;
+  academic_year: number;
+  child: Child;
+  terms: {
+    term1: StudentFeeTermSummary;
+    term2: StudentFeeTermSummary;
+    term3: StudentFeeTermSummary;
+  };
+  total_expected: number;
+  total_paid: number;
+  net_balance: number; // positive = owes, negative = overpayment/credit
+  status: 'paid' | 'partial' | 'unpaid' | 'overpaid';
+}

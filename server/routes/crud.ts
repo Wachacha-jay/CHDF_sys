@@ -17,7 +17,7 @@ const VALID_TABLES = [
   // NGO / Fund Accounting tables
   'departments', 'children', 'guardians', 'donors', 'sponsors', 'donor_clusters',
   'fund_accounts', 'donations', 'donation_items', 'sponsorships', 'internal_transfers', 'audit_logs',
-  'fixed_assets'
+  'fixed_assets', 'school_fee_payments', 'school_fee_structures'
 ];
 
 // Self-healing schema for in-kind donations & distribution
@@ -217,6 +217,99 @@ async function ensureInKindSchema() {
       console.warn('Could not inspect or alter suppliers/purchases procurement columns:', procureErr);
     }
 
+    // 11. Ensure School Fee Management schema (Empower School department, Equity Bank account, Fee Revenue account, and tables)
+    try {
+      // a. Ensure 'Empower School' department
+      const [empowerDept]: any = await pool.query("SELECT id FROM departments WHERE LOWER(name) LIKE '%empower%'");
+      if (!empowerDept || empowerDept.length === 0) {
+        await pool.query(`
+          INSERT INTO departments (id, name, description, is_active)
+          VALUES (UUID(), 'Empower School', 'Empower School Educational Operations & Programs', 1)
+        `);
+      }
+
+      // b. Ensure 'Equity Bank' account (Asset, code 1112)
+      const [equityAcc]: any = await pool.query("SELECT id FROM accounts WHERE LOWER(name) LIKE '%equity%' OR code = '1112'");
+      if (!equityAcc || equityAcc.length === 0) {
+        await pool.query(`
+          INSERT INTO accounts (id, code, name, account_type, is_system)
+          VALUES (UUID(), '1112', 'Equity Bank', 'asset', 1)
+        `);
+      }
+
+      // c. Ensure 'School Fees Revenue' account (Revenue, code 4300)
+      const [feeRevAcc]: any = await pool.query("SELECT id FROM accounts WHERE code = '4300' OR LOWER(name) LIKE '%school fee%'");
+      if (!feeRevAcc || feeRevAcc.length === 0) {
+        await pool.query(`
+          INSERT INTO accounts (id, code, name, account_type, is_system)
+          VALUES (UUID(), '4300', 'School Fees Revenue', 'revenue', 1)
+        `);
+      }
+
+      // d. Ensure children table has expected fee columns
+      const [childCols]: any = await pool.query('SHOW COLUMNS FROM children');
+      const childColNames = new Set(childCols.map((c: any) => c.Field));
+      if (!childColNames.has('expected_term_fee')) {
+        await pool.query('ALTER TABLE children ADD COLUMN expected_term_fee DECIMAL(12,2) DEFAULT 0.00');
+      }
+      if (!childColNames.has('expected_annual_fee')) {
+        await pool.query('ALTER TABLE children ADD COLUMN expected_annual_fee DECIMAL(12,2) DEFAULT 0.00');
+      }
+
+      // e. Ensure school_fee_structures table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS school_fee_structures (
+          id CHAR(36) PRIMARY KEY,
+          academic_year INT NOT NULL,
+          term VARCHAR(20) NOT NULL,
+          class_name VARCHAR(100) NULL,
+          amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+          description VARCHAR(255) NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_sfs_year_term (academic_year, term)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+
+      // Seed default 3 terms for current year if empty
+      const [sfsCount]: any = await pool.query('SELECT COUNT(*) as cnt FROM school_fee_structures');
+      if (sfsCount[0]?.cnt === 0) {
+        const currentYear = new Date().getFullYear();
+        await pool.query(`
+          INSERT INTO school_fee_structures (id, academic_year, term, class_name, amount, description) VALUES
+            (UUID(), ?, 'Term 1', 'All', 15000.00, 'Term 1 Standard Expected Fee'),
+            (UUID(), ?, 'Term 2', 'All', 15000.00, 'Term 2 Standard Expected Fee'),
+            (UUID(), ?, 'Term 3', 'All', 15000.00, 'Term 3 Standard Expected Fee')
+        `, [currentYear, currentYear, currentYear]);
+      }
+
+      // f. Ensure school_fee_payments table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS school_fee_payments (
+          id CHAR(36) PRIMARY KEY,
+          receipt_number VARCHAR(50) NOT NULL,
+          child_id CHAR(36) NOT NULL,
+          academic_year INT NOT NULL,
+          term VARCHAR(20) NOT NULL,
+          amount DECIMAL(12,2) NOT NULL,
+          payment_date DATE NOT NULL,
+          payment_method VARCHAR(50) DEFAULT 'mpesa',
+          reference_number VARCHAR(100) NULL,
+          bank_account_id CHAR(36) NULL,
+          department_id CHAR(36) NULL,
+          fund_id CHAR(36) NULL,
+          journal_entry_id CHAR(36) NULL,
+          notes TEXT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_sfp_child (child_id),
+          INDEX idx_sfp_year_term (academic_year, term)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+    } catch (feeSchemaErr) {
+      console.warn('Could not inspect or initialize school fee schema:', feeSchemaErr);
+    }
+
     inKindSchemaEnsured = true;
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
@@ -366,6 +459,39 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
             delete row.password_hash;
             row.name = [row.first_name, row.last_name].filter(Boolean).join(' ') || row.username || row.email;
         }
+    } else if (table === 'school_fee_payments') {
+        for (let row of rows) {
+            if (row.child_id) {
+                const [chRows]: any = await pool.query('SELECT id, code, first_name, last_name, class_name, guardian_id FROM children WHERE id = ?', [row.child_id]);
+                if (chRows && chRows[0]) {
+                    const child = chRows[0];
+                    if (child.guardian_id) {
+                        const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [child.guardian_id]);
+                        child.guardian = gRows[0] || null;
+                    }
+                    row.child = child;
+                }
+            }
+            if (row.bank_account_id) {
+                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.bank_account_id]);
+                row.bank_account = accs[0] || null;
+            }
+            if (row.department_id) {
+                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                row.department = depts[0] || null;
+            }
+            if (row.fund_id) {
+                const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [row.fund_id]);
+                row.fund = funds[0] || null;
+            }
+        }
+    } else if (table === 'children') {
+        for (let row of rows) {
+            if (row.guardian_id) {
+                const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [row.guardian_id]);
+                row.guardian = gRows[0] || null;
+            }
+        }
     }
 
     res.json({ success: true, data: rows });
@@ -508,6 +634,9 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
     } else if (table === 'expenses' && !keys.includes('expense_number')) {
       keys.push('expense_number');
       values.push(`EXP${Date.now()}${Math.floor(Math.random() * 1000)}`);
+    } else if (table === 'school_fee_payments' && !keys.includes('receipt_number')) {
+      keys.push('receipt_number');
+      values.push(`RCP-${Date.now().toString().slice(-6)}`);
     }
 
     // Product-specific sanitization
