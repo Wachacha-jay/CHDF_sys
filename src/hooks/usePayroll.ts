@@ -236,6 +236,47 @@ export const usePayroll = () => {
     }
   }, [loadPayrollRuns, currentPeriod]);
 
+  const unpostPayrollRun = useCallback(async (runId: string) => {
+    try {
+      setLoading(true);
+      const result = await PayrollService.unpostPayrollRun(runId);
+      if (result.success) {
+        toast.success('Run unposted from GL and returned to draft ✓');
+        await loadPayrollRuns(currentPeriod?.id);
+        return true;
+      } else {
+        toast.error(result.error || 'Failed to unpost payroll run');
+        return false;
+      }
+    } catch {
+      toast.error('Failed to unpost payroll run');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollRuns, currentPeriod]);
+
+  const unpostAllPayrollRuns = useCallback(async (periodId?: string) => {
+    try {
+      setLoading(true);
+      const result = await PayrollService.unpostAllPayrollRuns(periodId || currentPeriod?.id);
+      if (result.success) {
+        toast.success(`Unposted ${result.count || ''} payroll run(s) and returned to draft ✓`);
+        await loadPayrollPeriods();
+        await loadPayrollRuns(currentPeriod?.id);
+        return true;
+      } else {
+        toast.error(result.error || 'Failed to unpost payroll runs');
+        return false;
+      }
+    } catch {
+      toast.error('Failed to unpost payroll runs');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPayrollPeriods, loadPayrollRuns, currentPeriod]);
+
   const updatePayrollRun = useCallback(async (runId: string, updates: Partial<PayrollRun>) => {
     try {
       setLoading(true);
@@ -314,6 +355,8 @@ export const usePayroll = () => {
     generatePayrollForPeriod,
     approvePayrollRun,
     payPayrollRun,
+    unpostPayrollRun,
+    unpostAllPayrollRuns,
     updatePayrollRun,
     calculateEmployeePayroll,
     clearAllPayrollRuns,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DollarSign, Clock, CheckCircle, AlertCircle, Eye, Edit, Printer, Building2, Check, ArrowRight } from 'lucide-react';
+import { DollarSign, Clock, CheckCircle, AlertCircle, Eye, Edit, Printer, Building2, Check, ArrowRight, RotateCcw } from 'lucide-react';
 import type { PayrollRun } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { PayrollService } from '../../services/payrollService';
@@ -14,6 +14,7 @@ interface PayrollRunsProps {
     payment_reference: string;
     notes: string;
   }) => Promise<boolean | void>;
+  onUnpostRun?: (runId: string) => Promise<boolean | void>;
   onViewRun: (run: PayrollRun) => void;
   onEditRun: (run: PayrollRun) => void;
   periodStatus?: string;
@@ -23,6 +24,7 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
   payrollRuns,
   onApproveRun,
   onPayRun,
+  onUnpostRun,
   onViewRun,
   onEditRun,
   periodStatus,
@@ -397,6 +399,33 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
                           >
                             <DollarSign className="h-3 w-3 mr-0.5" />
                             Pay
+                          </button>
+                        )}
+
+                        {/* Unpost / Undo Payment (paid runs) */}
+                        {run.status === 'paid' && onUnpostRun && (
+                          <button
+                            onClick={async () => {
+                              const empName = `${run.employee?.first_name || ''} ${run.employee?.last_name || ''}`.trim() || 'this employee';
+                              if (window.confirm(`Are you sure you want to unpost payroll for ${empName}? This will delete the General Ledger journal entries and return the run to Draft so you can edit and correct it.`)) {
+                                setLoadingRun(run.id);
+                                try {
+                                  await onUnpostRun(run.id);
+                                } finally {
+                                  setLoadingRun(null);
+                                }
+                              }
+                            }}
+                            disabled={loadingRun === run.id}
+                            title="Unpost from General Ledger & Return to Draft for Editing"
+                            className="inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-50"
+                          >
+                            {loadingRun === run.id ? (
+                              <div className="w-3 h-3 border-2 border-amber-600 border-t-transparent rounded-full animate-spin mr-1" />
+                            ) : (
+                              <RotateCcw className="h-3 w-3 mr-1" />
+                            )}
+                            Unpost
                           </button>
                         )}
                       </div>

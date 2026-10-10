@@ -165,6 +165,27 @@ export class PayrollService {
     }
   }
 
+  static async unpostPayrollRun(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.put<any>(`/payroll/runs/${id}/unpost`, {});
+      return { success: true };
+    } catch (error: any) {
+      const msg = error?.response?.data?.error || 'Failed to unpost payroll run';
+      return { success: false, error: msg };
+    }
+  }
+
+  static async unpostAllPayrollRuns(periodId?: string): Promise<{ success: boolean; error?: string; count?: number }> {
+    try {
+      const url = periodId ? `/payroll/periods/${periodId}/unpost-all` : '/payroll/unpost-all-paid';
+      const result = await apiClient.post<any>(url, {});
+      return { success: true, count: result?.unposted };
+    } catch (error: any) {
+      const msg = error?.response?.data?.error || 'Failed to unpost payroll runs';
+      return { success: false, error: msg };
+    }
+  }
+
   // ────────────────────────────────────────────────
   // Generate Payroll for Period
   // ────────────────────────────────────────────────

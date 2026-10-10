@@ -861,6 +861,221 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 7B. UNPOST an individual payroll run (revert to draft, remove GL journal entries)
+// ─────────────────────────────────────────────────────────────────────────────
+router.put('/runs/:id/unpost', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const { id } = req.params;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows]: any = await connection.query(
+      `SELECT pr.*, pp.period_name, e.first_name, e.last_name, e.code as employee_code
+       FROM payroll_runs pr
+       LEFT JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+       LEFT JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.id = ?`, [id]
+    );
+
+    if (rows.length === 0) {
+      await connection.rollback();
+      res.status(404).json({ success: false, error: 'Payroll run not found' });
+      return;
+    }
+
+    const run = rows[0];
+    const empLabel = `${run.first_name || ''} ${run.last_name || ''} (${run.employee_code || ''})`.trim();
+
+    // Collect journal entry IDs to delete
+    const journalIdsToDelete: string[] = [];
+    if (run.journal_entry_id) journalIdsToDelete.push(run.journal_entry_id);
+    if (run.payment_journal_entry_id) journalIdsToDelete.push(run.payment_journal_entry_id);
+
+    // Also search for any related entries by payment_reference or description
+    if (run.payment_reference) {
+      const [refJEs]: any = await connection.query(
+        'SELECT id FROM journal_entries WHERE reference = ?',
+        [run.payment_reference]
+      );
+      for (const r of refJEs) {
+        if (!journalIdsToDelete.includes(r.id)) journalIdsToDelete.push(r.id);
+      }
+    }
+
+    // Step 1: Detach references from the run first to avoid foreign key violations
+    await connection.query(
+      `UPDATE payroll_runs SET 
+        status = 'draft',
+        paid_date = NULL,
+        payment_account_id = NULL,
+        payment_reference = NULL,
+        journal_entry_id = NULL,
+        payment_journal_entry_id = NULL
+       WHERE id = ?`,
+      [id]
+    );
+
+    // Step 2: Delete journal entry lines then journal entries
+    for (const jId of journalIdsToDelete) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [jId]);
+      await connection.query('DELETE FROM journal_entries WHERE id = ?', [jId]);
+    }
+
+    // Step 3: If period was closed, reopen to processing
+    if (run.payroll_period_id) {
+      await connection.query(
+        "UPDATE payroll_periods SET status = 'processing' WHERE id = ? AND status = 'closed'",
+        [run.payroll_period_id]
+      );
+    }
+
+    await connection.commit();
+
+    // Audit log
+    try {
+      const unpostedBy = (req as any).user?.id;
+      const unpostedByName = (req as any).user?.name || (req as any).user?.email || 'System';
+      const auditId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'UNPOST', 'Payroll', ?, ?, ?, '')`,
+        [auditId, unpostedBy, unpostedByName, id, `Unposted payroll for ${empLabel}`, JSON.stringify({ run_id: id, emp: empLabel })]
+      );
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      message: `Payroll run unposted and returned to draft for ${empLabel}. GL journal entries removed.`
+    });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error('Error unposting payroll run:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7C. UNPOST ALL paid runs for a period
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/periods/:id/unpost-all', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const { id: periodId } = req.params;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [runs]: any = await connection.query(
+      "SELECT * FROM payroll_runs WHERE payroll_period_id = ? AND status = 'paid'",
+      [periodId]
+    );
+
+    const journalIds = new Set<string>();
+    for (const r of runs) {
+      if (r.journal_entry_id) journalIds.add(r.journal_entry_id);
+      if (r.payment_journal_entry_id) journalIds.add(r.payment_journal_entry_id);
+    }
+
+    // Detach and revert runs
+    await connection.query(
+      `UPDATE payroll_runs SET 
+        status = 'draft',
+        paid_date = NULL,
+        payment_account_id = NULL,
+        payment_reference = NULL,
+        journal_entry_id = NULL,
+        payment_journal_entry_id = NULL
+       WHERE payroll_period_id = ?`,
+      [periodId]
+    );
+
+    // Delete journal entries
+    for (const jId of journalIds) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [jId]);
+      await connection.query('DELETE FROM journal_entries WHERE id = ?', [jId]);
+    }
+
+    // Reopen period
+    await connection.query(
+      "UPDATE payroll_periods SET status = 'processing' WHERE id = ?",
+      [periodId]
+    );
+
+    await connection.commit();
+    res.json({ success: true, message: `Unposted ${runs.length} payroll run(s). All returned to draft.`, unposted: runs.length });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error('Error unposting period runs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7D. UNPOST ALL paid runs across all periods (Full Unpost Reset)
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/unpost-all-paid', authenticate, async (req, res): Promise<void> => {
+  await ensurePayrollSchema();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [runs]: any = await connection.query(
+      "SELECT * FROM payroll_runs WHERE status = 'paid'"
+    );
+
+    const journalIds = new Set<string>();
+    for (const r of runs) {
+      if (r.journal_entry_id) journalIds.add(r.journal_entry_id);
+      if (r.payment_journal_entry_id) journalIds.add(r.payment_journal_entry_id);
+    }
+
+    // Find any additional payroll JEs
+    const [extraJEs]: any = await connection.query(
+      `SELECT id FROM journal_entries 
+       WHERE entry_number LIKE 'PAY-ACC-%' OR entry_number LIKE 'PAY-DISB-%' OR description LIKE 'Payroll Accrual%' OR description LIKE 'Salary payment to%'`
+    );
+    for (const eje of extraJEs) {
+      journalIds.add(eje.id);
+    }
+
+    // Detach and revert all runs
+    await connection.query(
+      `UPDATE payroll_runs SET 
+        status = 'draft',
+        paid_date = NULL,
+        payment_account_id = NULL,
+        payment_reference = NULL,
+        journal_entry_id = NULL,
+        payment_journal_entry_id = NULL
+       WHERE status = 'paid'`
+    );
+
+    // Delete journal entries
+    for (const jId of journalIds) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [jId]);
+      await connection.query('DELETE FROM journal_entries WHERE id = ?', [jId]);
+    }
+
+    // Reopen all closed periods
+    await connection.query(
+      "UPDATE payroll_periods SET status = 'processing' WHERE status = 'closed'"
+    );
+
+    await connection.commit();
+    res.json({ success: true, message: `Unposted ${runs.length} payroll run(s) across all periods.`, unposted: runs.length });
+  } catch (error: any) {
+    await connection.rollback();
+    console.error('Error unposting all paid runs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 8. CLOSE a payroll period
 // ─────────────────────────────────────────────────────────────────────────────
 router.put('/periods/:id/close', authenticate, async (req, res): Promise<void> => {

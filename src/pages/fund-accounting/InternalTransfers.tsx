@@ -5,7 +5,7 @@ import { AccountingService } from '../../services/accountingService';
 import { ApiService } from '../../services/api';
 import { 
   ArrowRightLeft, Plus, CheckCircle, Clock, XCircle, TrendingUp, Wallet, 
-  Calendar, Building2, Landmark, AlertCircle, Edit2, Trash2, Send, FileText, RefreshCw 
+  Calendar, Building2, Landmark, AlertCircle, Edit2, Trash2, Send, FileText, RefreshCw, RotateCcw 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { Department, InternalTransfer, Account } from '../../types';
@@ -224,6 +224,24 @@ const InternalTransfers: React.FC = () => {
       }
     } catch (err: any) {
       toast.error(err?.message || 'Error rejecting transfer');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleUnpost = async (transfer: InternalTransfer) => {
+    if (!window.confirm(`Are you sure you want to unpost transfer of KES ${Number(transfer.amount).toLocaleString()}? This will remove its vouchers from the General Ledger and return it to Draft status so you can edit and correct it.`)) return;
+    setActionLoadingId(transfer.id);
+    try {
+      const res = await FundAccountingService.unpostTransfer(transfer.id);
+      if (res.success) {
+        toast.success('Transfer unposted from GL and returned to Draft');
+        loadData();
+      } else {
+        toast.error(res.error || 'Failed to unpost transfer');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error unposting transfer');
     } finally {
       setActionLoadingId(null);
     }
@@ -501,9 +519,21 @@ const InternalTransfers: React.FC = () => {
                       )}
 
                       {t.status === 'approved' && (
-                        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
-                          GL Posted ✓
-                        </span>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100 flex items-center gap-1">
+                            <CheckCircle size={12} className="text-emerald-600" />
+                            GL Posted
+                          </span>
+                          <button
+                            onClick={() => handleUnpost(t)}
+                            disabled={actionLoadingId === t.id}
+                            title="Unpost from General Ledger & Return to Draft for Editing"
+                            className="flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-lg font-bold text-xs hover:bg-amber-100 transition-colors disabled:opacity-50"
+                          >
+                            <RotateCcw size={12} />
+                            <span>Unpost</span>
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

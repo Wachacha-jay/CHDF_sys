@@ -5,10 +5,16 @@ INSERT INTO departments (id, name, description, is_active)
 SELECT UUID(), 'Empower Hearts Special School', 'Empower Hearts Special School Educational Operations & Programs', 1
 WHERE NOT EXISTS (SELECT 1 FROM departments WHERE LOWER(name) LIKE '%empower%');
 
--- 2. Ensure Equity Bank Asset Account (code 1112) exists
+-- 2. Ensure Co-operative Bank is preserved on code 1112
+UPDATE accounts SET name = 'Co-operative Bank' WHERE code = '1112' AND name = 'Equity Bank';
 INSERT INTO accounts (id, code, name, account_type, is_system)
-SELECT UUID(), '1112', 'Equity Bank', 'asset', 1
-WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE LOWER(name) LIKE '%equity%' OR code = '1112');
+SELECT UUID(), '1112', 'Co-operative Bank', 'asset', 1
+WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE code = '1112' OR LOWER(name) LIKE '%cooperative%' OR LOWER(name) LIKE '%co-operative%');
+
+-- 3. Ensure Equity Bank Asset Account (code 1115) exists as a separate dedicated account
+INSERT INTO accounts (id, code, name, account_type, is_system)
+SELECT UUID(), '1115', 'Equity Bank', 'asset', 1
+WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE LOWER(name) LIKE '%equity%');
 
 -- 3. Ensure School Fees Revenue Account (code 4300) exists
 INSERT INTO accounts (id, code, name, account_type, is_system)

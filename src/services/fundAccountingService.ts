@@ -1,4 +1,5 @@
 import { ApiService } from './api';
+import { apiClient } from '../lib/api-client';
 import { 
   Department, 
   Donor, 
@@ -692,6 +693,36 @@ export class FundAccountingService {
         return { success: true };
     } catch (err: any) {
         return { success: false, error: err?.message || 'GL posting failed. Transfer status updated but not posted to ledger.' };
+    }
+  }
+
+  static async unpostTransfer(transferId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.put<any>(`/internal_transfers/${transferId}/unpost`, {});
+      return { success: true };
+    } catch (err: any) {
+      // Fallback: unpost via ApiService directly
+      try {
+        const refCode = (transferId || '').slice(0, 8).toUpperCase();
+        const jeResponse = await ApiService.get<any>('journal_entries');
+        if (jeResponse.success && jeResponse.data) {
+          const matching = jeResponse.data.filter((j: any) => 
+            j.reference === `ITR-${refCode}-OUT` || 
+            j.reference === `ITR-${refCode}-IN` ||
+            (j.reference && j.reference.includes(refCode))
+          );
+          for (const je of matching) {
+            await ApiService.delete('journal_entries', je.id);
+          }
+        }
+        await ApiService.update('internal_transfers', transferId, {
+          status: 'draft',
+          approved_by: null
+        });
+        return { success: true };
+      } catch (fallbackErr: any) {
+        return { success: false, error: fallbackErr?.message || err?.message || 'Failed to unpost transfer' };
+      }
     }
   }
 

@@ -99,6 +99,8 @@ const Employees: React.FC = () => {
     generatePayrollForPeriod,
     approvePayrollRun,
     payPayrollRun,
+    unpostPayrollRun,
+    unpostAllPayrollRuns,
     updatePayrollRun,
     clearAllPayrollRuns
   } = usePayroll();
@@ -771,6 +773,7 @@ const Employees: React.FC = () => {
               payrollRuns={payrollRuns}
               onApproveRun={approvePayrollRun}
               onPayRun={payPayrollRun}
+              onUnpostRun={unpostPayrollRun}
               onViewRun={handleViewPayrollDetails}
               onEditRun={handleEditPayrollRun}
               periodStatus={currentPeriod.status}

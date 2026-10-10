@@ -97,7 +97,7 @@ const ChildManagement: React.FC = () => {
 
   // Identified Default Accounts (Equity Bank & Empower School)
   const equityBankAccount = useMemo(() => {
-    return accounts.find(a => a.name.toLowerCase().includes('equity') || a.code === '1112') ||
+    return accounts.find(a => a.name.toLowerCase().includes('equity') || a.code === '1115' || a.code === '1116') ||
            accounts.find(a => a.account_type === 'asset' && a.name.toLowerCase().includes('bank')) ||
            accounts.find(a => a.account_type === 'asset');
   }, [accounts]);
@@ -146,13 +146,14 @@ const ChildManagement: React.FC = () => {
         if (existingJEntryIds.has(entry.id)) return;
 
         const descLower = (entry.description || '').toLowerCase();
-        const isFeeDesc = descLower.includes('school fee') || descLower.includes('tuition') || descLower.includes('fee payment') || descLower.includes('child support');
+        const isFeeDesc = descLower.includes('school fee') || descLower.includes('tuition fee');
+        const isNotDonationOrExpense = !descLower.includes('donation') && !descLower.includes('expense') && !descLower.includes('procurement');
 
         const lines = entry.lines || [];
         const childLine = lines.find(l => l.child_id);
-        const feeRevLine = lines.find(l => l.account?.code === '4300' || l.account?.name?.toLowerCase().includes('school fee'));
+        const feeRevLine = lines.find(l => l.account?.code === '4300' || (l.credit_amount > 0 && l.account?.name?.toLowerCase().includes('school fee')));
 
-        if (isFeeDesc || childLine || feeRevLine) {
+        if ((isFeeDesc || feeRevLine) && isNotDonationOrExpense) {
           let childId = childLine?.child_id || '';
           if (!childId && childrenData.length > 0) {
             for (const c of childrenData) {
