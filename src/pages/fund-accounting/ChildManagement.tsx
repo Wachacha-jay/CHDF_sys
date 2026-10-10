@@ -116,16 +116,18 @@ const ChildManagement: React.FC = () => {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [childrenData, guardiansData, accList, fundList, deptList, settingsData, structuresData, feePaymentsData] = await Promise.all([
+      const [childrenData, guardiansData, accList, fundList, deptList, settingsData, structuresData, feePaymentsData, journalEntries] = await Promise.all([
         FundAccountingService.getChildren(),
         FundAccountingService.getGuardians(),
         AccountingService.getAccounts(),
         FundAccountingService.getFundAccounts(),
         FundAccountingService.getDepartments(),
         BusinessSettingsService.getSettings(),
-        SchoolFeeService.getFeeStructures(selectedAcademicYear),
-        SchoolFeeService.getFeePayments({ academic_year: selectedAcademicYear })
+        SchoolFeeService.getFeeStructures(selectedAcademicYear === 0 ? undefined : selectedAcademicYear),
+        SchoolFeeService.getFeePayments({ academic_year: selectedAcademicYear }),
+        AccountingService.getJournalEntries()
       ]);
+      
       setChildren(childrenData);
       setGuardians(guardiansData);
       const flatAccs = accList ? AccountingService.flattenAccounts(accList) : [];
@@ -134,7 +136,63 @@ const ChildManagement: React.FC = () => {
       setDepartments(deptList);
       setBusinessSettings(settingsData);
       setFeeStructures(structuresData);
-      setFeePayments(feePaymentsData);
+
+      // Synthesize any journal entries that are fee payments but not yet in school_fee_payments
+      const existingJEntryIds = new Set(feePaymentsData.map(p => p.journal_entry_id).filter(Boolean));
+      const childMap = new Map(childrenData.map(c => [c.id, c]));
+
+      const synthesized: SchoolFeePayment[] = [];
+      (journalEntries || []).forEach(entry => {
+        if (existingJEntryIds.has(entry.id)) return;
+
+        const descLower = (entry.description || '').toLowerCase();
+        const isFeeDesc = descLower.includes('school fee') || descLower.includes('tuition') || descLower.includes('fee payment') || descLower.includes('child support');
+
+        const lines = entry.lines || [];
+        const childLine = lines.find(l => l.child_id);
+        const feeRevLine = lines.find(l => l.account?.code === '4300' || l.account?.name?.toLowerCase().includes('school fee'));
+
+        if (isFeeDesc || childLine || feeRevLine) {
+          let childId = childLine?.child_id || '';
+          if (!childId && childrenData.length > 0) {
+            for (const c of childrenData) {
+              const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
+              if (descLower.includes(fullName) || (c.code && descLower.includes(c.code.toLowerCase()))) {
+                childId = c.id;
+                break;
+              }
+            }
+          }
+          if (!childId && childrenData.length > 0) childId = childrenData[0].id;
+
+          const matchedChild = childMap.get(childId);
+          const amount = Number(entry.total_debit || entry.total_credit || 0);
+          const pDate = entry.entry_date ? new Date(entry.entry_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+          const pYear = new Date(pDate).getFullYear();
+
+          let term: 'Term 1' | 'Term 2' | 'Term 3' = 'Term 2';
+          if (descLower.includes('term 1')) term = 'Term 1';
+          else if (descLower.includes('term 3')) term = 'Term 3';
+
+          synthesized.push({
+            id: `syn-${entry.id}`,
+            receipt_number: entry.entry_number || entry.reference || `RCP-${entry.id.slice(-6)}`,
+            child_id: childId,
+            child: matchedChild,
+            academic_year: pYear,
+            term: term,
+            amount: amount,
+            payment_date: pDate,
+            payment_method: 'mpesa',
+            reference_number: entry.reference || undefined,
+            journal_entry_id: entry.id,
+            notes: entry.description
+          });
+        }
+      });
+
+      const combinedFeePayments = [...feePaymentsData, ...synthesized];
+      setFeePayments(combinedFeePayments);
     } catch (error) {
       console.error('Error loading child management data:', error);
       toast.error('Failed to load school fee data');
@@ -146,21 +204,7 @@ const ChildManagement: React.FC = () => {
   const loadPayments = async () => {
     setLoadingPayments(true);
     try {
-      const [sfpList, entries] = await Promise.all([
-        SchoolFeeService.getFeePayments({ academic_year: selectedAcademicYear }),
-        AccountingService.getJournalEntries()
-      ]);
-      setFeePayments(sfpList);
-      
-      // Filter legacy journal entries if any:
-      const legacyFeeEntries = entries.filter(entry => {
-        const descMatches = entry.description?.toLowerCase().includes('school fee');
-        const lineMatches = entry.lines?.some(l => 
-          l.child_id && (l.account?.code === '4300' || l.account?.code === '5310' || l.account?.code === '5350')
-        );
-        return descMatches || lineMatches;
-      });
-      setLegacyPayments(legacyFeeEntries);
+      await loadAllData();
     } catch (error) {
       console.error('Error loading fee payments:', error);
     } finally {
@@ -476,6 +520,7 @@ const ChildManagement: React.FC = () => {
               onChange={(e) => setSelectedAcademicYear(Number(e.target.value))}
               className="bg-transparent text-sm font-bold text-indigo-600 border-none focus:ring-0 cursor-pointer p-0 pr-2"
             >
+              <option value={0}>All Academic Years</option>
               {[currentYear + 1, currentYear, currentYear - 1, currentYear - 2].map(yr => (
                 <option key={yr} value={yr}>{yr}</option>
               ))}

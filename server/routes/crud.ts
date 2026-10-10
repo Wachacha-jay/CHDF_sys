@@ -504,6 +504,11 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
   try {
     const { limit, offset, orderBy, orderDir, ...filters } = req.query;
     
+    // For school_fee_payments, if academic_year is 0 or '0', remove filter to return all years
+    if (table === 'school_fee_payments' && (filters.academic_year === '0' || filters.academic_year === 0)) {
+      delete filters.academic_year;
+    }
+
     let query = `SELECT * FROM ${table}`;
     const queryParams: any[] = [];
     const filterKeys = Object.keys(filters);
@@ -515,6 +520,11 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         
         if (val === 'null') {
           return `${key} IS NULL`;
+        }
+
+        if (table === 'school_fee_payments' && key === 'academic_year') {
+          queryParams.push(val, val);
+          return `(academic_year = ? OR YEAR(payment_date) = ? OR academic_year IS NULL OR academic_year = 0)`;
         }
 
         // Handle >= and <= filters

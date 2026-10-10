@@ -65,14 +65,28 @@ export class SchoolFeeService {
   }): Promise<SchoolFeePayment[]> {
     const apiFilters: Record<string, any> = {};
     if (filters?.child_id) apiFilters.child_id = filters.child_id;
-    if (filters?.academic_year) apiFilters.academic_year = filters.academic_year;
+    if (filters?.academic_year && filters.academic_year !== 0) apiFilters.academic_year = filters.academic_year;
     if (filters?.term && filters.term !== 'all') apiFilters.term = filters.term;
 
     const res = await ApiService.get<SchoolFeePayment>('school_fee_payments', {
       filters: apiFilters,
       orderBy: { column: 'payment_date', ascending: false }
     });
-    return res.success ? (res.data || []) : [];
+
+    let payments = res.success ? (res.data || []) : [];
+
+    // Normalize payment fields if missing:
+    payments = payments.map(p => {
+      const pYear = p.academic_year ? Number(p.academic_year) : (p.payment_date ? new Date(p.payment_date).getFullYear() : 2026);
+      const pTerm = p.term || 'Term 2';
+      return {
+        ...p,
+        academic_year: pYear,
+        term: pTerm
+      };
+    });
+
+    return payments;
   }
 
   /**
@@ -204,42 +218,60 @@ export class SchoolFeeService {
     structures: SchoolFeeStructure[],
     allPayments: SchoolFeePayment[]
   ): StudentFeeYearSummary {
-    const childPayments = allPayments.filter(
-      p => p.child_id === child.id && Number(p.academic_year) === Number(year)
-    );
+    const childPayments = allPayments.filter(p => {
+      if (p.child_id !== child.id) return false;
+      if (!year || Number(year) === 0) return true;
+      const pYear = Number(p.academic_year || (p.payment_date ? new Date(p.payment_date).getFullYear() : 2026));
+      return pYear === Number(year);
+    });
 
     const getExpectedForTerm = (term: 'Term 1' | 'Term 2' | 'Term 3'): number => {
-      // 1. Child individual term fee if set
       if (child.expected_term_fee && Number(child.expected_term_fee) > 0) {
         return Number(child.expected_term_fee);
       }
-      // 2. Match fee structure by year, term, and class (or 'All')
       const classMatch = structures.find(
-        s => Number(s.academic_year) === Number(year) && s.term === term && s.class_name && s.class_name.toLowerCase() === (child.class_name || '').toLowerCase()
+        s => (Number(year) === 0 || Number(s.academic_year) === Number(year)) && s.term === term && s.class_name && s.class_name.toLowerCase() === (child.class_name || '').toLowerCase()
       );
       if (classMatch) return Number(classMatch.amount);
 
       const allMatch = structures.find(
-        s => Number(s.academic_year) === Number(year) && s.term === term && (!s.class_name || s.class_name === 'All')
+        s => (Number(year) === 0 || Number(s.academic_year) === Number(year)) && s.term === term && (!s.class_name || s.class_name === 'All')
       );
       if (allMatch) return Number(allMatch.amount);
 
-      // 3. Child annual fee divided by 3
       if (child.expected_annual_fee && Number(child.expected_annual_fee) > 0) {
         return Math.round(Number(child.expected_annual_fee) / 3);
       }
 
-      // 4. Default fallback: 15,000 KSh per term
       return 15000;
+    };
+
+    const isTermMatch = (pTerm: string, targetTerm: 'Term 1' | 'Term 2' | 'Term 3', pDate?: string): boolean => {
+      if (!pTerm) {
+        if (pDate) {
+          const month = new Date(pDate).getMonth() + 1;
+          if (month >= 1 && month <= 4) return targetTerm === 'Term 1';
+          if (month >= 5 && month <= 8) return targetTerm === 'Term 2';
+          if (month >= 9 && month <= 12) return targetTerm === 'Term 3';
+        }
+        return targetTerm === 'Term 2';
+      }
+      const normP = pTerm.toLowerCase().replace(/\s+/g, '');
+      const normT = targetTerm.toLowerCase().replace(/\s+/g, '');
+      if (normP === normT) return true;
+      if (normP.includes('1') && normT.includes('1')) return true;
+      if (normP.includes('2') && normT.includes('2')) return true;
+      if (normP.includes('3') && normT.includes('3')) return true;
+      return false;
     };
 
     // TERM 1
     const t1Expected = getExpectedForTerm('Term 1');
-    const t1Payments = childPayments.filter(p => p.term === 'Term 1');
+    const t1Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 1', p.payment_date));
     const t1Paid = t1Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const t1Opening = 0; // Starts clean for the year
+    const t1Opening = 0;
     const t1TotalBilled = t1Opening + t1Expected;
-    const t1Closing = t1TotalBilled - t1Paid; // positive = balance due, negative = credit/overpayment
+    const t1Closing = t1TotalBilled - t1Paid;
 
     const getTermStatus = (expected: number, paid: number, closing: number): 'paid' | 'partial' | 'unpaid' | 'overpaid' => {
       if (closing < 0) return 'overpaid';
@@ -262,7 +294,7 @@ export class SchoolFeeService {
     // TERM 2 (Carries Forward Closing of Term 1)
     const t2Opening = t1Closing;
     const t2Expected = getExpectedForTerm('Term 2');
-    const t2Payments = childPayments.filter(p => p.term === 'Term 2');
+    const t2Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 2', p.payment_date));
     const t2Paid = t2Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t2TotalBilled = t2Opening + t2Expected;
     const t2Closing = t2TotalBilled - t2Paid;
@@ -281,7 +313,7 @@ export class SchoolFeeService {
     // TERM 3 (Carries Forward Closing of Term 2)
     const t3Opening = t2Closing;
     const t3Expected = getExpectedForTerm('Term 3');
-    const t3Payments = childPayments.filter(p => p.term === 'Term 3');
+    const t3Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 3', p.payment_date));
     const t3Paid = t3Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t3TotalBilled = t3Opening + t3Expected;
     const t3Closing = t3TotalBilled - t3Paid;
@@ -299,7 +331,7 @@ export class SchoolFeeService {
 
     const totalExpected = t1Expected + t2Expected + t3Expected;
     const totalPaid = t1Paid + t2Paid + t3Paid;
-    const netBalance = t3Closing; // Cumulative year standing
+    const netBalance = t3Closing;
 
     let overallStatus: 'paid' | 'partial' | 'unpaid' | 'overpaid' = 'unpaid';
     if (netBalance < 0) {

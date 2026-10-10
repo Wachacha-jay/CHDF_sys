@@ -1,8 +1,8 @@
 -- Migration 024: School Fee Management (3-term logic, Empower School, Equity Bank, Fee Structures & Payments)
 
--- 1. Ensure Empower School Department exists
+-- 1. Ensure Empower Hearts Special School Department exists
 INSERT INTO departments (id, name, description, is_active)
-SELECT UUID(), 'Empower School', 'Empower School Educational Operations & Programs', 1
+SELECT UUID(), 'Empower Hearts Special School', 'Empower Hearts Special School Educational Operations & Programs', 1
 WHERE NOT EXISTS (SELECT 1 FROM departments WHERE LOWER(name) LIKE '%empower%');
 
 -- 2. Ensure Equity Bank Asset Account (code 1112) exists
