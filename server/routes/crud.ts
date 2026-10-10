@@ -217,33 +217,48 @@ async function ensureInKindSchema() {
       console.warn('Could not inspect or alter suppliers/purchases procurement columns:', procureErr);
     }
 
-    // 11. Ensure School Fee Management schema (Empower School department, Equity Bank account, Fee Revenue account, and tables)
+    // 11. Ensure School Fee Management schema & historical data cleanup
     try {
-      // a. Ensure 'Empower School' department
-      const [empowerDept]: any = await pool.query("SELECT id FROM departments WHERE LOWER(name) LIKE '%empower%'");
-      if (!empowerDept || empowerDept.length === 0) {
+      // a. Ensure 'Empower Hearts Special School' department
+      let deptId: string | null = null;
+      const [empowerDepts]: any = await pool.query("SELECT id, name FROM departments WHERE LOWER(name) LIKE '%empower%'");
+      if (empowerDepts && empowerDepts.length > 0) {
+        deptId = empowerDepts[0].id;
+        await pool.query("UPDATE departments SET name = 'Empower Hearts Special School' WHERE id = ?", [deptId]);
+      } else {
+        deptId = crypto.randomUUID();
         await pool.query(`
           INSERT INTO departments (id, name, description, is_active)
-          VALUES (UUID(), 'Empower School', 'Empower School Educational Operations & Programs', 1)
-        `);
+          VALUES (?, 'Empower Hearts Special School', 'Empower Hearts Special School Educational Operations & Programs', 1)
+        `, [deptId]);
       }
 
       // b. Ensure 'Equity Bank' account (Asset, code 1112)
-      const [equityAcc]: any = await pool.query("SELECT id FROM accounts WHERE LOWER(name) LIKE '%equity%' OR code = '1112'");
-      if (!equityAcc || equityAcc.length === 0) {
+      let equityBankId: string | null = null;
+      const [equityAccs]: any = await pool.query("SELECT id, code, name FROM accounts WHERE LOWER(name) LIKE '%equity%' OR code = '1112'");
+      if (equityAccs && equityAccs.length > 0) {
+        equityBankId = equityAccs[0].id;
+        await pool.query("UPDATE accounts SET name = 'Equity Bank', account_type = 'asset', code = '1112' WHERE id = ?", [equityBankId]);
+      } else {
+        equityBankId = crypto.randomUUID();
         await pool.query(`
           INSERT INTO accounts (id, code, name, account_type, is_system)
-          VALUES (UUID(), '1112', 'Equity Bank', 'asset', 1)
-        `);
+          VALUES (?, '1112', 'Equity Bank', 'asset', 1)
+        `, [equityBankId]);
       }
 
       // c. Ensure 'School Fees Revenue' account (Revenue, code 4300)
-      const [feeRevAcc]: any = await pool.query("SELECT id FROM accounts WHERE code = '4300' OR LOWER(name) LIKE '%school fee%'");
-      if (!feeRevAcc || feeRevAcc.length === 0) {
+      let feeRevId: string | null = null;
+      const [feeRevAccs]: any = await pool.query("SELECT id, code, name FROM accounts WHERE code = '4300' OR LOWER(name) LIKE '%school fee%'");
+      if (feeRevAccs && feeRevAccs.length > 0) {
+        feeRevId = feeRevAccs[0].id;
+        await pool.query("UPDATE accounts SET name = 'School Fees Revenue', account_type = 'revenue', code = '4300' WHERE id = ?", [feeRevId]);
+      } else {
+        feeRevId = crypto.randomUUID();
         await pool.query(`
           INSERT INTO accounts (id, code, name, account_type, is_system)
-          VALUES (UUID(), '4300', 'School Fees Revenue', 'revenue', 1)
-        `);
+          VALUES (?, '4300', 'School Fees Revenue', 'revenue', 1)
+        `, [feeRevId]);
       }
 
       // d. Ensure children table has expected fee columns
@@ -306,6 +321,147 @@ async function ensureInKindSchema() {
           INDEX idx_sfp_year_term (academic_year, term)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      // g. Historical Fee Data Cleanup & Migration for pre-existing payments
+      const [feeEntries]: any = await pool.query(`
+        SELECT DISTINCT je.*
+        FROM journal_entries je
+        LEFT JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+        LEFT JOIN accounts a ON jel.account_id = a.id
+        WHERE LOWER(je.description) LIKE '%school fee%'
+           OR LOWER(je.description) LIKE '%tuition%'
+           OR a.code IN ('4300', '5310', '5350')
+           OR (jel.child_id IS NOT NULL AND (a.account_type IN ('revenue', 'expense') OR a.code LIKE '4%' OR a.code LIKE '5%'))
+      `);
+
+      if (feeEntries && feeEntries.length > 0 && deptId && equityBankId && feeRevId) {
+        const [children]: any = await pool.query('SELECT * FROM children');
+        const childMap = new Map(children.map((c: any) => [c.id, c]));
+
+        for (const entry of feeEntries) {
+          const [lines]: any = await pool.query(
+            'SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?',
+            [entry.id]
+          );
+
+          let childId = lines.find((l: any) => l.child_id)?.child_id;
+          let matchedChild = childId ? childMap.get(childId) : null;
+
+          if (!matchedChild) {
+            for (const c of children) {
+              const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
+              if (entry.description.toLowerCase().includes(fullName) || (c.code && entry.description.toLowerCase().includes(c.code.toLowerCase()))) {
+                childId = c.id;
+                matchedChild = c;
+                break;
+              }
+            }
+          }
+
+          if (!childId && children.length > 0) {
+            childId = children[0].id;
+            matchedChild = children[0];
+          }
+
+          const studentName = matchedChild ? `${matchedChild.first_name} ${matchedChild.last_name}` : 'Student';
+          const studentCode = matchedChild ? matchedChild.code : '';
+          const amount = Number(entry.total_debit || entry.total_credit || 0);
+          const entryYear = entry.entry_date ? new Date(entry.entry_date).getFullYear() : 2026;
+
+          let ref = entry.reference || '';
+          const mpesaMatch = entry.description.match(/([A-Z0-9]{8,12})/);
+          if (!ref && mpesaMatch) ref = mpesaMatch[1];
+          const receiptNo = entry.entry_number || `RCP-${Date.now().toString().slice(-6)}`;
+
+          // Re-create lines: Debit Equity Bank, Credit School Fees Revenue, tagged with child and department
+          await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
+
+          const debitLineId = crypto.randomUUID();
+          const creditLineId = crypto.randomUUID();
+
+          await pool.query(`
+            INSERT INTO journal_entry_lines 
+              (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id)
+            VALUES 
+              (?, ?, ?, ?, ?, 0, ?, ?),
+              (?, ?, ?, ?, 0, ?, ?, ?)
+          `, [
+            debitLineId,
+            entry.id,
+            equityBankId,
+            `School fee payment received into Equity Bank for ${studentName} (${studentCode}) - Term 2`,
+            amount,
+            deptId,
+            childId,
+
+            creditLineId,
+            entry.id,
+            feeRevId,
+            `School fee revenue recognized for ${studentName} (${studentCode}) - Term 2`,
+            amount,
+            deptId,
+            childId
+          ]);
+
+          const updatedDescription = `School Fee Payment (Guardian Inflow) - Term 2 ${entryYear}: ${studentName} (${studentCode}) - ${ref || receiptNo}`;
+          await pool.query(`
+            UPDATE journal_entries
+            SET description = ?, is_posted = 1, total_debit = ?, total_credit = ?
+            WHERE id = ?
+          `, [updatedDescription, amount, amount, entry.id]);
+
+          // Seed/Update school_fee_payments table
+          const [existingSfp]: any = await pool.query(
+            'SELECT id FROM school_fee_payments WHERE journal_entry_id = ? OR (child_id = ? AND payment_date = ? AND amount = ?)',
+            [entry.id, childId, entry.entry_date, amount]
+          );
+
+          if (existingSfp && existingSfp.length > 0) {
+            await pool.query(`
+              UPDATE school_fee_payments
+              SET bank_account_id = ?,
+                  department_id = ?,
+                  academic_year = ?,
+                  term = 'Term 2',
+                  amount = ?,
+                  child_id = ?,
+                  journal_entry_id = ?
+              WHERE id = ?
+            `, [equityBankId, deptId, entryYear, amount, childId, entry.id, existingSfp[0].id]);
+          } else {
+            const sfpId = crypto.randomUUID();
+            await pool.query(`
+              INSERT INTO school_fee_payments 
+                (id, receipt_number, child_id, academic_year, term, amount, payment_date, payment_method, reference_number, bank_account_id, department_id, journal_entry_id, notes)
+              VALUES 
+                (?, ?, ?, ?, 'Term 2', ?, ?, 'mpesa', ?, ?, ?, ?, ?)
+            `, [
+              sfpId,
+              receiptNo,
+              childId,
+              entryYear,
+              amount,
+              entry.entry_date,
+              ref,
+              equityBankId,
+              deptId,
+              entry.id,
+              updatedDescription
+            ]);
+          }
+        }
+      }
+
+      // Ensure all rows in school_fee_payments are linked to Empower Hearts Special School, Equity Bank, and Term 2
+      if (deptId && equityBankId) {
+        await pool.query(`
+          UPDATE school_fee_payments
+          SET department_id = ?,
+              bank_account_id = ?,
+              term = 'Term 2'
+          WHERE department_id IS NULL OR bank_account_id IS NULL OR term != 'Term 2'
+        `, [deptId, equityBankId]);
+      }
     } catch (feeSchemaErr) {
       console.warn('Could not inspect or initialize school fee schema:', feeSchemaErr);
     }
