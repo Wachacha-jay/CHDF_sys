@@ -22,9 +22,23 @@ const VALID_TABLES = [
 
 // Self-healing schema for in-kind donations & distribution
 let inKindSchemaEnsured = false;
+let isEnsuringSchema = false;
+
 async function ensureInKindSchema() {
-  if (inKindSchemaEnsured) return;
+  if (inKindSchemaEnsured || isEnsuringSchema) return;
+  isEnsuringSchema = true;
   try {
+    // 0. Ensure _migrations table exists
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS _migrations (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL UNIQUE,
+          executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (_) {}
+
     // 1. Ensure accounts exist
     await pool.query(`
       INSERT IGNORE INTO accounts (id, code, name, account_type, is_system) VALUES
@@ -345,203 +359,210 @@ async function ensureInKindSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
 
-      // h. RECOVERY & RESTORATION:
-      // Resolve standard Donation Revenue and Program Expense accounts
-      let donRevId: string | null = null;
-      const [dRevAccs]: any = await pool.query("SELECT id FROM accounts WHERE code = '4200' OR LOWER(name) LIKE '%donation revenue%' OR code = '4000'");
-      donRevId = dRevAccs[0]?.id || null;
+      // h. RECOVERY & RESTORATION (Executed ONCE via _migrations):
+      const [mig024]: any = await pool.query("SELECT id FROM _migrations WHERE name = '024_school_fee_restoration'");
+      if (!mig024 || mig024.length === 0) {
+        console.log('Executing one-time school fee restoration...');
+        // Resolve standard Donation Revenue and Program Expense accounts
+        let donRevId: string | null = null;
+        const [dRevAccs]: any = await pool.query("SELECT id FROM accounts WHERE code = '4200' OR LOWER(name) LIKE '%donation revenue%' OR code = '4000'");
+        donRevId = dRevAccs[0]?.id || null;
 
-      let progExpId: string | null = null;
-      const [pExpAccs]: any = await pool.query("SELECT id FROM accounts WHERE code = '5310' OR code = '5300' OR LOWER(name) LIKE '%child support%' OR LOWER(name) LIKE '%program%'");
-      progExpId = pExpAccs[0]?.id || null;
+        let progExpId: string | null = null;
+        const [pExpAccs]: any = await pool.query("SELECT id FROM accounts WHERE code = '5310' OR code = '5300' OR LOWER(name) LIKE '%child support%' OR LOWER(name) LIKE '%program%'");
+        progExpId = pExpAccs[0]?.id || null;
 
-      // 1. RESTORE DONATIONS mistakenly modified into school fees
-      const [allDonations]: any = await pool.query("SELECT * FROM donations");
-      for (const don of (allDonations || [])) {
-        const donBankId = don.payment_account_id || coopBankId;
-        const donAmt = Number(don.amount || don.total_fair_market_value || 0);
+        // 1. RESTORE DONATIONS mistakenly modified into school fees
+        const [allDonations]: any = await pool.query("SELECT * FROM donations");
+        for (const don of (allDonations || [])) {
+          const donBankId = don.payment_account_id || coopBankId;
+          const donAmt = Number(don.amount || don.total_fair_market_value || 0);
 
-        // Find journal entries that match this donation but have 'School Fee' or were credited to school fees revenue
-        const [matchingJEs]: any = await pool.query(`
-          SELECT DISTINCT je.id, je.description 
-          FROM journal_entries je
-          JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
-          WHERE (je.reference = ? OR (je.entry_date = ? AND ABS(je.total_debit - ?) < 0.01))
-            AND (LOWER(je.description) LIKE '%school fee%' OR jel.account_id = ?)
-        `, [don.reference_number || don.id, don.donation_date, donAmt, feeRevId]);
+          // Find journal entries that match this donation but have 'School Fee' or were credited to school fees revenue
+          const [matchingJEs]: any = await pool.query(`
+            SELECT DISTINCT je.id, je.description 
+            FROM journal_entries je
+            JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+            WHERE (je.reference = ? OR (je.entry_date = ? AND ABS(je.total_debit - ?) < 0.01))
+              AND (LOWER(je.description) LIKE '%school fee%' OR jel.account_id = ?)
+          `, [don.reference_number || don.id, don.donation_date, donAmt, feeRevId]);
 
-        for (const je of matchingJEs) {
-          await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [je.id]);
-          const drLineId = crypto.randomUUID();
-          const crLineId = crypto.randomUUID();
-          await pool.query(`
-            INSERT INTO journal_entry_lines 
-              (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id, donor_id, fund_id)
-            VALUES 
-              (?, ?, ?, ?, ?, 0, ?, ?, ?, ?),
-              (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-          `, [
-            drLineId, je.id, donBankId, `Donation received into Bank (${don.payment_method || 'bank'})`, donAmt, don.department_id || null, don.restricted_to_child_id || null, don.donor_id || null, don.fund_id || null,
-            crLineId, je.id, donRevId || feeRevId, `Donation revenue recognised`, donAmt, don.department_id || null, don.restricted_to_child_id || null, don.donor_id || null, don.fund_id || null
-          ]);
+          for (const je of matchingJEs) {
+            await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [je.id]);
+            const drLineId = crypto.randomUUID();
+            const crLineId = crypto.randomUUID();
+            await pool.query(`
+              INSERT INTO journal_entry_lines 
+                (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id, donor_id, fund_id)
+              VALUES 
+                (?, ?, ?, ?, ?, 0, ?, ?, ?, ?),
+                (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+            `, [
+              drLineId, je.id, donBankId, `Donation received into Bank (${don.payment_method || 'bank'})`, donAmt, don.department_id || null, don.restricted_to_child_id || null, don.donor_id || null, don.fund_id || null,
+              crLineId, je.id, donRevId || feeRevId, `Donation revenue recognised`, donAmt, don.department_id || null, don.restricted_to_child_id || null, don.donor_id || null, don.fund_id || null
+            ]);
 
-          const restoredDesc = `Donation Received - ${don.reference_number || 'Donation'}: KSh ${donAmt}`;
-          await pool.query('UPDATE journal_entries SET description = ? WHERE id = ?', [restoredDesc, je.id]);
+            const restoredDesc = `Donation Received - ${don.reference_number || 'Donation'}: KSh ${donAmt}`;
+            await pool.query('UPDATE journal_entries SET description = ? WHERE id = ?', [restoredDesc, je.id]);
 
-          // Remove non-school-fee record from school_fee_payments table
-          await pool.query('DELETE FROM school_fee_payments WHERE journal_entry_id = ?', [je.id]);
+            // Remove non-school-fee record from school_fee_payments table
+            await pool.query('DELETE FROM school_fee_payments WHERE journal_entry_id = ?', [je.id]);
+          }
+
+          // Clean up false rows in school_fee_payments directly matching donation
+          if (don.restricted_to_child_id) {
+            await pool.query(`
+              DELETE FROM school_fee_payments 
+              WHERE child_id = ? AND payment_date = ? AND ABS(amount - ?) < 0.01
+            `, [don.restricted_to_child_id, don.donation_date, donAmt]);
+          }
         }
 
-        // Clean up false rows in school_fee_payments directly matching donation
-        if (don.restricted_to_child_id) {
-          await pool.query(`
-            DELETE FROM school_fee_payments 
-            WHERE child_id = ? AND payment_date = ? AND ABS(amount - ?) < 0.01
-          `, [don.restricted_to_child_id, don.donation_date, donAmt]);
+        // 2. RESTORE EXPENSES mistakenly modified into school fees
+        const [allExpenses]: any = await pool.query("SELECT * FROM expenses");
+        for (const exp of (allExpenses || [])) {
+          const expBankId = exp.payment_account_id || coopBankId;
+          const expAccountId = exp.account_id || progExpId;
+          const expAmt = Number(exp.amount || 0);
+
+          const [matchingJEs]: any = await pool.query(`
+            SELECT DISTINCT je.id, je.description 
+            FROM journal_entries je
+            JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+            WHERE (je.reference = ? OR je.reference = ? OR (je.entry_date = ? AND ABS(je.total_debit - ?) < 0.01))
+              AND (LOWER(je.description) LIKE '%school fee%' OR jel.account_id = ?)
+          `, [exp.expense_number, exp.reference, exp.expense_date, expAmt, feeRevId]);
+
+          for (const je of matchingJEs) {
+            await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [je.id]);
+            const drLineId = crypto.randomUUID();
+            const crLineId = crypto.randomUUID();
+            await pool.query(`
+              INSERT INTO journal_entry_lines 
+                (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id, fund_id)
+              VALUES 
+                (?, ?, ?, ?, ?, 0, ?, ?, ?),
+                (?, ?, ?, ?, 0, ?, ?, ?, ?)
+            `, [
+              drLineId, je.id, expAccountId, `Expense: ${exp.description || exp.expense_number}`, expAmt, exp.department_id || null, exp.child_id || null, exp.fund_id || null,
+              crLineId, je.id, expBankId, `Disbursement from Bank`, expAmt, exp.department_id || null, exp.child_id || null, exp.fund_id || null
+            ]);
+
+            const restoredDesc = `Expense: ${exp.expense_number} - ${exp.description || 'Program Disbursement'}`;
+            await pool.query('UPDATE journal_entries SET description = ? WHERE id = ?', [restoredDesc, je.id]);
+
+            // Remove false row from school_fee_payments table
+            await pool.query('DELETE FROM school_fee_payments WHERE journal_entry_id = ?', [je.id]);
+          }
+
+          if (exp.child_id) {
+            await pool.query(`
+              DELETE FROM school_fee_payments 
+              WHERE child_id = ? AND payment_date = ? AND ABS(amount - ?) < 0.01
+            `, [exp.child_id, exp.expense_date, expAmt]);
+          }
         }
-      }
 
-      // 2. RESTORE EXPENSES mistakenly modified into school fees
-      const [allExpenses]: any = await pool.query("SELECT * FROM expenses");
-      for (const exp of (allExpenses || [])) {
-        const expBankId = exp.payment_account_id || coopBankId;
-        const expAccountId = exp.account_id || progExpId;
-        const expAmt = Number(exp.amount || 0);
+        // 3. For GENUINE School Fee Payments ONLY:
+        // Ensure debit is Equity Bank (dedicated account), credit is School Fees Revenue (4300), department is Empower Hearts Special School
+        if (deptId && equityBankId && feeRevId) {
+          // Query genuine fee payments (excluding any that match donations or expenses)
+          const [feeEntries]: any = await pool.query(`
+            SELECT DISTINCT je.*
+            FROM journal_entries je
+            JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+            WHERE (LOWER(je.description) LIKE '%school fee%' OR LOWER(je.description) LIKE '%tuition%')
+              AND LOWER(je.description) NOT LIKE '%donation%'
+              AND LOWER(je.description) NOT LIKE '%expense%'
+              AND NOT EXISTS (SELECT 1 FROM donations d WHERE d.reference_number = je.reference OR (d.donation_date = je.entry_date AND ABS(d.amount - je.total_debit) < 0.01))
+              AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.expense_number = je.reference OR e.reference = je.reference OR (e.expense_date = je.entry_date AND ABS(e.amount - je.total_debit) < 0.01))
+          `);
 
-        const [matchingJEs]: any = await pool.query(`
-          SELECT DISTINCT je.id, je.description 
-          FROM journal_entries je
-          JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
-          WHERE (je.reference = ? OR je.reference = ? OR (je.entry_date = ? AND ABS(je.total_debit - ?) < 0.01))
-            AND (LOWER(je.description) LIKE '%school fee%' OR jel.account_id = ?)
-        `, [exp.expense_number, exp.reference, exp.expense_date, expAmt, feeRevId]);
+          const [children]: any = await pool.query('SELECT * FROM children');
+          const childMap = new Map(children.map((c: any) => [c.id, c]));
 
-        for (const je of matchingJEs) {
-          await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [je.id]);
-          const drLineId = crypto.randomUUID();
-          const crLineId = crypto.randomUUID();
-          await pool.query(`
-            INSERT INTO journal_entry_lines 
-              (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id, fund_id)
-            VALUES 
-              (?, ?, ?, ?, ?, 0, ?, ?, ?),
-              (?, ?, ?, ?, 0, ?, ?, ?, ?)
-          `, [
-            drLineId, je.id, expAccountId, `Expense: ${exp.description || exp.expense_number}`, expAmt, exp.department_id || null, exp.child_id || null, exp.fund_id || null,
-            crLineId, je.id, expBankId, `Disbursement from Bank`, expAmt, exp.department_id || null, exp.child_id || null, exp.fund_id || null
-          ]);
+          for (const entry of feeEntries) {
+            const [lines]: any = await pool.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
+            let childId = lines.find((l: any) => l.child_id)?.child_id;
+            let matchedChild = childId ? childMap.get(childId) : null;
 
-          const restoredDesc = `Expense: ${exp.expense_number} - ${exp.description || 'Program Disbursement'}`;
-          await pool.query('UPDATE journal_entries SET description = ? WHERE id = ?', [restoredDesc, je.id]);
-
-          // Remove false row from school_fee_payments table
-          await pool.query('DELETE FROM school_fee_payments WHERE journal_entry_id = ?', [je.id]);
-        }
-
-        if (exp.child_id) {
-          await pool.query(`
-            DELETE FROM school_fee_payments 
-            WHERE child_id = ? AND payment_date = ? AND ABS(amount - ?) < 0.01
-          `, [exp.child_id, exp.expense_date, expAmt]);
-        }
-      }
-
-      // 3. For GENUINE School Fee Payments ONLY:
-      // Ensure debit is Equity Bank (dedicated account), credit is School Fees Revenue (4300), department is Empower Hearts Special School
-      if (deptId && equityBankId && feeRevId) {
-        // Query genuine fee payments (excluding any that match donations or expenses)
-        const [feeEntries]: any = await pool.query(`
-          SELECT DISTINCT je.*
-          FROM journal_entries je
-          JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
-          WHERE (LOWER(je.description) LIKE '%school fee%' OR LOWER(je.description) LIKE '%tuition%')
-            AND LOWER(je.description) NOT LIKE '%donation%'
-            AND LOWER(je.description) NOT LIKE '%expense%'
-            AND NOT EXISTS (SELECT 1 FROM donations d WHERE d.reference_number = je.reference OR (d.donation_date = je.entry_date AND ABS(d.amount - je.total_debit) < 0.01))
-            AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.expense_number = je.reference OR e.reference = je.reference OR (e.expense_date = je.entry_date AND ABS(e.amount - je.total_debit) < 0.01))
-        `);
-
-        const [children]: any = await pool.query('SELECT * FROM children');
-        const childMap = new Map(children.map((c: any) => [c.id, c]));
-
-        for (const entry of feeEntries) {
-          const [lines]: any = await pool.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
-          let childId = lines.find((l: any) => l.child_id)?.child_id;
-          let matchedChild = childId ? childMap.get(childId) : null;
-
-          if (!matchedChild) {
-            for (const c of children) {
-              const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
-              if (entry.description.toLowerCase().includes(fullName) || (c.code && entry.description.toLowerCase().includes(c.code.toLowerCase()))) {
-                childId = c.id;
-                matchedChild = c;
-                break;
+            if (!matchedChild) {
+              for (const c of children) {
+                const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
+                if (entry.description.toLowerCase().includes(fullName) || (c.code && entry.description.toLowerCase().includes(c.code.toLowerCase()))) {
+                  childId = c.id;
+                  matchedChild = c;
+                  break;
+                }
               }
             }
-          }
-          if (!childId && children.length > 0) {
-            childId = children[0].id;
-            matchedChild = children[0];
-          }
+            if (!childId && children.length > 0) {
+              childId = children[0].id;
+              matchedChild = children[0];
+            }
 
-          const studentName = matchedChild ? `${matchedChild.first_name} ${matchedChild.last_name}` : 'Student';
-          const studentCode = matchedChild ? matchedChild.code : '';
-          const amount = Number(entry.total_debit || entry.total_credit || 0);
-          const entryYear = entry.entry_date ? new Date(entry.entry_date).getFullYear() : 2026;
+            const studentName = matchedChild ? `${matchedChild.first_name} ${matchedChild.last_name}` : 'Student';
+            const studentCode = matchedChild ? matchedChild.code : '';
+            const amount = Number(entry.total_debit || entry.total_credit || 0);
+            const entryYear = entry.entry_date ? new Date(entry.entry_date).getFullYear() : 2026;
 
-          let ref = entry.reference || '';
-          const mpesaMatch = entry.description.match(/([A-Z0-9]{8,12})/);
-          if (!ref && mpesaMatch) ref = mpesaMatch[1];
-          const receiptNo = entry.entry_number || `RCP-${Date.now().toString().slice(-6)}`;
+            let ref = entry.reference || '';
+            const mpesaMatch = entry.description.match(/([A-Z0-9]{8,12})/);
+            if (!ref && mpesaMatch) ref = mpesaMatch[1];
+            const receiptNo = entry.entry_number || `RCP-${Date.now().toString().slice(-6)}`;
 
-          // Update lines for genuine fee payment
-          await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
-          const debitLineId = crypto.randomUUID();
-          const creditLineId = crypto.randomUUID();
-          await pool.query(`
-            INSERT INTO journal_entry_lines 
-              (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id)
-            VALUES 
-              (?, ?, ?, ?, ?, 0, ?, ?),
-              (?, ?, ?, ?, 0, ?, ?, ?)
-          `, [
-            debitLineId, entry.id, equityBankId, `School fee payment received into Equity Bank for ${studentName} (${studentCode}) - Term 2`, amount, deptId, childId,
-            creditLineId, entry.id, feeRevId, `School fee revenue recognized for ${studentName} (${studentCode}) - Term 2`, amount, deptId, childId
-          ]);
-
-          const updatedDescription = `School Fee Payment (Guardian Inflow) - Term 2 ${entryYear}: ${studentName} (${studentCode}) - ${ref || receiptNo}`;
-          await pool.query(`
-            UPDATE journal_entries
-            SET description = ?, is_posted = 1, total_debit = ?, total_credit = ?
-            WHERE id = ?
-          `, [updatedDescription, amount, amount, entry.id]);
-
-          // Update school_fee_payments table
-          const [existingSfp]: any = await pool.query('SELECT id FROM school_fee_payments WHERE journal_entry_id = ?', [entry.id]);
-          if (existingSfp.length > 0) {
+            // Update lines for genuine fee payment
+            await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
+            const debitLineId = crypto.randomUUID();
+            const creditLineId = crypto.randomUUID();
             await pool.query(`
-              UPDATE school_fee_payments
-              SET bank_account_id = ?, department_id = ?, academic_year = ?, term = 'Term 2', amount = ?, child_id = ?
-              WHERE id = ?
-            `, [equityBankId, deptId, entryYear, amount, childId, existingSfp[0].id]);
-          } else {
-            await pool.query(`
-              INSERT INTO school_fee_payments 
-                (id, receipt_number, child_id, academic_year, term, amount, payment_date, payment_method, reference_number, bank_account_id, department_id, journal_entry_id, notes)
+              INSERT INTO journal_entry_lines 
+                (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id, child_id)
               VALUES 
-                (?, ?, ?, ?, 'Term 2', ?, ?, 'mpesa', ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, 0, ?, ?),
+                (?, ?, ?, ?, 0, ?, ?, ?)
             `, [
-              crypto.randomUUID(), receiptNo, childId, entryYear, amount, entry.entry_date, ref, equityBankId, deptId, entry.id, updatedDescription
+              debitLineId, entry.id, equityBankId, `School fee payment received into Equity Bank for ${studentName} (${studentCode}) - Term 2`, amount, deptId, childId,
+              creditLineId, entry.id, feeRevId, `School fee revenue recognized for ${studentName} (${studentCode}) - Term 2`, amount, deptId, childId
             ]);
+
+            const updatedDescription = `School Fee Payment (Guardian Inflow) - Term 2 ${entryYear}: ${studentName} (${studentCode}) - ${ref || receiptNo}`;
+            await pool.query(`
+              UPDATE journal_entries
+              SET description = ?, is_posted = 1, total_debit = ?, total_credit = ?
+              WHERE id = ?
+            `, [updatedDescription, amount, amount, entry.id]);
+
+            // Update school_fee_payments table
+            const [existingSfp]: any = await pool.query('SELECT id FROM school_fee_payments WHERE journal_entry_id = ?', [entry.id]);
+            if (existingSfp.length > 0) {
+              await pool.query(`
+                UPDATE school_fee_payments
+                SET bank_account_id = ?, department_id = ?, academic_year = ?, term = 'Term 2', amount = ?, child_id = ?
+                WHERE id = ?
+              `, [equityBankId, deptId, entryYear, amount, childId, existingSfp[0].id]);
+            } else {
+              await pool.query(`
+                INSERT INTO school_fee_payments 
+                  (id, receipt_number, child_id, academic_year, term, amount, payment_date, payment_method, reference_number, bank_account_id, department_id, journal_entry_id, notes)
+                VALUES 
+                  (?, ?, ?, ?, 'Term 2', ?, ?, 'mpesa', ?, ?, ?, ?, ?)
+              `, [
+                crypto.randomUUID(), receiptNo, childId, entryYear, amount, entry.entry_date, ref, equityBankId, deptId, entry.id, updatedDescription
+              ]);
+            }
           }
+
+          // Ensure all genuine rows in school_fee_payments point to Equity Bank & Empower Hearts Special School
+          await pool.query(`
+            UPDATE school_fee_payments
+            SET department_id = ?, bank_account_id = ?
+            WHERE department_id != ? OR bank_account_id != ?
+          `, [deptId, equityBankId, deptId, equityBankId]);
         }
 
-        // Ensure all genuine rows in school_fee_payments point to Equity Bank & Empower Hearts Special School
-        await pool.query(`
-          UPDATE school_fee_payments
-          SET department_id = ?, bank_account_id = ?
-          WHERE department_id != ? OR bank_account_id != ?
-        `, [deptId, equityBankId, deptId, equityBankId]);
+        await pool.query("INSERT IGNORE INTO _migrations (name) VALUES ('024_school_fee_restoration')");
+        console.log('✅ One-time school fee restoration completed.');
       }
     } catch (feeSchemaErr) {
       console.warn('Could not inspect or initialize school fee schema:', feeSchemaErr);
@@ -561,71 +582,78 @@ async function ensureInKindSchema() {
       if (!migRows || migRows.length === 0) {
         console.log('Executing one-time unpost for mistaken payroll and internal transfer records...');
 
-        // a. Detach payroll journal references
-        await pool.query("UPDATE payroll_runs SET journal_entry_id = NULL, payment_journal_entry_id = NULL WHERE status = 'paid'");
+        await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+          // a. Detach payroll journal references
+          await pool.query("UPDATE payroll_runs SET journal_entry_id = NULL, payment_journal_entry_id = NULL WHERE status = 'paid'");
 
-        // b. Delete lines and vouchers for ITR internal transfers
-        await pool.query(`
-          DELETE jel FROM journal_entry_lines jel
-          JOIN journal_entries je ON jel.journal_entry_id = je.id
-          WHERE je.reference LIKE 'ITR-%'
-        `);
-        await pool.query("DELETE FROM journal_entries WHERE reference LIKE 'ITR-%'");
+          // b. Delete lines and vouchers for ITR internal transfers
+          await pool.query(`
+            DELETE jel FROM journal_entry_lines jel
+            JOIN journal_entries je ON jel.journal_entry_id = je.id
+            WHERE je.reference LIKE 'ITR-%'
+          `);
+          await pool.query("DELETE FROM journal_entries WHERE reference LIKE 'ITR-%'");
 
-        // c. Delete lines and vouchers for Payroll (PAY-ACC-*, PAY-DISB-*, Payroll Accrual, Salary payment)
-        await pool.query(`
-          DELETE jel FROM journal_entry_lines jel
-          JOIN journal_entries je ON jel.journal_entry_id = je.id
-          WHERE je.entry_number LIKE 'PAY-ACC-%' 
-             OR je.entry_number LIKE 'PAY-DISB-%'
-             OR je.description LIKE 'Payroll Accrual%'
-             OR je.description LIKE 'Salary payment to%'
-        `);
-        await pool.query(`
-          DELETE FROM journal_entries 
-          WHERE entry_number LIKE 'PAY-ACC-%' 
-             OR entry_number LIKE 'PAY-DISB-%'
-             OR description LIKE 'Payroll Accrual%'
-             OR description LIKE 'Salary payment to%'
-        `);
+          // c. Delete lines and vouchers for Payroll (PAY-ACC-*, PAY-DISB-*, Payroll Accrual, Salary payment)
+          await pool.query(`
+            DELETE jel FROM journal_entry_lines jel
+            JOIN journal_entries je ON jel.journal_entry_id = je.id
+            WHERE je.entry_number LIKE 'PAY-ACC-%' 
+               OR je.entry_number LIKE 'PAY-DISB-%'
+               OR je.description LIKE 'Payroll Accrual%'
+               OR je.description LIKE 'Salary payment to%'
+          `);
+          await pool.query(`
+            DELETE FROM journal_entries 
+            WHERE entry_number LIKE 'PAY-ACC-%' 
+               OR entry_number LIKE 'PAY-DISB-%'
+               OR description LIKE 'Payroll Accrual%'
+               OR description LIKE 'Salary payment to%'
+          `);
 
-        // d. Revert approved internal transfers back to 'draft'
-        await pool.query("UPDATE internal_transfers SET status = 'draft', approved_by = NULL WHERE status = 'approved'");
+          // d. Revert approved internal transfers back to 'draft'
+          await pool.query("UPDATE internal_transfers SET status = 'draft', approved_by = NULL WHERE status = 'approved'");
 
-        // e. Revert paid payroll runs back to 'draft'
-        await pool.query(`
-          UPDATE payroll_runs SET 
-            status = 'draft',
-            paid_date = NULL,
-            payment_account_id = NULL,
-            payment_reference = NULL,
-            journal_entry_id = NULL,
-            payment_journal_entry_id = NULL
-          WHERE status = 'paid'
-        `);
+          // e. Revert paid payroll runs back to 'draft'
+          await pool.query(`
+            UPDATE payroll_runs SET 
+              status = 'draft',
+              paid_date = NULL,
+              payment_account_id = NULL,
+              payment_reference = NULL,
+              journal_entry_id = NULL,
+              payment_journal_entry_id = NULL
+            WHERE status = 'paid'
+          `);
 
-        // f. Re-open closed payroll periods
-        await pool.query("UPDATE payroll_periods SET status = 'processing' WHERE status = 'closed'");
+          // f. Re-open closed payroll periods
+          await pool.query("UPDATE payroll_periods SET status = 'processing' WHERE status = 'closed'");
 
-        // g. Record that this migration has run so it never re-runs
-        await pool.query("INSERT IGNORE INTO _migrations (name) VALUES ('025_unpost_payroll_and_transfers')");
-        console.log('✅ One-time unpost migration completed.');
+          // g. Record that this migration has run so it never re-runs
+          await pool.query("INSERT IGNORE INTO _migrations (name) VALUES ('025_unpost_payroll_and_transfers')");
+          console.log('✅ One-time unpost migration completed.');
+        } finally {
+          await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+        }
       }
     } catch (unpostMigErr) {
       console.warn('Error running unpost migration in ensureInKindSchema:', unpostMigErr);
     }
-
-    inKindSchemaEnsured = true;
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
+  } finally {
+    inKindSchemaEnsured = true;
+    isEnsuringSchema = false;
   }
 }
 
-// Attach ensureInKindSchema middleware to router
-router.use(async (_req, _res, next) => {
-  await ensureInKindSchema();
-  next();
-});
+// Run self-healing schema initialization once in the background without blocking incoming HTTP requests
+setTimeout(() => {
+  ensureInKindSchema().catch((err) => {
+    console.warn('Background schema check encountered an issue (non-fatal):', err);
+  });
+}, 1000);
 
 async function logCrudActivity(req: any, action: string, table: any, entityId: any, entityLabel?: string) {
   try {
@@ -819,36 +847,40 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         }
     } else if (table === 'purchases') {
         for (let row of rows) {
-            const [suppliers]: any = await pool.query('SELECT * FROM suppliers WHERE id = ?', [row.supplier_id]);
-            row.supplier = suppliers[0] || null;
-            if (row.department_id) {
-                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
-                row.department = depts[0] || null;
-            }
-            if (row.expense_account_id) {
-                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
-                row.expense_account = accs[0] || null;
-            }
+            try {
+                const [suppliers]: any = await pool.query('SELECT * FROM suppliers WHERE id = ?', [row.supplier_id]);
+                row.supplier = suppliers[0] || null;
+                if (row.department_id) {
+                    const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                    row.department = depts[0] || null;
+                }
+                if (row.expense_account_id) {
+                    const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
+                    row.expense_account = accs[0] || null;
+                }
+            } catch (_) {}
         }
     } else if (table === 'suppliers') {
         for (let row of rows) {
-            if (row.service_ids) {
-                try {
-                    row.service_ids = typeof row.service_ids === 'string' ? JSON.parse(row.service_ids) : row.service_ids;
-                } catch (_) {
+            try {
+                if (row.service_ids) {
+                    try {
+                        row.service_ids = typeof row.service_ids === 'string' ? JSON.parse(row.service_ids) : row.service_ids;
+                    } catch (_) {
+                        row.service_ids = [];
+                    }
+                } else {
                     row.service_ids = [];
                 }
-            } else {
-                row.service_ids = [];
-            }
-            if (row.department_id) {
-                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
-                row.department = depts[0] || null;
-            }
-            if (row.expense_account_id) {
-                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
-                row.expense_account = accs[0] || null;
-            }
+                if (row.department_id) {
+                    const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                    row.department = depts[0] || null;
+                }
+                if (row.expense_account_id) {
+                    const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.expense_account_id]);
+                    row.expense_account = accs[0] || null;
+                }
+            } catch (_) {}
         }
     } else if (table === 'users') {
         for (let row of rows) {
@@ -857,36 +889,40 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
         }
     } else if (table === 'school_fee_payments') {
         for (let row of rows) {
-            if (row.child_id) {
-                const [chRows]: any = await pool.query('SELECT id, code, first_name, last_name, class_name, guardian_id FROM children WHERE id = ?', [row.child_id]);
-                if (chRows && chRows[0]) {
-                    const child = chRows[0];
-                    if (child.guardian_id) {
-                        const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [child.guardian_id]);
-                        child.guardian = gRows[0] || null;
+            try {
+                if (row.child_id) {
+                    const [chRows]: any = await pool.query('SELECT id, code, first_name, last_name, class_name, guardian_id FROM children WHERE id = ?', [row.child_id]);
+                    if (chRows && chRows[0]) {
+                        const child = chRows[0];
+                        if (child.guardian_id) {
+                            const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [child.guardian_id]);
+                            child.guardian = gRows[0] || null;
+                        }
+                        row.child = child;
                     }
-                    row.child = child;
                 }
-            }
-            if (row.bank_account_id) {
-                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.bank_account_id]);
-                row.bank_account = accs[0] || null;
-            }
-            if (row.department_id) {
-                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
-                row.department = depts[0] || null;
-            }
-            if (row.fund_id) {
-                const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [row.fund_id]);
-                row.fund = funds[0] || null;
-            }
+                if (row.bank_account_id) {
+                    const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [row.bank_account_id]);
+                    row.bank_account = accs[0] || null;
+                }
+                if (row.department_id) {
+                    const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [row.department_id]);
+                    row.department = depts[0] || null;
+                }
+                if (row.fund_id) {
+                    const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [row.fund_id]);
+                    row.fund = funds[0] || null;
+                }
+            } catch (_) {}
         }
     } else if (table === 'children') {
         for (let row of rows) {
-            if (row.guardian_id) {
-                const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [row.guardian_id]);
-                row.guardian = gRows[0] || null;
-            }
+            try {
+                if (row.guardian_id) {
+                    const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [row.guardian_id]);
+                    row.guardian = gRows[0] || null;
+                }
+            } catch (_) {}
         }
     }
 
@@ -983,6 +1019,39 @@ router.get('/:table/:id', authenticate, async (req, res): Promise<void> => {
     } else if (table === 'users' && result) {
         delete result.password_hash;
         result.name = [result.first_name, result.last_name].filter(Boolean).join(' ') || result.username || result.email;
+    } else if (table === 'school_fee_payments' && result) {
+        try {
+            if (result.child_id) {
+                const [chRows]: any = await pool.query('SELECT id, code, first_name, last_name, class_name, guardian_id FROM children WHERE id = ?', [result.child_id]);
+                if (chRows && chRows[0]) {
+                    const child = chRows[0];
+                    if (child.guardian_id) {
+                        const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [child.guardian_id]);
+                        child.guardian = gRows[0] || null;
+                    }
+                    result.child = child;
+                }
+            }
+            if (result.bank_account_id) {
+                const [accs]: any = await pool.query('SELECT id, code, name FROM accounts WHERE id = ?', [result.bank_account_id]);
+                result.bank_account = accs[0] || null;
+            }
+            if (result.department_id) {
+                const [depts]: any = await pool.query('SELECT id, name FROM departments WHERE id = ?', [result.department_id]);
+                result.department = depts[0] || null;
+            }
+            if (result.fund_id) {
+                const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [result.fund_id]);
+                result.fund = funds[0] || null;
+            }
+        } catch (_) {}
+    } else if (table === 'children' && result) {
+        try {
+            if (result.guardian_id) {
+                const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [result.guardian_id]);
+                result.guardian = gRows[0] || null;
+            }
+        } catch (_) {}
     }
 
     res.json({ success: true, data: result });
