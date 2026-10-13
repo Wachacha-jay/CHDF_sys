@@ -94,15 +94,32 @@ export class FundAccountingService {
   }
 
   static async createChild(data: Partial<Child>): Promise<Child | null> {
-    const response = await ApiService.create<Child>('children', data);
+    const payload = { ...data };
+    delete (payload as any).guardian;
+    delete (payload as any).created_at;
+    delete (payload as any).updated_at;
+    if (payload.date_of_birth) {
+      payload.date_of_birth = String(payload.date_of_birth).split('T')[0];
+    }
+    if (payload.enrollment_date) {
+      payload.enrollment_date = String(payload.enrollment_date).split('T')[0];
+    }
+    const response = await ApiService.create<Child>('children', payload);
     return response.success ? response.data : null;
   }
 
   static async updateChild(id: string, data: Partial<Child>): Promise<Child | null> {
-    const response = await ApiService.update<Child>('children', id, {
-      ...data,
-      updated_at: new Date().toISOString()
-    });
+    const payload = { ...data };
+    delete (payload as any).guardian;
+    delete (payload as any).created_at;
+    delete (payload as any).updated_at;
+    if (payload.date_of_birth) {
+      payload.date_of_birth = String(payload.date_of_birth).split('T')[0];
+    }
+    if (payload.enrollment_date) {
+      payload.enrollment_date = String(payload.enrollment_date).split('T')[0];
+    }
+    const response = await ApiService.update<Child>('children', id, payload);
     return response.success ? response.data : null;
   }
 
@@ -120,7 +137,10 @@ export class FundAccountingService {
   }
 
   static async createGuardian(data: Partial<Guardian>): Promise<Guardian | null> {
-    const response = await ApiService.post<Guardian>('guardians', data);
+    const payload = { ...data };
+    delete (payload as any).created_at;
+    delete (payload as any).updated_at;
+    const response = await ApiService.create<Guardian>('guardians', payload);
     return response.success ? response.data : null;
   }
 

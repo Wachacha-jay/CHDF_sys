@@ -298,9 +298,15 @@ async function ensureInKindSchema() {
         `, [feeRevId]);
       }
 
-      // e. Ensure children table has expected fee columns
+      // e. Ensure children table has expected fee and classification columns
       const [childCols]: any = await pool.query('SHOW COLUMNS FROM children');
       const childColNames = new Set(childCols.map((c: any) => c.Field));
+      if (!childColNames.has('class_name')) {
+        await pool.query('ALTER TABLE children ADD COLUMN class_name VARCHAR(100) NULL');
+      }
+      if (!childColNames.has('disability_type')) {
+        await pool.query("ALTER TABLE children ADD COLUMN disability_type VARCHAR(255) DEFAULT 'None'");
+      }
       if (!childColNames.has('expected_term_fee')) {
         await pool.query('ALTER TABLE children ADD COLUMN expected_term_fee DECIMAL(12,2) DEFAULT 0.00');
       }
@@ -1338,6 +1344,51 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       if (eIdx !== -1 && values[eIdx] === '') values[eIdx] = null;
     }
 
+    if (table === 'children') {
+      const stripCols = ['guardian', 'department', 'fund', 'created_at', 'updated_at'];
+      stripCols.forEach(col => {
+        const idx = keys.indexOf(col);
+        if (idx !== -1) {
+          keys.splice(idx, 1);
+          (values as any[]).splice(idx, 1);
+        }
+      });
+
+      // Auto-generate child code if missing or empty
+      const codeIdx = keys.indexOf('code');
+      const codeVal = codeIdx !== -1 ? values[codeIdx] : undefined;
+      if (!codeVal || String(codeVal).trim() === '') {
+        const [existingCodes]: any = await pool.query("SELECT code FROM children WHERE code LIKE 'CHD-%'");
+        const maxNum = (existingCodes || []).reduce((max: number, row: any) => {
+          const match = String(row.code).match(/CHD-(\d+)/);
+          return match ? Math.max(max, parseInt(match[1], 10)) : max;
+        }, 0);
+        const nextCode = `CHD-${String(maxNum + 1).padStart(3, '0')}`;
+        if (codeIdx !== -1) {
+          (values as any[])[codeIdx] = nextCode;
+        } else {
+          keys.push('code');
+          (values as any[]).push(nextCode);
+        }
+      }
+
+      // Format date fields to YYYY-MM-DD
+      const dobIdx = keys.indexOf('date_of_birth');
+      if (dobIdx !== -1 && values[dobIdx]) {
+        (values as any[])[dobIdx] = String(values[dobIdx]).split('T')[0];
+      }
+      const enrollIdx = keys.indexOf('enrollment_date');
+      if (enrollIdx !== -1 && values[enrollIdx]) {
+        (values as any[])[enrollIdx] = String(values[enrollIdx]).split('T')[0];
+      }
+
+      // Foreign key nulling
+      const gIdx = keys.indexOf('guardian_id');
+      if (gIdx !== -1 && (!values[gIdx] || values[gIdx] === '')) {
+        (values as any[])[gIdx] = null;
+      }
+    }
+
     const placeholders = keys.map(() => '?').join(', ');
     const sanitizedValues = values.map(val => (val === '' ? null : val));
 
@@ -1345,10 +1396,17 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
     await pool.query(query, sanitizedValues);
     
     const [rows]: any = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [newId]);
-    const label = rows[0]?.name || rows[0]?.title || rows[0]?.code || rows[0]?.entry_number || (rows[0]?.first_name ? `${rows[0].first_name} ${rows[0].last_name || ''}`.trim() : newId);
+    const createdRow = rows[0];
+    if (table === 'children' && createdRow && createdRow.guardian_id) {
+      try {
+        const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [createdRow.guardian_id]);
+        createdRow.guardian = gRows[0] || null;
+      } catch (_) {}
+    }
+    const label = createdRow?.name || createdRow?.title || createdRow?.code || createdRow?.entry_number || (createdRow?.first_name ? `${createdRow.first_name} ${createdRow.last_name || ''}`.trim() : newId);
     logCrudActivity(req, 'CREATE', table, newId, `Created ${table}: ${label}`);
     
-    res.json({ success: true, data: rows[0] });
+    res.json({ success: true, data: createdRow });
   } catch (error: any) {
     console.error(`Error inserting into ${table}:`, error);
     res.status(500).json({ success: false, error: error.message });
@@ -1390,6 +1448,31 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
       }
       if (updateData.department_id === '') updateData.department_id = null;
       if (updateData.expense_account_id === '') updateData.expense_account_id = null;
+    }
+
+    // Children-specific handling
+    if (table === 'children') {
+      delete updateData.guardian;
+      delete updateData.department;
+      delete updateData.fund;
+      delete updateData.created_at;
+      delete updateData.updated_at;
+
+      // Sanitize date fields
+      if (updateData.date_of_birth) {
+        updateData.date_of_birth = String(updateData.date_of_birth).split('T')[0];
+      }
+      if (updateData.enrollment_date) {
+        updateData.enrollment_date = String(updateData.enrollment_date).split('T')[0];
+      }
+
+      // Do not overwrite code if blank
+      if (updateData.code !== undefined && (!updateData.code || String(updateData.code).trim() === '')) {
+        delete updateData.code;
+      }
+
+      // Foreign keys: convert empty strings to null
+      if (updateData.guardian_id === '') updateData.guardian_id = null;
     }
 
     // User-specific handling
@@ -1457,6 +1540,12 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
     if (table === 'users' && updatedRow) {
       delete updatedRow.password_hash;
       updatedRow.name = [updatedRow.first_name, updatedRow.last_name].filter(Boolean).join(' ') || updatedRow.username || updatedRow.email;
+    }
+    if (table === 'children' && updatedRow && updatedRow.guardian_id) {
+      try {
+        const [gRows]: any = await pool.query('SELECT id, name, relationship, phone FROM guardians WHERE id = ?', [updatedRow.guardian_id]);
+        updatedRow.guardian = gRows[0] || null;
+      } catch (_) {}
     }
     const label = updatedRow?.name || updatedRow?.title || updatedRow?.code || updatedRow?.entry_number || (updatedRow?.first_name ? `${updatedRow.first_name} ${updatedRow.last_name || ''}`.trim() : id);
     logCrudActivity(req, 'UPDATE', table, id, `Updated ${table}: ${label}`);

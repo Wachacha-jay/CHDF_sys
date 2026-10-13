@@ -12,6 +12,18 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
+const formatDateForInput = (d?: string | Date | null): string => {
+  if (!d) return '';
+  if (typeof d === 'string') {
+    return d.split('T')[0];
+  }
+  try {
+    return new Date(d).toISOString().split('T')[0];
+  } catch {
+    return '';
+  }
+};
+
 const ChildManagement: React.FC = () => {
   // Tab Management: 4 Modern School Fee & Child Support Tabs
   const [activeTab, setActiveTab] = useState<'children' | 'payments' | 'balances' | 'structures'>('children');
@@ -30,6 +42,7 @@ const ChildManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingChild, setEditingChild] = useState<Child | null>(null);
+  const [beneficiarySubmitting, setBeneficiarySubmitting] = useState(false);
   const [viewingChild, setViewingChild] = useState<Child | null>(null);
   const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [formData, setFormData] = useState<any>({
@@ -297,55 +310,140 @@ const ChildManagement: React.FC = () => {
     return { totalExpected, totalPaid, totalArrears, totalCredit };
   }, [allStudentSummaries]);
 
+  // Modal Openers for Beneficiary
+  const openRegisterModal = async () => {
+    setEditingChild(null);
+    let nextCode = '';
+    try {
+      nextCode = await FundAccountingService.getNextChildCode();
+    } catch {
+      nextCode = 'CHD-001';
+    }
+    setFormData({
+      first_name: '',
+      last_name: '',
+      code: nextCode,
+      date_of_birth: '',
+      gender: 'Male',
+      class_name: '',
+      disability_type: 'None',
+      status: 'active',
+      enrollment_date: new Date().toISOString().split('T')[0],
+      expected_term_fee: '',
+      expected_annual_fee: '',
+      guardian_id: '',
+      new_guardian_name: '',
+      new_guardian_phone: '',
+      new_guardian_relationship: 'Parent'
+    });
+    setShowModal(true);
+  };
+
+  const openEditModal = (child: Child) => {
+    setEditingChild(child);
+    setFormData({
+      first_name: child.first_name || '',
+      last_name: child.last_name || '',
+      code: child.code || '',
+      date_of_birth: formatDateForInput(child.date_of_birth),
+      gender: child.gender || 'Male',
+      class_name: child.class_name || '',
+      disability_type: child.disability_type || 'None',
+      status: child.status || 'active',
+      enrollment_date: formatDateForInput(child.enrollment_date) || new Date().toISOString().split('T')[0],
+      expected_term_fee: child.expected_term_fee !== undefined && child.expected_term_fee !== null ? String(child.expected_term_fee) : '',
+      expected_annual_fee: child.expected_annual_fee !== undefined && child.expected_annual_fee !== null ? String(child.expected_annual_fee) : '',
+      guardian_id: child.guardian_id || '',
+      new_guardian_name: '',
+      new_guardian_phone: '',
+      new_guardian_relationship: 'Parent'
+    });
+    setShowModal(true);
+  };
+
   // Handle Child Profile Submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    let guardianId = formData.guardian_id;
-
-    if (!guardianId && formData.new_guardian_name) {
-      const guardian = await FundAccountingService.createGuardian({
-        name: formData.new_guardian_name,
-        phone: formData.new_guardian_phone,
-        relationship: formData.new_guardian_relationship
-      });
-      if (guardian) {
-        guardianId = guardian.id;
-      }
+    if (!formData.first_name?.trim() || !formData.last_name?.trim()) {
+      toast.error('First name and last name are required');
+      return;
+    }
+    if (!formData.date_of_birth) {
+      toast.error('Date of birth is required');
+      return;
     }
 
-    const payload: Partial<Child> = {
-      first_name: formData.first_name,
-      last_name: formData.last_name,
-      code: formData.code,
-      date_of_birth: formData.date_of_birth,
-      gender: formData.gender,
-      class_name: formData.class_name,
-      disability_type: formData.disability_type,
-      status: formData.status,
-      enrollment_date: formData.enrollment_date,
-      expected_term_fee: formData.expected_term_fee ? Number(formData.expected_term_fee) : 0,
-      expected_annual_fee: formData.expected_annual_fee ? Number(formData.expected_annual_fee) : 0,
-      guardian_id: guardianId
-    };
+    try {
+      setBeneficiarySubmitting(true);
+      let guardianId = formData.guardian_id || null;
 
-    let result;
-    if (editingChild) {
-      result = await FundAccountingService.updateChild(editingChild.id, payload);
-      if (result) {
-        toast.success('Beneficiary profile updated successfully');
+      if (!guardianId && formData.new_guardian_name?.trim()) {
+        const guardian = await FundAccountingService.createGuardian({
+          name: formData.new_guardian_name.trim(),
+          phone: formData.new_guardian_phone?.trim() || '',
+          relationship: formData.new_guardian_relationship || 'Parent'
+        });
+        if (guardian) {
+          guardianId = guardian.id;
+          const updatedGuardians = await FundAccountingService.getGuardians();
+          setGuardians(updatedGuardians);
+        } else {
+          toast.error('Failed to create guardian record. Please verify guardian details.');
+          return;
+        }
       }
-    } else {
-      result = await FundAccountingService.createChild(payload);
-      if (result) {
-        toast.success('Beneficiary registered successfully');
-      }
-    }
 
-    if (result) {
-      setShowModal(false);
-      setEditingChild(null);
-      loadAllData();
+      let childCode = formData.code?.trim();
+      if (!childCode && !editingChild) {
+        try {
+          childCode = await FundAccountingService.getNextChildCode();
+        } catch {
+          childCode = `CHD-${Date.now().toString().slice(-4)}`;
+        }
+      }
+
+      const payload: Partial<Child> = {
+        first_name: formData.first_name.trim(),
+        last_name: formData.last_name.trim(),
+        code: childCode || undefined,
+        date_of_birth: formData.date_of_birth,
+        gender: formData.gender || 'Male',
+        class_name: formData.class_name?.trim() || null,
+        disability_type: formData.disability_type || 'None',
+        status: formData.status || 'active',
+        enrollment_date: formData.enrollment_date || new Date().toISOString().split('T')[0],
+        expected_term_fee: formData.expected_term_fee ? Number(formData.expected_term_fee) : 0,
+        expected_annual_fee: formData.expected_annual_fee ? Number(formData.expected_annual_fee) : 0,
+        guardian_id: guardianId || null
+      };
+
+      let result;
+      if (editingChild) {
+        result = await FundAccountingService.updateChild(editingChild.id, payload);
+        if (result) {
+          toast.success('Beneficiary profile updated successfully');
+        } else {
+          toast.error('Could not update beneficiary profile. Please check that all details are valid.');
+        }
+      } else {
+        result = await FundAccountingService.createChild(payload);
+        if (result) {
+          toast.success('Beneficiary registered successfully');
+        } else {
+          toast.error('Could not register beneficiary. Please ensure admission code is unique.');
+        }
+      }
+
+      if (result) {
+        setShowModal(false);
+        setEditingChild(null);
+        await loadAllData();
+      }
+    } catch (err: any) {
+      console.error('Error submitting beneficiary:', err);
+      toast.error(err.message || 'Error processing beneficiary submission');
+    } finally {
+      setBeneficiarySubmitting(false);
     }
   };
 
@@ -537,10 +635,7 @@ const ChildManagement: React.FC = () => {
           </button>
 
           <button
-            onClick={() => {
-              setEditingChild(null);
-              setShowModal(true);
-            }}
+            onClick={() => openRegisterModal()}
             className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-bold hover:bg-indigo-700 shadow-md shadow-indigo-100 text-sm transition-all"
           >
             <UserPlus size={17} />
@@ -749,27 +844,7 @@ const ChildManagement: React.FC = () => {
                             Pay Fee
                           </button>
                           <button
-                            onClick={() => {
-                              setEditingChild(child);
-                              setFormData({
-                                first_name: child.first_name || '',
-                                last_name: child.last_name || '',
-                                code: child.code || '',
-                                date_of_birth: child.date_of_birth || '',
-                                gender: child.gender || 'Male',
-                                class_name: child.class_name || '',
-                                disability_type: child.disability_type || 'None',
-                                status: child.status || 'active',
-                                enrollment_date: child.enrollment_date || new Date().toISOString().split('T')[0],
-                                expected_term_fee: child.expected_term_fee || '',
-                                expected_annual_fee: child.expected_annual_fee || '',
-                                guardian_id: child.guardian_id || '',
-                                new_guardian_name: '',
-                                new_guardian_phone: '',
-                                new_guardian_relationship: 'Parent'
-                              });
-                              setShowModal(true);
-                            }}
+                            onClick={() => openEditModal(child)}
                             className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
                             title="Edit Profile"
                           >
@@ -1641,15 +1716,29 @@ const ChildManagement: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Child Code (Auto)</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-bold text-gray-700 uppercase">Child Code</label>
+                      {!editingChild && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const c = await FundAccountingService.getNextChildCode();
+                            setFormData((prev: any) => ({ ...prev, code: c }));
+                          }}
+                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                        >
+                          Auto Generate
+                        </button>
+                      )}
+                    </div>
                     <input 
                       type="text" 
-                      required 
-                      readOnly={!editingChild}
-                      className="w-full rounded-xl border-gray-100 bg-gray-50 text-gray-500 font-mono text-sm" 
+                      placeholder="e.g. CHD-001"
+                      className="w-full rounded-xl border-gray-300 font-mono text-sm focus:ring-indigo-500 focus:border-indigo-500" 
                       value={formData.code}
                       onChange={(e) => setFormData({...formData, code: e.target.value})}
                     />
+                    <span className="text-[10px] text-gray-400">Admission / Identification code</span>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Gender</label>
@@ -1794,10 +1883,22 @@ const ChildManagement: React.FC = () => {
               </div>
 
               <div className="pt-2 flex gap-3">
-                <button type="submit" className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 text-sm">
-                  {editingChild ? 'Update Profile' : 'Register Beneficiary'}
+                <button 
+                  type="submit" 
+                  disabled={beneficiarySubmitting}
+                  className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 text-sm disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                >
+                  {beneficiarySubmitting ? (
+                    <span>Saving Beneficiary Profile...</span>
+                  ) : (
+                    <span>{editingChild ? 'Update Profile' : 'Register Beneficiary'}</span>
+                  )}
                 </button>
-                <button type="button" onClick={() => setShowModal(false)} className="px-6 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl text-sm">
+                <button 
+                  type="button" 
+                  onClick={() => setShowModal(false)} 
+                  className="px-6 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl text-sm"
+                >
                   Cancel
                 </button>
               </div>
