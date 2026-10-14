@@ -87,7 +87,7 @@ export class DashboardService {
         const products = await ProductService.getProducts();
         const productList = products || [];
         stats.totalProducts = productList.length;
-        stats.lowStockItems = productList.filter(p => p.current_stock <= (p.safety_stock || 10)).length;
+        stats.lowStockItems = productList.filter(p => !p.is_service && p.current_stock <= (p.safety_stock || 10)).length;
       } catch (e) {
         console.error('Error fetching product stats:', e);
       }

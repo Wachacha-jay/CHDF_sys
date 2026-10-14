@@ -4,7 +4,10 @@ export interface StockStatus {
   text: string;
 }
 
-export const getStockStatus = (stock: number): StockStatus => {
+export const getStockStatus = (stock: number, isService: boolean = false): StockStatus => {
+  if (isService) {
+    return { color: 'text-blue-700', bg: 'bg-blue-50 border border-blue-200', text: 'Service' };
+  }
   if (stock === 0) {
     return { color: 'text-red-600', bg: 'bg-red-50', text: 'Out of Stock' };
   } else if (stock <= 10) {

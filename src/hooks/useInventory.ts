@@ -11,6 +11,7 @@ interface UseInventoryReturn {
   selectedProduct: Product | null;
   showModal: boolean;
   showCategoryModal: boolean;
+  modalDefaultType: 'commercial' | 'in_kind' | 'services';
   setSearchTerm: (term: string) => void;
   setShowLowStock: (show: boolean) => void;
   setSelectedProduct: (product: Product | null) => void;
@@ -21,7 +22,7 @@ interface UseInventoryReturn {
   handleDelete: (productId: string) => Promise<void>;
   handleSubmit: (productData: any) => Promise<boolean>;
   openEditModal: (product: Product) => void;
-  openAddModal: () => void;
+  openAddModal: (type?: 'commercial' | 'in_kind' | 'services') => void;
   resetForm: () => void;
 }
 
@@ -33,6 +34,7 @@ export const useInventory = (): UseInventoryReturn => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [modalDefaultType, setModalDefaultType] = useState<'commercial' | 'in_kind' | 'services'>('commercial');
 
   useEffect(() => {
     loadProducts();
@@ -53,7 +55,7 @@ export const useInventory = (): UseInventoryReturn => {
       let filteredProducts = products;
       
       if (showLowStock) {
-        filteredProducts = filteredProducts.filter(product => product.current_stock <= 10);
+        filteredProducts = filteredProducts.filter(product => !product.is_service && Number(product.current_stock || 0) <= (Number(product.minimum_stock) || 10));
       }
       
       setProducts(filteredProducts);
@@ -122,8 +124,9 @@ export const useInventory = (): UseInventoryReturn => {
     setShowModal(true);
   };
 
-  const openAddModal = () => {
+  const openAddModal = (type: 'commercial' | 'in_kind' | 'services' = 'commercial') => {
     resetForm();
+    setModalDefaultType(type);
     setShowModal(true);
   };
 
@@ -135,6 +138,7 @@ export const useInventory = (): UseInventoryReturn => {
     selectedProduct,
     showModal,
     showCategoryModal,
+    modalDefaultType,
     setSearchTerm,
     setShowLowStock,
     setSelectedProduct,

@@ -28,8 +28,8 @@ export class NotificationService {
       if (productsResp.success && productsResp.data) {
         const products = productsResp.data;
 
-        // 1a. In-Kind Donations: Low Stock and Out of Stock Alerts
-        const inKindProducts = products.filter(p => !!p.is_in_kind);
+        // 1a. In-Kind Donations: Low Stock and Out of Stock Alerts (services do not track inventory)
+        const inKindProducts = products.filter(p => !!p.is_in_kind && !p.is_service);
         inKindProducts.forEach(product => {
           const currentStock = Number(product.current_stock || 0);
           const minStock = Number(product.minimum_stock || 5);
@@ -57,8 +57,8 @@ export class NotificationService {
           }
         });
 
-        // 1b. Commercial Products: Low Stock and Out of Stock Alerts
-        const commercialProducts = products.filter(p => !p.is_in_kind);
+        // 1b. Commercial Products: Low Stock and Out of Stock Alerts (services do not track inventory)
+        const commercialProducts = products.filter(p => !p.is_in_kind && !p.is_service);
         commercialProducts.forEach(product => {
           const currentStock = Number(product.current_stock || 0);
           const minStock = Number(product.minimum_stock || 5);

@@ -25,7 +25,7 @@ const AddStockModal: React.FC<AddStockModalProps> = ({ open, onClose, onSuccess 
   useEffect(() => {
     if (open) {
       ApiService.get<Product>('products', { filters: { is_active: 1 } }).then(res => {
-        if (res.success && res.data) setProducts(res.data);
+        if (res.success && res.data) setProducts(res.data.filter(p => !p.is_service));
       });
       ApiService.get<Supplier>('suppliers', { filters: { is_active: 1 } }).then(res => {
         if (res.success && res.data) setSuppliers(res.data);

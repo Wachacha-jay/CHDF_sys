@@ -8,9 +8,10 @@ interface ProductFormProps {
   product?: Product | null;
   onSubmit: (productData: any) => Promise<boolean>;
   onCancel: () => void;
+  defaultType?: 'commercial' | 'in_kind' | 'services';
 }
 
-const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }) => {
+const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel, defaultType = 'commercial' }) => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
@@ -22,15 +23,15 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
     subcategory_id: '',
     cost_price: '',
     selling_price: '',
-    current_stock: '',
-    minimum_stock: '',
+    current_stock: defaultType === 'services' ? '0' : '',
+    minimum_stock: defaultType === 'services' ? '0' : '',
     unit_id: '',
-    unit_of_measure: 'pcs',
+    unit_of_measure: defaultType === 'services' ? 'unit' : 'pcs',
     barcode: '',
     sku: '',
     is_active: true,
-    is_service: false,
-    is_in_kind: false,
+    is_service: defaultType === 'services',
+    is_in_kind: defaultType === 'in_kind',
     tax_rate: '0'
   });
 
@@ -53,7 +54,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
         barcode: product.barcode || '',
         sku: product.sku || '',
         is_active: product.is_active,
-        is_service: product.is_service,
+        is_service: !!product.is_service,
         is_in_kind: !!product.is_in_kind,
         tax_rate: product.tax_rate.toString()
       });
@@ -61,8 +62,17 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
       if (product.category_id) {
         loadSubcategories(product.category_id);
       }
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        is_service: defaultType === 'services',
+        is_in_kind: defaultType === 'in_kind',
+        current_stock: defaultType === 'services' ? '0' : prev.current_stock,
+        minimum_stock: defaultType === 'services' ? '0' : prev.minimum_stock,
+        unit_of_measure: defaultType === 'services' ? 'unit' : (prev.unit_of_measure || 'pcs')
+      }));
     }
-  }, [product]);
+  }, [product, defaultType]);
 
   const loadCategories = async () => {
     try {
@@ -119,16 +129,18 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    const isService = !!formData.is_service;
     const productData = {
       ...formData,
       cost_price: parseFloat(formData.cost_price) || 0,
       selling_price: parseFloat(formData.selling_price) || 0,
-      current_stock: parseFloat(formData.current_stock) || 0,
-      minimum_stock: parseFloat(formData.minimum_stock) || 0,
+      current_stock: isService ? 0 : (parseFloat(formData.current_stock) || 0),
+      minimum_stock: isService ? 0 : (parseFloat(formData.minimum_stock) || 0),
       tax_rate: parseFloat(formData.tax_rate) || 0,
       category_id: formData.category_id || null,
       subcategory_id: formData.subcategory_id || null,
-      is_in_kind: formData.is_in_kind ? 1 : 0
+      is_in_kind: isService ? 0 : (formData.is_in_kind ? 1 : 0),
+      is_service: isService
     };
 
     const success = await onSubmit(productData);
@@ -141,8 +153,10 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div className="relative top-10 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
         <div className="mt-3">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">
-            {product ? 'Edit Product' : 'Add New Product'}
+          <h3 className="text-lg font-bold text-gray-900 mb-4">
+            {product 
+              ? (product.is_service ? 'Edit Service' : product.is_in_kind ? 'Edit In-Kind Consumable Item' : 'Edit Commercial Product') 
+              : (defaultType === 'services' ? 'Add New Service' : defaultType === 'in_kind' ? 'Add In-Kind Consumable Item' : 'Add New Commercial Product')}
           </h3>
           
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -256,49 +270,75 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSubmit, onCancel }
               </div>
             </div>
             
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Current Stock
-                </label>
-                <input
-                  type="number"
-                  value={formData.current_stock}
-                  onChange={(e) => setFormData(prev => ({ ...prev, current_stock: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+            {formData.is_service ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-blue-50/70 border border-blue-200 rounded-lg p-3">
+                <div className="md:col-span-2 text-xs text-blue-900 flex items-center space-x-2">
+                  <span className="font-bold text-blue-950 text-sm">⚡ Service Item</span>
+                  <span>Physical stock tracking is disabled for services. It will not trigger low stock notifications.</span>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Billing Unit of Measure
+                  </label>
+                  <select
+                    value={formData.unit_id}
+                    onChange={(e) => handleUnitChange(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-xs bg-white"
+                  >
+                    <option value="">Select Unit</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} ({unit.symbol})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Minimum Stock
-                </label>
-                <input
-                  type="number"
-                  value={formData.minimum_stock}
-                  onChange={(e) => setFormData(prev => ({ ...prev, minimum_stock: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+            ) : (
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Current Stock
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.current_stock}
+                    onChange={(e) => setFormData(prev => ({ ...prev, current_stock: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Minimum Stock
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.minimum_stock}
+                    onChange={(e) => setFormData(prev => ({ ...prev, minimum_stock: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Unit of Measure
+                  </label>
+                  <select
+                    value={formData.unit_id}
+                    onChange={(e) => handleUnitChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Select Unit</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} ({unit.symbol})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Unit of Measure
-                </label>
-                <select
-                  value={formData.unit_id}
-                  onChange={(e) => handleUnitChange(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="">Select Unit</option>
-                  {units.map((unit) => (
-                    <option key={unit.id} value={unit.id}>
-                      {unit.name} ({unit.symbol})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            )}
             
             <div className="grid grid-cols-2 gap-4">
               <div>
