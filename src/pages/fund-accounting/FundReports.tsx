@@ -16,7 +16,19 @@ import toast from 'react-hot-toast';
 import type { Department, FundAccount, Child, Donor, JournalEntry, InternalTransfer, Account } from '../../types';
 import { BankBalanceOverview } from '../../components/fund-accounting/BankBalanceOverview';
 
-export type ReportTab = 'activities' | 'fees' | 'donations' | 'transfers' | 'treasury';
+export type ReportTab = 'activities' | 'income-statement' | 'fees' | 'donations' | 'transfers' | 'treasury';
+
+export interface IncomeStatementLineItem {
+  accountId: string;
+  code: string;
+  name: string;
+  category?: string;
+  grossAmount: number;
+  adjustments: number;
+  netAmount: number;
+  percentage: number;
+  count: number;
+}
 
 export interface RevenueStreamSummary {
   accountId: string;
@@ -415,6 +427,240 @@ const FundReports: React.FC = () => {
     };
   }, [journalEntries, accountMap, selectedFund, selectedDept, selectedChild, selectedDonor, funds, departments]);
 
+  // Tab: Professional Accounting Income Statement Computed (Departmental & Consolidated)
+  const incomeStatementData = useMemo(() => {
+    const revenueMap = new Map<string, {
+      accountId: string;
+      code: string;
+      name: string;
+      category?: string;
+      grossCredits: number;
+      adjustmentsDebits: number;
+      netAmount: number;
+      count: number;
+    }>();
+
+    const cogsMap = new Map<string, {
+      accountId: string;
+      code: string;
+      name: string;
+      category?: string;
+      grossDebits: number;
+      adjustmentsCredits: number;
+      netAmount: number;
+      count: number;
+    }>();
+
+    const expenseMap = new Map<string, {
+      accountId: string;
+      code: string;
+      name: string;
+      category?: string;
+      grossDebits: number;
+      adjustmentsCredits: number;
+      netAmount: number;
+      count: number;
+    }>();
+
+    const transactionLines: any[] = [];
+
+    journalEntries.forEach(entry => {
+      entry.lines?.forEach(line => {
+        const lineAccount = line.account || accountMap.get(line.account_id);
+        const code = lineAccount?.code || '';
+        const type = (lineAccount?.account_type || '').toLowerCase();
+        const name = lineAccount?.name || 'Operating Account';
+        const category = lineAccount?.category || '';
+
+        // Tagged fund/dept on either the line or parent entry lines
+        const entryFundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
+        const entryDeptId = line.department_id || entry.lines?.find(l => l.department_id)?.department_id;
+        const entryChildId = line.child_id || entry.lines?.find(l => l.child_id)?.child_id;
+        const entryDonorId = line.donor_id || entry.lines?.find(l => l.donor_id)?.donor_id;
+
+        // Apply filters
+        if (selectedDept && entryDeptId !== selectedDept) return;
+        if (selectedFund && entryFundId !== selectedFund) return;
+        if (selectedChild && entryChildId !== selectedChild) return;
+        if (selectedDonor && entryDonorId !== selectedDonor) return;
+
+        const isRevenue = type === 'revenue' || code.startsWith('4');
+        const isExpense = type === 'expense' || code.startsWith('5');
+
+        if (!isRevenue && !isExpense) return;
+
+        const cr = Number(line.credit_amount || 0);
+        const dr = Number(line.debit_amount || 0);
+
+        if (isRevenue) {
+          const key = lineAccount?.id || code || '4000';
+          if (!revenueMap.has(key)) {
+            revenueMap.set(key, {
+              accountId: key,
+              code: code || '4xxx',
+              name,
+              category,
+              grossCredits: 0,
+              adjustmentsDebits: 0,
+              netAmount: 0,
+              count: 0
+            });
+          }
+          const item = revenueMap.get(key)!;
+          item.grossCredits += cr;
+          item.adjustmentsDebits += dr;
+          item.netAmount += (cr - dr);
+          item.count += 1;
+
+          if (cr > 0 || dr > 0) {
+            transactionLines.push({
+              type: 'revenue',
+              date: normalizeDate(entry.entry_date),
+              entryNumber: entry.entry_number,
+              code,
+              name,
+              description: line.description || entry.description,
+              credit: cr,
+              debit: dr,
+              net: cr - dr,
+              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin',
+              fund: funds.find(f => f.id === entryFundId)?.name || 'General Fund'
+            });
+          }
+        } else if (isExpense) {
+          const isCOGS = code.startsWith('50') || 
+                         name.toLowerCase().includes('cost of goods') || 
+                         name.toLowerCase().includes('cogs') || 
+                         name.toLowerCase().includes('direct cost') || 
+                         category.toLowerCase().includes('cost of goods');
+
+          const targetMap = isCOGS ? cogsMap : expenseMap;
+          const key = lineAccount?.id || code || (isCOGS ? '5000' : '5xxx');
+
+          if (!targetMap.has(key)) {
+            targetMap.set(key, {
+              accountId: key,
+              code: code || (isCOGS ? '50xx' : '5xxx'),
+              name,
+              category,
+              grossDebits: 0,
+              adjustmentsCredits: 0,
+              netAmount: 0,
+              count: 0
+            });
+          }
+          const item = targetMap.get(key)!;
+          item.grossDebits += dr;
+          item.adjustmentsCredits += cr;
+          item.netAmount += (dr - cr);
+          item.count += 1;
+
+          if (dr > 0 || cr > 0) {
+            transactionLines.push({
+              type: isCOGS ? 'cogs' : 'expense',
+              date: normalizeDate(entry.entry_date),
+              entryNumber: entry.entry_number,
+              code,
+              name,
+              description: line.description || entry.description,
+              debit: dr,
+              credit: cr,
+              net: dr - cr,
+              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin',
+              fund: funds.find(f => f.id === entryFundId)?.name || 'General Fund'
+            });
+          }
+        }
+      });
+    });
+
+    const totalGrossRevenue = Array.from(revenueMap.values()).reduce((sum, r) => sum + r.grossCredits, 0);
+    const totalRevenueAdjustments = Array.from(revenueMap.values()).reduce((sum, r) => sum + r.adjustmentsDebits, 0);
+    const totalRevenue = totalGrossRevenue - totalRevenueAdjustments;
+
+    const totalGrossCOGS = Array.from(cogsMap.values()).reduce((sum, c) => sum + c.grossDebits, 0);
+    const totalCOGSAdjustments = Array.from(cogsMap.values()).reduce((sum, c) => sum + c.adjustmentsCredits, 0);
+    const totalCOGS = totalGrossCOGS - totalCOGSAdjustments;
+
+    const grossProfit = totalRevenue - totalCOGS;
+    const grossProfitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    const totalGrossExpenses = Array.from(expenseMap.values()).reduce((sum, e) => sum + e.grossDebits, 0);
+    const totalExpenseAdjustments = Array.from(expenseMap.values()).reduce((sum, e) => sum + e.adjustmentsCredits, 0);
+    const totalOperatingExpenses = totalGrossExpenses - totalExpenseAdjustments;
+
+    const netIncome = grossProfit - totalOperatingExpenses;
+    const netIncomeMargin = totalRevenue > 0 ? (netIncome / totalRevenue) * 100 : 0;
+
+    const revenueItems: IncomeStatementLineItem[] = Array.from(revenueMap.values())
+      .filter(item => Math.abs(item.netAmount) > 0.001 || item.grossCredits > 0 || item.adjustmentsDebits > 0)
+      .map(r => ({
+        accountId: r.accountId,
+        code: r.code,
+        name: r.name,
+        category: r.category,
+        grossAmount: r.grossCredits,
+        adjustments: r.adjustmentsDebits,
+        netAmount: r.netAmount,
+        percentage: totalRevenue > 0 ? Math.max(0, (r.netAmount / totalRevenue) * 100) : 0,
+        count: r.count
+      }))
+      .sort((a, b) => b.netAmount - a.netAmount);
+
+    const cogsItems: IncomeStatementLineItem[] = Array.from(cogsMap.values())
+      .filter(item => Math.abs(item.netAmount) > 0.001 || item.grossDebits > 0 || item.adjustmentsCredits > 0)
+      .map(c => ({
+        accountId: c.accountId,
+        code: c.code,
+        name: c.name,
+        category: c.category,
+        grossAmount: c.grossDebits,
+        adjustments: c.adjustmentsCredits,
+        netAmount: c.netAmount,
+        percentage: totalCOGS > 0 ? Math.max(0, (c.netAmount / totalCOGS) * 100) : 0,
+        count: c.count
+      }))
+      .sort((a, b) => b.netAmount - a.netAmount);
+
+    const expenseItems: IncomeStatementLineItem[] = Array.from(expenseMap.values())
+      .filter(item => Math.abs(item.netAmount) > 0.001 || item.grossDebits > 0 || item.adjustmentsCredits > 0)
+      .map(e => ({
+        accountId: e.accountId,
+        code: e.code,
+        name: e.name,
+        category: e.category,
+        grossAmount: e.grossDebits,
+        adjustments: e.adjustmentsCredits,
+        netAmount: e.netAmount,
+        percentage: totalOperatingExpenses > 0 ? Math.max(0, (e.netAmount / totalOperatingExpenses) * 100) : 0,
+        count: e.count
+      }))
+      .sort((a, b) => b.netAmount - a.netAmount);
+
+    const selectedDeptName = selectedDept ? (departments.find(d => d.id === selectedDept)?.name || 'Selected Department') : 'All Departments (Consolidated)';
+
+    return {
+      revenueItems,
+      cogsItems,
+      expenseItems,
+      totalGrossRevenue,
+      totalRevenueAdjustments,
+      totalRevenue,
+      totalGrossCOGS,
+      totalCOGSAdjustments,
+      totalCOGS,
+      grossProfit,
+      grossProfitMargin,
+      totalGrossExpenses,
+      totalExpenseAdjustments,
+      totalOperatingExpenses,
+      netIncome,
+      netIncomeMargin,
+      transactionLines,
+      selectedDeptName
+    };
+  }, [journalEntries, accountMap, selectedDept, selectedFund, selectedChild, selectedDonor, departments, funds]);
+
   // Tab 2: School Fee Records Computed
   const schoolFeeRecords = useMemo(() => {
     const feeRecords: any[] = [];
@@ -647,6 +893,191 @@ const FundReports: React.FC = () => {
             </tr>
           </tfoot>
         </table>
+      `;
+    } else if (activeTab === 'income-statement') {
+      reportTitle = 'Income Statement (Statement of Financial Performance)';
+      const { 
+        revenueItems, cogsItems, expenseItems, 
+        totalGrossRevenue, totalRevenueAdjustments, totalRevenue,
+        totalGrossCOGS, totalCOGSAdjustments, totalCOGS,
+        grossProfit, grossProfitMargin,
+        totalGrossExpenses, totalExpenseAdjustments, totalOperatingExpenses,
+        netIncome, netIncomeMargin, selectedDeptName
+      } = incomeStatementData;
+
+      summaryCardsHtml = `
+        <div class="summary-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="card in-card">
+            <div class="card-label">Total Revenue (Net)</div>
+            <div class="card-val">${currency} ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Gross CR: ${totalGrossRevenue.toLocaleString()} | Less DR: ${totalRevenueAdjustments.toLocaleString()}</div>
+          </div>
+          <div class="card net-card">
+            <div class="card-label">Gross Profit</div>
+            <div class="card-val">${currency} ${grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Margin: ${grossProfitMargin.toFixed(1)}%</div>
+          </div>
+          <div class="card out-card">
+            <div class="card-label">Operating Expenses</div>
+            <div class="card-val">${currency} ${totalOperatingExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Gross DR: ${totalGrossExpenses.toLocaleString()} | Less CR: ${totalExpenseAdjustments.toLocaleString()}</div>
+          </div>
+          <div class="card ${netIncome >= 0 ? 'in-card' : 'out-card'}">
+            <div class="card-label">Net ${netIncome >= 0 ? 'Surplus' : 'Deficit'}</div>
+            <div class="card-val">${currency} ${netIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Net Margin: ${netIncomeMargin.toFixed(1)}%</div>
+          </div>
+        </div>
+      `;
+
+      reportTableHtml = `
+        <div style="margin-bottom: 8px; font-size: 11px; color: #475569; font-weight: 600;">
+          Department Scope: <strong style="color: #1e293b;">${selectedDeptName}</strong> &bull; Currency: <strong>${currency}</strong>
+        </div>
+
+        <h3 class="section-title">1. REVENUE</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 14%">Account Code</th>
+              <th style="width: 40%">Revenue Stream / Source</th>
+              <th style="width: 15%; text-align: right;">Gross Inflow (CR)</th>
+              <th style="width: 15%; text-align: right;">Contra / DR</th>
+              <th style="width: 16%; text-align: right;">Net Recognized (${currency})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${revenueItems.length === 0 
+              ? '<tr><td colspan="5" class="empty-cell">No revenue accounts recorded for this department/period</td></tr>'
+              : revenueItems.map(r => `
+                <tr>
+                  <td><strong>${r.code}</strong></td>
+                  <td>${r.name} <small style="color: #64748b">(${r.percentage.toFixed(1)}%)</small></td>
+                  <td style="text-align: right;">${r.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #b91c1c;">${r.adjustments > 0 ? `(${r.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+                  <td style="text-align: right; font-weight: bold; color: #047857;">${r.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')
+            }
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="2">TOTAL REVENUE</td>
+              <td style="text-align: right;">${totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; color: #b91c1c;">${totalRevenueAdjustments > 0 ? `(${totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+              <td style="text-align: right;">${currency} ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        ${cogsItems.length > 0 ? `
+          <div style="height: 14px;"></div>
+          <h3 class="section-title">2. COST OF GOODS SOLD / DIRECT PROGRAM COSTS</h3>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 14%">Account Code</th>
+                <th style="width: 40%">Cost Account</th>
+                <th style="width: 15%; text-align: right;">Gross (DR)</th>
+                <th style="width: 15%; text-align: right;">Rebates (CR)</th>
+                <th style="width: 16%; text-align: right;">Net Amount (${currency})</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cogsItems.map(c => `
+                <tr>
+                  <td><strong>${c.code}</strong></td>
+                  <td>${c.name}</td>
+                  <td style="text-align: right;">${c.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right;">${c.adjustments > 0 ? `(${c.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+                  <td style="text-align: right; font-weight: bold;">${c.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr class="total-row">
+                <td colspan="2">TOTAL COST OF GOODS SOLD</td>
+                <td style="text-align: right;">${totalGrossCOGS.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                <td style="text-align: right;">${totalCOGSAdjustments > 0 ? `(${totalCOGSAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+                <td style="text-align: right;">${currency} ${totalCOGS.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>
+            </tfoot>
+          </table>
+        ` : ''}
+
+        <div style="margin: 14px 0; padding: 8px 12px; background: #f8fafc; border-top: 1.5px solid #0f172a; border-bottom: 1.5px solid #0f172a; display: flex; justify-content: space-between; font-weight: 800; font-size: 12px;">
+          <span>GROSS PROFIT (REVENUE LESS DIRECT COSTS)</span>
+          <span style="color: #0f172a;">${currency} ${grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })} <small style="font-weight: 600; color: #64748b;">(${grossProfitMargin.toFixed(1)}%)</small></span>
+        </div>
+
+        <h3 class="section-title">3. OPERATING EXPENDITURES</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 14%">Account Code</th>
+              <th style="width: 40%">Expense Category / Head</th>
+              <th style="width: 15%; text-align: right;">Gross DR</th>
+              <th style="width: 15%; text-align: right;">Credit Rebates</th>
+              <th style="width: 16%; text-align: right;">Net Expenditure (${currency})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${expenseItems.length === 0 
+              ? '<tr><td colspan="5" class="empty-cell">No operating expenses recorded for this department/period</td></tr>'
+              : expenseItems.map(e => `
+                <tr>
+                  <td><strong>${e.code}</strong></td>
+                  <td>${e.name} <small style="color: #64748b">(${e.percentage.toFixed(1)}%)</small></td>
+                  <td style="text-align: right;">${e.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #047857;">${e.adjustments > 0 ? `(${e.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+                  <td style="text-align: right; font-weight: bold; color: #b91c1c;">${e.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')
+            }
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="2">TOTAL OPERATING EXPENSES</td>
+              <td style="text-align: right;">${totalGrossExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; color: #047857;">${totalExpenseAdjustments > 0 ? `(${totalExpenseAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '0.00'}</td>
+              <td style="text-align: right;">${currency} ${totalOperatingExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <!-- Accounting Net Income Final Double-Underline Block -->
+        <div style="margin: 18px 0; padding: 12px 14px; background: ${netIncome >= 0 ? '#f0fdf4' : '#fef2f2'}; border-top: 2px solid #0f172a; border-bottom: 4px double #0f172a; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-size: 13px; font-weight: 900; text-transform: uppercase; color: #0f172a;">
+              NET ${netIncome >= 0 ? 'SURPLUS / PROFIT' : 'DEFICIT / LOSS'}
+            </div>
+            <div style="font-size: 9px; color: #64748b; margin-top: 2px;">
+              Gross Profit minus Total Operating Expenditures &bull; Margin: ${netIncomeMargin.toFixed(1)}%
+            </div>
+          </div>
+          <div style="font-size: 17px; font-weight: 900; color: ${netIncome >= 0 ? '#15803d' : '#b91c1c'};">
+            ${currency} ${netIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+
+        <!-- Official Sign-off Block for Audit/Letterhead compliance -->
+        <div style="margin-top: 36px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; text-align: center; font-size: 9.5px; color: #475569;">
+          <div>
+            <div style="border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px;"></div>
+            <strong>Prepared By:</strong> ${user?.name || user?.email || 'Finance Officer'}<br>
+            <span style="color: #64748b;">Accountant</span>
+          </div>
+          <div>
+            <div style="border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px;"></div>
+            <strong>Reviewed By:</strong><br>
+            <span style="color: #64748b;">Internal Auditor / Head of Dept</span>
+          </div>
+          <div>
+            <div style="border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px;"></div>
+            <strong>Approved By:</strong><br>
+            <span style="color: #64748b;">Executive Director / Trustee</span>
+          </div>
+        </div>
       `;
     } else if (activeTab === 'fees') {
       reportTitle = 'School Fee Payments & Tuition Ledger';
@@ -1035,6 +1466,7 @@ const FundReports: React.FC = () => {
           </div>
           <div class="report-meta">
             <div class="report-title">${reportTitle}</div>
+            ${selectedDept ? `<div style="font-size: 11px; font-weight: 700; color: #1e40af; margin-top: 2px;">Department: ${departments.find(d => d.id === selectedDept)?.name || 'Selected Department'}</div>` : ''}
             <div class="report-cycle">${periodLabel}</div>
           </div>
         </div>
@@ -1111,6 +1543,71 @@ const FundReports: React.FC = () => {
       csvRows.push(['Total Expense Outflow', '', '', '', '', '', '', activitiesData.totalExpense.toFixed(2)]);
       csvRows.push([]);
       csvRows.push(['NET ASSETS CHANGE (SURPLUS / DEFICIT)', '', '', '', '', '', '', activitiesData.netChange.toFixed(2)]);
+    } else if (activeTab === 'income-statement') {
+      const deptSlug = selectedDept ? `${incomeStatementData.selectedDeptName.replace(/[^a-zA-Z0-9]/g, '_')}_` : '';
+      filename = `income_statement_${deptSlug}${startDate || 'all'}_to_${endDate || 'all'}.csv`;
+      csvRows.push([`INCOME STATEMENT - ${businessName}`]);
+      csvRows.push([`Department Scope: ${incomeStatementData.selectedDeptName}`]);
+      csvRows.push([`Period: ${startDate || 'Start'} to ${endDate || 'End'}`]);
+      csvRows.push([`Currency: ${currency}`]);
+      csvRows.push([]);
+
+      // 1. REVENUE
+      csvRows.push(['1. REVENUES & INFLOWS']);
+      csvRows.push(['Account Code', 'Revenue Stream Name', 'Gross Inflows (CR)', 'Contra / Adjustments (DR)', `Net Recognized (${currency})`, '% Share']);
+      incomeStatementData.revenueItems.forEach(r => {
+        csvRows.push([
+          r.code,
+          `"${r.name.replace(/"/g, '""')}"`,
+          r.grossAmount.toFixed(2),
+          r.adjustments.toFixed(2),
+          r.netAmount.toFixed(2),
+          `${r.percentage.toFixed(1)}%`
+        ]);
+      });
+      csvRows.push(['TOTAL NET REVENUES', '', incomeStatementData.totalGrossRevenue.toFixed(2), incomeStatementData.totalRevenueAdjustments.toFixed(2), incomeStatementData.totalRevenue.toFixed(2), '100.0%']);
+      csvRows.push([]);
+
+      // 2. COGS (if any)
+      if (incomeStatementData.cogsItems.length > 0) {
+        csvRows.push(['2. COST OF GOODS SOLD / DIRECT COSTS']);
+        csvRows.push(['Account Code', 'Cost Account Name', 'Gross Debits', 'Rebates/Credits', `Net Amount (${currency})`, '% Share']);
+        incomeStatementData.cogsItems.forEach(c => {
+          csvRows.push([
+            c.code,
+            `"${c.name.replace(/"/g, '""')}"`,
+            c.grossAmount.toFixed(2),
+            c.adjustments.toFixed(2),
+            c.netAmount.toFixed(2),
+            `${c.percentage.toFixed(1)}%`
+          ]);
+        });
+        csvRows.push(['TOTAL COST OF GOODS SOLD', '', incomeStatementData.totalGrossCOGS.toFixed(2), incomeStatementData.totalCOGSAdjustments.toFixed(2), incomeStatementData.totalCOGS.toFixed(2), '100.0%']);
+        csvRows.push([]);
+      }
+
+      // 3. GROSS PROFIT
+      csvRows.push(['GROSS PROFIT', '', '', '', incomeStatementData.grossProfit.toFixed(2), `${incomeStatementData.grossProfitMargin.toFixed(1)}%`]);
+      csvRows.push([]);
+
+      // 4. OPERATING EXPENSES
+      csvRows.push(['3. OPERATING EXPENDITURES']);
+      csvRows.push(['Account Code', 'Expense Account Name', 'Gross Debits (DR)', 'Rebates/Credits (CR)', `Net Expenditure (${currency})`, '% Share']);
+      incomeStatementData.expenseItems.forEach(e => {
+        csvRows.push([
+          e.code,
+          `"${e.name.replace(/"/g, '""')}"`,
+          e.grossAmount.toFixed(2),
+          e.adjustments.toFixed(2),
+          e.netAmount.toFixed(2),
+          `${e.percentage.toFixed(1)}%`
+        ]);
+      });
+      csvRows.push(['TOTAL OPERATING EXPENSES', '', incomeStatementData.totalGrossExpenses.toFixed(2), incomeStatementData.totalExpenseAdjustments.toFixed(2), incomeStatementData.totalOperatingExpenses.toFixed(2), '100.0%']);
+      csvRows.push([]);
+
+      // 5. NET INCOME
+      csvRows.push(['NET INCOME / SURPLUS (DEFICIT)', '', '', '', incomeStatementData.netIncome.toFixed(2), `${incomeStatementData.netIncomeMargin.toFixed(1)}%`]);
     } else if (activeTab === 'fees') {
       filename = `school_fees_report_${startDate || 'all'}_to_${endDate || 'all'}.csv`;
       csvRows.push(['SCHOOL FEES REPORT - ' + businessName]);
@@ -1402,6 +1899,515 @@ const FundReports: React.FC = () => {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderIncomeStatementReport = () => {
+    const { 
+      revenueItems, cogsItems, expenseItems, 
+      totalGrossRevenue, totalRevenueAdjustments, totalRevenue,
+      totalGrossCOGS, totalCOGSAdjustments, totalCOGS,
+      grossProfit, grossProfitMargin,
+      totalGrossExpenses, totalExpenseAdjustments, totalOperatingExpenses,
+      netIncome, netIncomeMargin, selectedDeptName
+    } = incomeStatementData;
+
+    return (
+      <div className="space-y-6">
+        {/* Official Letterhead Header Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 border-t-4 border-t-indigo-600 p-6 sm:p-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 pb-6 border-b border-gray-200">
+            {/* Left: Organization Branding & Letterhead */}
+            <div className="flex items-start sm:items-center gap-4">
+              {logoUrl ? (
+                <img 
+                  src={logoUrl} 
+                  alt={businessName} 
+                  className="h-16 w-auto max-w-[140px] object-contain rounded-xl border border-gray-100 p-1 bg-white shadow-xs"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-800 text-white flex items-center justify-center font-black text-xl shadow-md">
+                  {businessName.substring(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <h2 className="text-xl sm:text-2xl font-black text-gray-900 uppercase tracking-tight">
+                  {businessName}
+                </h2>
+                <div className="text-xs text-gray-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  {businessAddress && <span>{businessAddress}</span>}
+                  {businessAddress && (businessPhone || businessEmail) && <span>&bull;</span>}
+                  {businessPhone && <span>Tel: {businessPhone}</span>}
+                  {businessPhone && businessEmail && <span>&bull;</span>}
+                  {businessEmail && <span>{businessEmail}</span>}
+                </div>
+                <div className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wider mt-1">
+                  Fund Accounting Sub-system &middot; Departmental Performance Statement
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Statement Metadata */}
+            <div className="text-left md:text-right w-full md:w-auto">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-200">
+                <FileText size={13} />
+                INCOME STATEMENT
+              </div>
+              <div className="mt-2 text-sm font-bold text-gray-800 flex md:justify-end items-center gap-1.5">
+                <Building2 size={16} className="text-indigo-600 shrink-0" />
+                <span>{selectedDeptName}</span>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Period: <strong className="text-gray-700">{startDate || 'Beginning'}</strong> to <strong className="text-gray-700">{endDate || 'Present'}</strong> &bull; Currency: <strong className="text-indigo-700">{currency}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* In-Statement Quick Filter Toolbar */}
+          <div className="pt-5 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+              {/* Department Filter */}
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-gray-600 uppercase">Dept:</label>
+                <select
+                  value={selectedDept}
+                  onChange={e => setSelectedDept(e.target.value)}
+                  className="bg-gray-50 border border-gray-300 rounded-xl py-1.5 px-3 text-xs font-bold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">All Departments (Consolidated)</option>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date Filters */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-gray-600 uppercase">Dates:</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="bg-gray-50 border border-gray-300 rounded-xl py-1 px-2.5 text-xs font-medium text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+                <span className="text-gray-400 text-xs">to</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="bg-gray-50 border border-gray-300 rounded-xl py-1 px-2.5 text-xs font-medium text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              {/* Presets */}
+              <div className="hidden sm:flex items-center gap-1 text-xs">
+                <button
+                  onClick={() => handlePresetDate('this-month')}
+                  className="px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition-colors"
+                >
+                  This Month
+                </button>
+                <button
+                  onClick={() => handlePresetDate('this-year')}
+                  className="px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition-colors"
+                >
+                  This Year
+                </button>
+                <button
+                  onClick={() => handlePresetDate('all')}
+                  className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold transition-colors"
+                >
+                  All
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Export Actions */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition-colors shadow-2xs"
+              >
+                <Download size={14} /> Export CSV
+              </button>
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors shadow-xs"
+              >
+                <Printer size={14} /> Print / PDF
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Executive KPI Summary Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-emerald-50/80 border border-emerald-100 p-5 rounded-2xl">
+            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block">Total Revenues (Net)</span>
+            <span className="text-2xl font-extrabold text-emerald-950 mt-1 block">
+              {currency} {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-emerald-700 mt-1 block">
+              Gross CR: {currency} {totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 0 })} &middot; Contra: {currency} {totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+            </span>
+          </div>
+
+          <div className="bg-sky-50/80 border border-sky-100 p-5 rounded-2xl">
+            <span className="text-xs font-bold text-sky-800 uppercase tracking-wider block">Gross Profit</span>
+            <span className="text-2xl font-extrabold text-sky-950 mt-1 block">
+              {currency} {grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-sky-700 mt-1 block">
+              Gross Margin: <strong>{grossProfitMargin.toFixed(1)}%</strong> of revenue
+            </span>
+          </div>
+
+          <div className="bg-rose-50/80 border border-rose-100 p-5 rounded-2xl">
+            <span className="text-xs font-bold text-rose-800 uppercase tracking-wider block">Operating Expenses</span>
+            <span className="text-2xl font-extrabold text-rose-950 mt-1 block">
+              {currency} {totalOperatingExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-rose-700 mt-1 block">
+              Gross DR: {currency} {totalGrossExpenses.toLocaleString(undefined, { minimumFractionDigits: 0 })} &middot; Rebates: {currency} {totalExpenseAdjustments.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+            </span>
+          </div>
+
+          <div className={`p-5 rounded-2xl border ${netIncome >= 0 ? 'bg-indigo-50/80 border-indigo-100' : 'bg-amber-50/80 border-amber-100'}`}>
+            <span className={`text-xs font-bold uppercase tracking-wider block ${netIncome >= 0 ? 'text-indigo-800' : 'text-amber-800'}`}>
+              Net Income ({netIncome >= 0 ? 'Surplus' : 'Deficit'})
+            </span>
+            <span className={`text-2xl font-extrabold mt-1 block ${netIncome >= 0 ? 'text-indigo-950' : 'text-amber-950'}`}>
+              {currency} {netIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-gray-600 mt-1 block">
+              Net Profit Margin: <strong>{netIncomeMargin.toFixed(1)}%</strong>
+            </span>
+          </div>
+        </div>
+
+        {/* 1. REVENUE SECTION */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-emerald-50/60 to-white flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ArrowUpRight className="text-emerald-600" size={20} />
+              <h3 className="font-extrabold text-gray-900 text-base uppercase tracking-wide">
+                1. REVENUE & OPERATING INFLOWS
+              </h3>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
+              {revenueItems.length} Accounts Recognized
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50/80 border-b border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-6">Account Code</th>
+                  <th className="py-3.5 px-6">Revenue Stream / Description</th>
+                  <th className="py-3.5 px-6 text-right">Gross Inflow (CR)</th>
+                  <th className="py-3.5 px-6 text-right">Contra / Adjustments (DR)</th>
+                  <th className="py-3.5 px-6 text-right">Net Recognized ({currency})</th>
+                  <th className="py-3.5 px-6 text-right">% Share</th>
+                  <th className="py-3.5 px-6 w-32">Ratio</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-sm">
+                {revenueItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-gray-400 font-medium">
+                      No revenue transactions recorded for {selectedDeptName} in this date range.
+                    </td>
+                  </tr>
+                ) : (
+                  revenueItems.map((item, idx) => (
+                    <tr key={item.accountId || idx} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-3.5 px-6 font-mono text-xs font-bold text-indigo-700">
+                        {item.code}
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <span className="font-bold text-gray-900">{item.name}</span>
+                        {item.category && (
+                          <span className="text-[11px] text-gray-400 block">{item.category}</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-gray-700">
+                        {currency} {item.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-rose-600">
+                        {item.adjustments > 0 ? `(${currency} ${item.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '—'}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-extrabold text-emerald-700">
+                        {currency} {item.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-semibold text-gray-700">
+                        {item.percentage.toFixed(1)}%
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-emerald-500 h-full rounded-full"
+                            style={{ width: `${Math.min(100, Math.max(0, item.percentage))}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t-2 border-gray-300 text-xs font-black uppercase tracking-wider text-gray-900">
+                <tr>
+                  <td colSpan={2} className="py-4 px-6 text-sm">TOTAL REVENUES</td>
+                  <td className="py-4 px-6 text-right text-gray-700">
+                    {currency} {totalGrossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-4 px-6 text-right text-rose-700">
+                    {totalRevenueAdjustments > 0 ? `(${currency} ${totalRevenueAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '—'}
+                  </td>
+                  <td className="py-4 px-6 text-right text-emerald-700 text-base">
+                    {currency} {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-4 px-6 text-right">100.0%</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* 2. COST OF GOODS SOLD / DIRECT COSTS (If applicable) */}
+        {cogsItems.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-amber-50/60 to-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="text-amber-600" size={20} />
+                <h3 className="font-extrabold text-gray-900 text-base uppercase tracking-wide">
+                  2. COST OF GOODS SOLD / DIRECT PROGRAM COSTS
+                </h3>
+              </div>
+              <span className="text-xs font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800">
+                {cogsItems.length} Accounts
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 border-b border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="py-3.5 px-6">Account Code</th>
+                    <th className="py-3.5 px-6">Cost Head / Account</th>
+                    <th className="py-3.5 px-6 text-right">Gross Cost (DR)</th>
+                    <th className="py-3.5 px-6 text-right">Rebates (CR)</th>
+                    <th className="py-3.5 px-6 text-right">Net Cost ({currency})</th>
+                    <th className="py-3.5 px-6 text-right">% Share</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-sm">
+                  {cogsItems.map((item, idx) => (
+                    <tr key={item.accountId || idx} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-3.5 px-6 font-mono text-xs font-bold text-amber-700">
+                        {item.code}
+                      </td>
+                      <td className="py-3.5 px-6 font-bold text-gray-900">
+                        {item.name}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-gray-700">
+                        {currency} {item.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-emerald-600">
+                        {item.adjustments > 0 ? `(${currency} ${item.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '—'}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-extrabold text-amber-700">
+                        {currency} {item.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-semibold text-gray-700">
+                        {item.percentage.toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-50 border-t-2 border-gray-300 text-xs font-black uppercase tracking-wider text-gray-900">
+                  <tr>
+                    <td colSpan={2} className="py-4 px-6 text-sm">TOTAL COST OF GOODS SOLD</td>
+                    <td className="py-4 px-6 text-right text-gray-700">
+                      {currency} {totalGrossCOGS.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-4 px-6 text-right text-emerald-700">
+                      {totalCOGSAdjustments > 0 ? `(${currency} ${totalCOGSAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '—'}
+                    </td>
+                    <td className="py-4 px-6 text-right text-amber-700 text-base">
+                      {currency} {totalCOGS.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-4 px-6 text-right">100.0%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* GROSS PROFIT HIGHLIGHT BANNER */}
+        <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <span className="text-xs font-black text-indigo-300 uppercase tracking-widest block">
+              GROSS PROFIT (REVENUE LESS DIRECT COSTS)
+            </span>
+            <span className="text-xs text-gray-300 mt-0.5 block">
+              Gross Profit Margin: <strong className="text-white">{grossProfitMargin.toFixed(1)}%</strong>
+            </span>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+            {currency} {grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        </div>
+
+        {/* 3. OPERATING EXPENSES SECTION */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-rose-50/60 to-white flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ArrowDownLeft className="text-rose-600" size={20} />
+              <h3 className="font-extrabold text-gray-900 text-base uppercase tracking-wide">
+                {cogsItems.length > 0 ? '3.' : '2.'} OPERATING EXPENDITURES
+              </h3>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800">
+              {expenseItems.length} Accounts
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50/80 border-b border-gray-200 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-6">Account Code</th>
+                  <th className="py-3.5 px-6">Expense Category / Head</th>
+                  <th className="py-3.5 px-6 text-right">Gross Debit (DR)</th>
+                  <th className="py-3.5 px-6 text-right">Rebates / Adjustments (CR)</th>
+                  <th className="py-3.5 px-6 text-right">Net Expenditure ({currency})</th>
+                  <th className="py-3.5 px-6 text-right">% Share</th>
+                  <th className="py-3.5 px-6 w-32">Ratio</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-sm">
+                {expenseItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-gray-400 font-medium">
+                      No operating expenses recorded for {selectedDeptName} in this date range.
+                    </td>
+                  </tr>
+                ) : (
+                  expenseItems.map((item, idx) => (
+                    <tr key={item.accountId || idx} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-3.5 px-6 font-mono text-xs font-bold text-rose-700">
+                        {item.code}
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <span className="font-bold text-gray-900">{item.name}</span>
+                        {item.category && (
+                          <span className="text-[11px] text-gray-400 block">{item.category}</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-gray-700">
+                        {currency} {item.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-medium text-emerald-600">
+                        {item.adjustments > 0 ? `(${currency} ${item.adjustments.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '—'}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-extrabold text-rose-700">
+                        {currency} {item.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-semibold text-gray-700">
+                        {item.percentage.toFixed(1)}%
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-rose-500 h-full rounded-full"
+                            style={{ width: `${Math.min(100, Math.max(0, item.percentage))}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t-2 border-gray-300 text-xs font-black uppercase tracking-wider text-gray-900">
+                <tr>
+                  <td colSpan={2} className="py-4 px-6 text-sm">TOTAL OPERATING EXPENSES</td>
+                  <td className="py-4 px-6 text-right text-gray-700">
+                    {currency} {totalGrossExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-4 px-6 text-right text-emerald-700">
+                    {totalExpenseAdjustments > 0 ? `(${currency} ${totalExpenseAdjustments.toLocaleString(undefined, { minimumFractionDigits: 2 })})` : '—'}
+                  </td>
+                  <td className="py-4 px-6 text-right text-rose-700 text-base">
+                    {currency} {totalOperatingExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-4 px-6 text-right">100.0%</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* DOUBLE-UNDERLINED PROFESSIONAL ACCOUNTING NET INCOME STATEMENT BLOCK */}
+        <div className={`p-6 sm:p-8 rounded-2xl border-t-2 border-b-4 border-double ${
+          netIncome >= 0 
+            ? 'bg-emerald-50/70 border-emerald-950 text-emerald-950' 
+            : 'bg-rose-50/70 border-rose-950 text-rose-950'
+        } shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4`}>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2.5 py-0.5 rounded-md text-xs font-black tracking-wider uppercase ${
+                netIncome >= 0 ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'
+              }`}>
+                {netIncome >= 0 ? 'NET SURPLUS / PROFIT' : 'NET DEFICIT / LOSS'}
+              </span>
+              <span className="text-xs text-gray-600 font-semibold">
+                Net Margin: <strong>{netIncomeMargin.toFixed(1)}%</strong>
+              </span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black mt-1 uppercase tracking-tight">
+              NET INCOME FOR THE PERIOD
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Computed in accordance with double-entry accounting standards (Gross Profit minus Operating Expenses)
+            </p>
+          </div>
+
+          <div className="text-right">
+            <span className="text-xs text-gray-500 block uppercase font-bold tracking-wider">Final Net Position</span>
+            <span className={`text-3xl sm:text-4xl font-black tracking-tight ${
+              netIncome >= 0 ? 'text-emerald-700' : 'text-rose-700'
+            }`}>
+              {currency} {netIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        {/* Official Sign-off & Audit Compliance Block */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-gray-600 print:hidden">
+          <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Prepared By</span>
+            <div className="mt-2 text-sm font-bold text-gray-900">{user?.name || user?.email || 'Finance Officer'}</div>
+            <div className="text-gray-500">Fund Accounting Department</div>
+            <div className="mt-4 pt-2 border-t border-gray-200 text-gray-400 text-[11px]">Signature: _______________________</div>
+          </div>
+          <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Department Verification</span>
+            <div className="mt-2 text-sm font-bold text-gray-900">{selectedDeptName}</div>
+            <div className="text-gray-500">Head of Department / Program Lead</div>
+            <div className="mt-4 pt-2 border-t border-gray-200 text-gray-400 text-[11px]">Signature: _______________________</div>
+          </div>
+          <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Audited & Approved By</span>
+            <div className="mt-2 text-sm font-bold text-gray-900">Executive Directorate / Trustee</div>
+            <div className="text-gray-500">{businessName}</div>
+            <div className="mt-4 pt-2 border-t border-gray-200 text-gray-400 text-[11px]">Signature: _______________________</div>
           </div>
         </div>
       </div>
@@ -1808,6 +2814,15 @@ const FundReports: React.FC = () => {
           Statement of Activities
         </button>
         <button
+          onClick={() => setActiveTab('income-statement')}
+          className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 ${
+            activeTab === 'income-statement' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <TrendingUp size={15} />
+          Income Statement
+        </button>
+        <button
           onClick={() => setActiveTab('fees')}
           className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             activeTab === 'fees' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'
@@ -1995,6 +3010,7 @@ const FundReports: React.FC = () => {
       ) : (
         <div>
           {activeTab === 'activities' && renderStatementOfActivities()}
+          {activeTab === 'income-statement' && renderIncomeStatementReport()}
           {activeTab === 'fees' && renderSchoolFeesReport()}
           {activeTab === 'donations' && renderDonationsReport()}
           {activeTab === 'transfers' && renderTransfersReport()}
