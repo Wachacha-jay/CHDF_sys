@@ -154,6 +154,7 @@ export class PayrollService {
       payment_date?: string;
       payment_reference?: string;
       notes?: string;
+      lines?: any[];
     }
   ): Promise<{ success: boolean; error?: string }> {
     try {

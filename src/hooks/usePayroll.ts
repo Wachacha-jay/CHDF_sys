@@ -215,6 +215,7 @@ export const usePayroll = () => {
       payment_date?: string;
       payment_reference?: string;
       notes?: string;
+      lines?: any[];
     }
   ) => {
     try {

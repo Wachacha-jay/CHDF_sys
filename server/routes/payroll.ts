@@ -73,6 +73,23 @@ async function ensurePayrollSchema() {
       await pool.query('ALTER TABLE employees ADD COLUMN department_id CHAR(36) DEFAULT NULL');
     }
 
+    // 6. Ensure payroll_disbursements table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payroll_disbursements (
+        id CHAR(36) PRIMARY KEY,
+        payroll_run_id CHAR(36) NOT NULL,
+        payment_account_id CHAR(36) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_date DATE NOT NULL,
+        payment_reference VARCHAR(100) DEFAULT NULL,
+        journal_entry_id CHAR(36) DEFAULT NULL,
+        notes TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_payroll_disb_run (payroll_run_id),
+        INDEX idx_payroll_disb_je (journal_entry_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     schemaEnsured = true;
   } catch (err) {
     console.error('Error in ensurePayrollSchema:', err);
@@ -361,6 +378,38 @@ router.get('/runs', authenticate, async (req, res): Promise<void> => {
 
     const [rows]: any = await pool.query(query, params);
 
+    const runIds = rows.map((r: any) => r.id);
+    const disbursementsMap: Record<string, any[]> = {};
+    if (runIds.length > 0) {
+      try {
+        const [disbRows]: any = await pool.query(
+          `SELECT pd.*, pa.name as account_name, pa.code as account_code
+           FROM payroll_disbursements pd
+           LEFT JOIN accounts pa ON pd.payment_account_id = pa.id
+           WHERE pd.payroll_run_id IN (?)
+           ORDER BY pd.payment_date ASC, pd.created_at ASC`,
+          [runIds]
+        );
+        for (const d of (disbRows || [])) {
+          if (!disbursementsMap[d.payroll_run_id]) {
+            disbursementsMap[d.payroll_run_id] = [];
+          }
+          disbursementsMap[d.payroll_run_id].push({
+            id: d.id,
+            payroll_run_id: d.payroll_run_id,
+            payment_account_id: d.payment_account_id,
+            amount: Number(d.amount) || 0,
+            payment_date: d.payment_date,
+            payment_reference: d.payment_reference,
+            journal_entry_id: d.journal_entry_id,
+            notes: d.notes,
+            account_name: d.account_name,
+            account_code: d.account_code
+          });
+        }
+      } catch (_) {}
+    }
+
     const data = rows.map((row: any) => ({
       id: row.id,
       payroll_period_id: row.payroll_period_id,
@@ -387,6 +436,7 @@ router.get('/runs', authenticate, async (req, res): Promise<void> => {
       payment_account_id: row.payment_account_id,
       payment_reference: row.payment_reference,
       payment_journal_entry_id: row.payment_journal_entry_id,
+      disbursements: disbursementsMap[row.id] || [],
       payment_account: row.payment_account_id ? {
         id: row.payment_account_id,
         name: row.payment_account_name || 'Account',
@@ -743,13 +793,8 @@ router.put('/runs/:id/approve', authenticate, async (req, res): Promise<void> =>
 router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
   await ensurePayrollSchema();
   const { id } = req.params;
-  const { payment_account_id, payment_date, payment_reference, notes } = req.body;
+  const { payment_account_id, payment_date, payment_reference, notes, lines } = req.body;
   const createdBy = (req as any).user?.id;
-
-  if (!payment_account_id) {
-    res.status(400).json({ success: false, error: 'Please choose the paying account (Bank/Cash) to disburse salary' });
-    return;
-  }
 
   const connection = await pool.getConnection();
   try {
@@ -779,6 +824,65 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
 
     const payDate = payment_date || run.period_pay_date || new Date().toISOString().split('T')[0];
     const empLabel = `${run.first_name} ${run.last_name} (${run.employee_code})`;
+    const runNetPay = Number(run.net_pay || 0);
+
+    // Prepare disbursement lines (support multiple cheques / splits or single payment)
+    let paymentLines: Array<{
+      payment_account_id: string;
+      amount: number;
+      payment_date: string;
+      payment_reference: string;
+      notes?: string;
+    }> = [];
+
+    if (Array.isArray(lines) && lines.length > 0) {
+      paymentLines = lines.map(l => ({
+        payment_account_id: l.payment_account_id || payment_account_id,
+        amount: Number(l.amount || 0),
+        payment_date: l.payment_date || payDate,
+        payment_reference: (l.payment_reference || '').trim(),
+        notes: (l.notes || '').trim()
+      }));
+    } else {
+      if (!payment_account_id) {
+        await connection.rollback();
+        res.status(400).json({ success: false, error: 'Please choose the paying account (Bank/Cash) to disburse salary' });
+        return;
+      }
+      paymentLines = [{
+        payment_account_id,
+        amount: runNetPay,
+        payment_date: payDate,
+        payment_reference: (payment_reference || '').trim(),
+        notes: (notes || '').trim()
+      }];
+    }
+
+    // Validate each payment line
+    for (let i = 0; i < paymentLines.length; i++) {
+      const pl = paymentLines[i];
+      if (!pl.payment_account_id) {
+        await connection.rollback();
+        res.status(400).json({ success: false, error: `Please choose a paying account for Line #${i + 1}` });
+        return;
+      }
+      if (pl.amount <= 0) {
+        await connection.rollback();
+        res.status(400).json({ success: false, error: `Payment amount must be greater than 0 on Line #${i + 1}` });
+        return;
+      }
+    }
+
+    // Validate total amount matches net pay
+    const totalLinesAmount = paymentLines.reduce((s, l) => s + l.amount, 0);
+    if (Math.abs(totalLinesAmount - runNetPay) > 0.05) {
+      await connection.rollback();
+      res.status(400).json({
+        success: false,
+        error: `Total across all payment lines (${totalLinesAmount.toLocaleString()}) does not match Net Pay (${runNetPay.toLocaleString()}).`
+      });
+      return;
+    }
 
     // 1. Post Accrual Journal Entry if not yet created
     let accrualJournalId = run.journal_entry_id;
@@ -788,7 +892,7 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
         run.period_name,
         payDate,
         Number(run.gross_pay),
-        Number(run.net_pay),
+        runNetPay,
         Number(run.tax_deduction),
         Number(run.nssf_deduction),
         Number(run.nhif_deduction),
@@ -800,20 +904,47 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
       );
     }
 
-    // 2. Post Disbursement Journal Entry (Debit 2125 Net Salary Payable, Credit Paying Account)
-    const disbursementJournalId = await postPayrollDisbursementJournalEntry(
-      connection,
-      run.period_name,
-      payDate,
-      Number(run.net_pay),
-      payment_account_id,
-      payment_reference,
-      notes || '',
-      createdBy,
-      empLabel
-    );
+    // 2. Post Disbursement Journal Entries (Debit 2125 Net Salary Payable, Credit Chosen Account)
+    const disbursementJournalIds: string[] = [];
+    for (const pl of paymentLines) {
+      const disbDescNote = pl.notes || notes || '';
+      const disbJournalId = await postPayrollDisbursementJournalEntry(
+        connection,
+        run.period_name,
+        pl.payment_date,
+        pl.amount,
+        pl.payment_account_id,
+        pl.payment_reference,
+        disbDescNote,
+        createdBy,
+        empLabel
+      );
+      disbursementJournalIds.push(disbJournalId);
+
+      // Record disbursement line
+      const disbId = crypto.randomUUID();
+      await connection.query(
+        `INSERT INTO payroll_disbursements (id, payroll_run_id, payment_account_id, amount, payment_date, payment_reference, journal_entry_id, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          disbId,
+          id,
+          pl.payment_account_id,
+          pl.amount,
+          pl.payment_date,
+          pl.payment_reference || null,
+          disbJournalId,
+          pl.notes || null
+        ]
+      );
+    }
 
     // 3. Mark run as paid with paying account & journal linkages
+    const aggregatedRef = paymentLines.map(l => l.payment_reference).filter(Boolean).join(', ');
+    const primaryPayDate = paymentLines[0].payment_date;
+    const primaryPayAccountId = paymentLines[0].payment_account_id;
+    const primaryDisbursementId = disbursementJournalIds[0] || null;
+
     await connection.query(
       `UPDATE payroll_runs SET 
         status = 'paid',
@@ -825,11 +956,11 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
         notes = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE notes END
        WHERE id = ?`,
       [
-        payDate,
-        payment_account_id,
-        payment_reference || null,
+        primaryPayDate,
+        primaryPayAccountId,
+        aggregatedRef || null,
         accrualJournalId,
-        disbursementJournalId,
+        primaryDisbursementId,
         notes, notes, notes,
         id
       ]
@@ -842,14 +973,15 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
       const auditId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO activity_logs (id, user_id, user_name, action, module, entity_id, entity_label, details, ip_address) VALUES (?, ?, ?, 'PAY', 'Payroll', ?, ?, ?, '')`,
-        [auditId, createdBy, paidByName, id, `Paid salary to ${empLabel}`, JSON.stringify({ run_id: id, net_pay: run.net_pay, emp: empLabel })]
+        [auditId, createdBy, paidByName, id, `Paid salary to ${empLabel} (${paymentLines.length} cheque/line(s))`, JSON.stringify({ run_id: id, net_pay: run.net_pay, cheques: paymentLines.length, emp: empLabel })]
       );
     } catch (_) {}
     res.json({
       success: true,
-      message: `Payroll payment disbursed and posted to General Ledger for ${empLabel}`,
+      message: `Payroll payment disbursed (${paymentLines.length} cheque line(s)) and posted to General Ledger for ${empLabel}`,
       journal_entry_id: accrualJournalId,
-      payment_journal_entry_id: disbursementJournalId
+      payment_journal_entry_id: primaryDisbursementId,
+      disbursement_journal_ids: disbursementJournalIds
     });
   } catch (error: any) {
     await connection.rollback();
@@ -902,6 +1034,20 @@ router.put('/runs/:id/unpost', authenticate, async (req, res): Promise<void> => 
         if (!journalIdsToDelete.includes(r.id)) journalIdsToDelete.push(r.id);
       }
     }
+
+    // Also retrieve all journal entries from payroll_disbursements
+    try {
+      const [disbRows]: any = await connection.query(
+        'SELECT journal_entry_id FROM payroll_disbursements WHERE payroll_run_id = ?',
+        [id]
+      );
+      for (const d of (disbRows || [])) {
+        if (d.journal_entry_id && !journalIdsToDelete.includes(d.journal_entry_id)) {
+          journalIdsToDelete.push(d.journal_entry_id);
+        }
+      }
+      await connection.query('DELETE FROM payroll_disbursements WHERE payroll_run_id = ?', [id]);
+    } catch (_) {}
 
     // Step 1: Detach references from the run first to avoid foreign key violations
     await connection.query(
@@ -977,6 +1123,20 @@ router.post('/periods/:id/unpost-all', authenticate, async (req, res): Promise<v
       if (r.payment_journal_entry_id) journalIds.add(r.payment_journal_entry_id);
     }
 
+    const runIds = runs.map((r: any) => r.id);
+    if (runIds.length > 0) {
+      try {
+        const [disbRows]: any = await connection.query(
+          'SELECT journal_entry_id FROM payroll_disbursements WHERE payroll_run_id IN (?)',
+          [runIds]
+        );
+        for (const d of (disbRows || [])) {
+          if (d.journal_entry_id) journalIds.add(d.journal_entry_id);
+        }
+        await connection.query('DELETE FROM payroll_disbursements WHERE payroll_run_id IN (?)', [runIds]);
+      } catch (_) {}
+    }
+
     // Detach and revert runs
     await connection.query(
       `UPDATE payroll_runs SET 
@@ -1031,6 +1191,15 @@ router.post('/unpost-all-paid', authenticate, async (req, res): Promise<void> =>
       if (r.journal_entry_id) journalIds.add(r.journal_entry_id);
       if (r.payment_journal_entry_id) journalIds.add(r.payment_journal_entry_id);
     }
+
+    // Collect all journal entries from payroll_disbursements
+    try {
+      const [disbRows]: any = await connection.query('SELECT journal_entry_id FROM payroll_disbursements');
+      for (const d of (disbRows || [])) {
+        if (d.journal_entry_id) journalIds.add(d.journal_entry_id);
+      }
+      await connection.query('DELETE FROM payroll_disbursements');
+    } catch (_) {}
 
     // Find any additional payroll JEs
     const [extraJEs]: any = await connection.query(
@@ -1322,8 +1491,32 @@ router.get('/runs/:id/payslip', authenticate, async (req, res): Promise<void> =>
         id: row.payment_account_id,
         name: row.payment_account_name,
         code: row.payment_account_code
-      } : null
+      } : null,
+      disbursements: [] as any[]
     };
+
+    try {
+      const [disbRows]: any = await pool.query(
+        `SELECT pd.*, pa.name as account_name, pa.code as account_code
+         FROM payroll_disbursements pd
+         LEFT JOIN accounts pa ON pd.payment_account_id = pa.id
+         WHERE pd.payroll_run_id = ?
+         ORDER BY pd.payment_date ASC, pd.created_at ASC`,
+        [id]
+      );
+      payslip.disbursements = (disbRows || []).map((d: any) => ({
+        id: d.id,
+        payroll_run_id: d.payroll_run_id,
+        payment_account_id: d.payment_account_id,
+        amount: Number(d.amount) || 0,
+        payment_date: d.payment_date,
+        payment_reference: d.payment_reference,
+        journal_entry_id: d.journal_entry_id,
+        notes: d.notes,
+        account_name: d.account_name,
+        account_code: d.account_code
+      }));
+    } catch (_) {}
 
     res.json({ success: true, data: payslip });
   } catch (error: any) {

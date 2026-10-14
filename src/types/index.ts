@@ -495,12 +495,26 @@ export interface PayrollRun {
   payment_reference?: string;
   payment_journal_entry_id?: string;
   payment_account?: { id: string; name: string; code: string; };
+  disbursements?: PayrollDisbursementLine[];
   created_by?: string;
   created_at: string;
   updated_at: string;
   employee?: Employee;
   payroll_period?: PayrollPeriod;
   department_id?: string;
+}
+
+export interface PayrollDisbursementLine {
+  id?: string;
+  payroll_run_id?: string;
+  payment_account_id: string;
+  amount: number;
+  payment_date: string;
+  payment_reference: string;
+  journal_entry_id?: string;
+  notes?: string;
+  account_name?: string;
+  account_code?: string;
 }
 
 export interface PayrollDeduction {

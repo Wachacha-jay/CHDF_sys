@@ -13,6 +13,7 @@ interface PayrollRunsProps {
     payment_date: string;
     payment_reference: string;
     notes: string;
+    lines?: any[];
   }) => Promise<boolean | void>;
   onUnpostRun?: (runId: string) => Promise<boolean | void>;
   onViewRun: (run: PayrollRun) => void;
@@ -53,6 +54,7 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
     payment_date: string;
     payment_reference: string;
     notes: string;
+    lines?: any[];
   }): Promise<boolean> => {
     try {
       const ok = await onPayRun(runId, paymentData);
@@ -162,6 +164,34 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
               <tr class="net-row"><td>NET PAY</td><td class="amount">${currency} ${fmt(data.net_pay)}</td></tr>
             </tbody>
           </table>
+
+          ${(data.disbursements && data.disbursements.length > 0) ? `
+            <div style="margin-top:18px;margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#475569;margin-bottom:6px;letter-spacing:0.5px">
+                Payment & Cheque Disbursements (${data.disbursements.length})
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cheque / Payment Ref</th>
+                    <th>Date</th>
+                    <th>Paying Account</th>
+                    <th class="amount">Amount (${currency})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.disbursements.map((d: any) => `
+                    <tr>
+                      <td><strong>${d.payment_reference || '—'}</strong>${d.notes ? ` <span style="font-size:11px;color:#64748b">(${d.notes})</span>` : ''}</td>
+                      <td>${d.payment_date ? new Date(d.payment_date).toLocaleDateString() : '—'}</td>
+                      <td>${d.account_name ? `[${d.account_code || ''}] ${d.account_name}` : 'Bank Account'}</td>
+                      <td class="amount">${fmt(d.amount)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
 
           ${data.notes && data.notes !== 'Auto-generated' ? `<p style="font-size:13px;color:#64748b">Notes: ${data.notes}</p>` : ''}
 
@@ -322,8 +352,12 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
                           {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
                         </span>
                         {run.status === 'paid' && (
-                          <div className="mt-1 text-left text-[11px] text-slate-500">
-                            {run.payment_account ? (
+                          <div className="mt-1 text-center text-[11px] text-slate-500 max-w-[180px]">
+                            {run.disbursements && run.disbursements.length > 1 ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 mb-0.5">
+                                {run.disbursements.length} cheques/splits
+                              </span>
+                            ) : run.payment_account ? (
                               <span className="inline-flex items-center text-slate-700 font-medium">
                                 <Building2 className="h-3 w-3 mr-0.5 text-slate-400" />
                                 [{run.payment_account.code}] {run.payment_account.name}
@@ -332,7 +366,9 @@ const PayrollRuns: React.FC<PayrollRunsProps> = ({
                               <span className="text-slate-400">Paid from Bank</span>
                             )}
                             {run.payment_reference && (
-                              <span className="block text-[10px] text-slate-400">Ref: {run.payment_reference}</span>
+                              <span className="block text-[10px] text-slate-500 font-medium truncate" title={run.payment_reference}>
+                                Ref: {run.payment_reference}
+                              </span>
                             )}
                           </div>
                         )}
