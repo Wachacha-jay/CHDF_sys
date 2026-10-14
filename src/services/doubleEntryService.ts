@@ -173,7 +173,7 @@ export class DoubleEntryService {
   /**
    * Post a customer payment
    */
-  static async postCustomerPayment(sale: Sale, amount: number, method: string, date?: string): Promise<void> {
+  static async postCustomerPayment(sale: Sale, amount: number, method: string, date?: string, paymentRef?: string): Promise<void> {
     const accounts = await AccountingService.getAccounts();
     const findAccount = (code: string) => {
       const flatten = (accs: any[]): any[] => {
@@ -189,27 +189,29 @@ export class DoubleEntryService {
     const mpesaAccount = findAccount('1111'); // Bank - Mpesa/Card
 
     let debitAccount = cashAccount;
-    if (method === 'mpesa' || method === 'card') debitAccount = mpesaAccount;
+    if (method === 'mpesa' || method === 'card' || method === 'bank' || method === 'cheque') debitAccount = mpesaAccount;
 
     if (!debitAccount || !arAccount) {
       console.error('Required accounts not found for payment posting');
       return;
     }
 
+    const refText = paymentRef ? ` [Ref/Cheque: ${paymentRef}]` : '';
+
     const created = await AccountingService.createJournalEntry({
       entry_date: date || new Date().toISOString().split('T')[0],
-      description: `Payment received for ${sale.sale_number}`,
-      reference: sale.sale_number,
+      description: `Payment received for ${sale.sale_number}${refText}`,
+      reference: paymentRef || sale.sale_number,
       lines: [
         {
           account_id: debitAccount.id,
-          description: `Payment for ${sale.sale_number} via ${method}`,
+          description: `Payment for ${sale.sale_number} via ${method}${refText}`,
           debit_amount: amount,
           credit_amount: 0
         },
         {
           account_id: arAccount.id,
-          description: `Reduction of AR for ${sale.sale_number}`,
+          description: `Reduction of AR for ${sale.sale_number}${refText}`,
           debit_amount: 0,
           credit_amount: amount
         }
@@ -325,7 +327,8 @@ export class DoubleEntryService {
     date?: string, 
     accountId?: string,
     whtRate: number = 0,
-    whtAmount: number = 0
+    whtAmount: number = 0,
+    paymentRef?: string
   ): Promise<void> {
     const accounts = await AccountingService.getAccounts();
     const flatten = (accs: any[]): any[] => {
@@ -355,18 +358,19 @@ export class DoubleEntryService {
       return;
     }
 
+    const refText = paymentRef ? ` [Ref/Cheque: ${paymentRef}]` : '';
     const netPaymentAmount = Math.max(0, amount - (whtAmount || 0));
     const lines: any[] = [
       {
         account_id: apAccount.id,
-        description: `Reduction of AP for ${purchase.purchase_number}`,
+        description: `Reduction of AP for ${purchase.purchase_number}${refText}`,
         debit_amount: amount,
         credit_amount: 0,
         department_id: purchase.department_id || undefined
       },
       {
         account_id: creditAccount.id,
-        description: `Payment for ${purchase.purchase_number} via ${method}`,
+        description: `Payment for ${purchase.purchase_number} via ${method}${refText}`,
         debit_amount: 0,
         credit_amount: netPaymentAmount,
         department_id: purchase.department_id || undefined
@@ -378,7 +382,7 @@ export class DoubleEntryService {
       if (whtAccount) {
         lines.push({
           account_id: whtAccount.id,
-          description: `Withholding Tax (${whtRate}%) on ${purchase.purchase_number}`,
+          description: `Withholding Tax (${whtRate}%) on ${purchase.purchase_number}${refText}`,
           debit_amount: 0,
           credit_amount: whtAmount,
           department_id: purchase.department_id || undefined
@@ -388,8 +392,8 @@ export class DoubleEntryService {
 
     const created = await AccountingService.createJournalEntry({
       entry_date: date || new Date().toISOString().split('T')[0],
-      description: `Payment to supplier for ${purchase.purchase_number}${whtAmount > 0 ? ` (WHT: ${whtRate}%)` : ''}`,
-      reference: purchase.purchase_number,
+      description: `Payment to supplier for ${purchase.purchase_number}${whtAmount > 0 ? ` (WHT: ${whtRate}%)` : ''}${refText}`,
+      reference: paymentRef || purchase.purchase_number,
       lines,
       is_posted: true
     });

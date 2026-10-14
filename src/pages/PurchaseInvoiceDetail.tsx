@@ -365,6 +365,15 @@ const PurchaseInvoiceDetail: React.FC = () => {
           </div>
         </div>
 
+        {invoice.notes && (
+          <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+              <FileText size={14} className="text-emerald-600" /> Payment & Transaction Notes
+            </h4>
+            <p className="text-sm text-slate-700 whitespace-pre-line font-medium leading-relaxed">{invoice.notes}</p>
+          </div>
+        )}
+
         {invoice.payment_status !== 'paid' && balanceDue > 0 && (
           <div className="mt-8 pt-6 border-t border-gray-100 flex justify-end">
             <button 

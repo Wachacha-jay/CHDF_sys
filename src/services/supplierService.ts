@@ -243,7 +243,8 @@ export class SupplierService {
     date?: string, 
     accountId?: string,
     whtRate: number = 0,
-    whtAmount: number = 0
+    whtAmount: number = 0,
+    paymentRef?: string
   ): Promise<boolean> {
     try {
       const purchase = await this.getPurchaseById(purchaseId);
@@ -264,15 +265,20 @@ export class SupplierService {
         paymentStatus = 'overdue';
       }
 
+      const existingNotes = purchase.notes ? `${purchase.notes}\n` : '';
+      const refNote = paymentRef ? `Payment Ref / Cheque #: ${paymentRef}` : '';
+      const updatedNotes = refNote ? `${existingNotes}${refNote}` : purchase.notes;
+
       const updateResponse = await this.updatePurchase(purchaseId, {
         paid_amount: newPaidAmount,
         wht_rate: whtRate,
         wht_amount: newWhtAmount,
-        payment_status: paymentStatus
+        payment_status: paymentStatus,
+        notes: updatedNotes
       });
 
       if (updateResponse) {
-        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date, accountId, whtRate, whtAmount);
+        await DoubleEntryService.postSupplierPayment(purchase, amount, method, date, accountId, whtRate, whtAmount, paymentRef);
       }
 
       return !!updateResponse;

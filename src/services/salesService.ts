@@ -295,7 +295,7 @@ export class SalesService {
   }
 
   // Payment operations
-  static async recordPayment(saleId: string, amount: number, paymentMethod?: string, date?: string): Promise<boolean> {
+  static async recordPayment(saleId: string, amount: number, paymentMethod?: string, date?: string, paymentRef?: string): Promise<boolean> {
     try {
       const sale = await this.getSaleById(saleId);
       if (!sale) return false;
@@ -314,15 +314,20 @@ export class SalesService {
         paymentStatus = 'overdue';
       }
 
+      const existingNotes = sale.notes ? `${sale.notes}\n` : '';
+      const refNote = paymentRef ? `Payment Ref / Cheque #: ${paymentRef}` : '';
+      const updatedNotes = refNote ? `${existingNotes}${refNote}` : sale.notes;
+
       const updateResponse = await this.updateSale(saleId, {
         paid_amount: newPaidAmount,
         payment_status: paymentStatus,
-        payment_method: paymentMethod || sale.payment_method
+        payment_method: paymentMethod || sale.payment_method,
+        notes: updatedNotes
       });
 
       if (updateResponse) {
         // Create journal entry for payment
-        await DoubleEntryService.postCustomerPayment(sale, amount, paymentMethod || sale.payment_method || 'mpesa', date);
+        await DoubleEntryService.postCustomerPayment(sale, amount, paymentMethod || sale.payment_method || 'mpesa', date, paymentRef);
       }
 
       return !!updateResponse;

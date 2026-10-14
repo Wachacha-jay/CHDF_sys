@@ -21,6 +21,7 @@ export interface ReceiptData {
   balance?: number;
   paymentAmount?: number;
   paymentMethod: string;
+  paymentReference?: string;
   date: string;
   time: string;
   type?: 'sale' | 'payment' | 'donation' | 'school_fee' | 'distribution';
@@ -384,6 +385,7 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
             ${isDistribution ? `<p><strong>Credit Account:</strong> 1135 - In-Kind Inventory</p>` : ''}
             ${receipt.fundName ? `<p><strong>Fund Account:</strong> ${receipt.fundName}</p>` : ''}
             <p><strong>Transfer Method:</strong> ${receipt.paymentMethod.toUpperCase().replace(/_/g, ' ')}</p>
+            ${receipt.paymentReference ? `<p><strong>Payment Ref / Cheque #:</strong> ${receipt.paymentReference}</p>` : ''}
             <p><strong>Voucher Status:</strong>
               <span class="type-badge ${receipt.paymentMethod.includes('Fund') || isDistribution ? 'type-outflow' : 'type-inflow'}">
                 ${isDistribution ? 'In-Kind Inventory Disbursed' : isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}

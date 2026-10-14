@@ -20,6 +20,7 @@ const Invoice: React.FC = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [recordPaymentMethod, setRecordPaymentMethod] = useState('cash');
+  const [paymentReference, setPaymentReference] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [deleting, setDeleting] = useState(false);
 
@@ -472,6 +473,16 @@ const Invoice: React.FC = () => {
           </table>
         </div>
 
+        {/* Notes & Payment History */}
+        {sale.notes && (
+          <div className="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+              <Receipt size={14} className="text-indigo-600" /> Payment & Transaction Notes
+            </h4>
+            <p className="text-sm text-slate-700 whitespace-pre-line font-medium leading-relaxed">{sale.notes}</p>
+          </div>
+        )}
+
         {/* Payment Section */}
         {sale.payment_status !== 'paid' && (
           <div className="bg-gray-50 p-6 rounded-lg mb-6">
@@ -508,6 +519,7 @@ const Invoice: React.FC = () => {
                 <button
                   onClick={() => {
                     setPaymentAmount((sale.total_amount - sale.paid_amount).toFixed(2));
+                    setPaymentReference('');
                     setShowPaymentModal(true);
                   }}
                   className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
@@ -552,9 +564,20 @@ const Invoice: React.FC = () => {
               >
                 <option value="cash">Cash</option>
                 <option value="mpesa">M-Pesa</option>
-                <option value="card">Card</option>
                 <option value="bank">Bank Transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
               </select>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Ref / Cheque Number</label>
+              <input
+                type="text"
+                placeholder={recordPaymentMethod === 'cheque' ? 'Enter cheque # (e.g. CHQ-001248)' : 'Enter reference / transaction ID (e.g. MPESA-QHD8291)'}
+                value={paymentReference}
+                onChange={(e) => setPaymentReference(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              />
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
@@ -581,7 +604,7 @@ const Invoice: React.FC = () => {
                     return toast.error('Cannot pay more than balance due');
                   }
                   toast.loading('Recording payment...');
-                  const success = await SalesService.recordPayment(sale.id, Number(paymentAmount), recordPaymentMethod, paymentDate);
+                  const success = await SalesService.recordPayment(sale.id, Number(paymentAmount), recordPaymentMethod, paymentDate, paymentReference.trim());
                   toast.dismiss();
                   if (success) {
                     toast.success('Payment recorded successfully');
@@ -596,6 +619,7 @@ const Invoice: React.FC = () => {
                       balance: sale.total_amount - (sale.paid_amount + Number(paymentAmount)),
                       paymentAmount: Number(paymentAmount),
                       paymentMethod: recordPaymentMethod,
+                      paymentReference: paymentReference.trim() || undefined,
                       date: new Date().toLocaleDateString(),
                       time: new Date().toLocaleTimeString(),
                       type: 'payment'
@@ -615,6 +639,7 @@ const Invoice: React.FC = () => {
 
                     setShowPaymentModal(false);
                     setPaymentAmount('');
+                    setPaymentReference('');
                     loadInvoiceData();
                   } else {
                     toast.error('Failed to record payment');

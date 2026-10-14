@@ -23,6 +23,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ open, onClose, 
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
   const [whtRate, setWhtRate] = useState<number>(0);
+  const [paymentRef, setPaymentRef] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ open, onClose, 
       const due = Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0));
       setAmount(due > 0 ? due.toFixed(2) : '');
       setDate(new Date().toISOString().split('T')[0]);
+      setPaymentRef('');
       
       // Default WHT rate from supplier if available, or default to 0
       const defaultWht = (invoice as any).supplier?.withholding_tax_rate ?? invoice.wht_rate ?? 0;
@@ -79,7 +81,8 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ open, onClose, 
         date, 
         selectedAccountId || undefined,
         Number(whtRate) || 0,
-        calculatedWhtAmount
+        calculatedWhtAmount,
+        paymentRef.trim() || undefined
       );
       if (success) {
         toast.success('Payment recorded and posted to General Ledger');
@@ -198,6 +201,17 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ open, onClose, 
                 ))}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block mb-1 text-xs font-semibold text-gray-700">Payment Ref / Cheque Number</label>
+            <input 
+              type="text" 
+              value={paymentRef} 
+              onChange={e => setPaymentRef(e.target.value)} 
+              placeholder={method === 'cheque' ? 'Enter cheque # (e.g. CHQ-001248)' : 'Enter transaction / payment reference (e.g. TRF-9281, EFT-1029)'}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
+            />
           </div>
 
           {/* Withholding Tax (WHT) Section */}
