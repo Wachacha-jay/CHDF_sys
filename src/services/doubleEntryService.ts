@@ -82,8 +82,15 @@ export class DoubleEntryService {
 
     // Determine target debit account
     let debitAccount = arAccount;
-    if (sale.payment_method === 'cash') debitAccount = cashAccount;
-    else if (sale.payment_method === 'mpesa' || sale.payment_method === 'card') debitAccount = mpesaAccount;
+    if (sale.payment_method === 'credit') {
+      debitAccount = arAccount;
+    } else if (sale.payment_account_id) {
+      debitAccount = allFlatAccounts.find(a => a.id === sale.payment_account_id) || debitAccount;
+    } else if (sale.payment_method === 'cash') {
+      debitAccount = cashAccount;
+    } else if (sale.payment_method === 'mpesa' || sale.payment_method === 'card' || sale.payment_method === 'bank') {
+      debitAccount = mpesaAccount;
+    }
 
     if (!debitAccount) {
       console.error('Debit account not found for sale posting');
@@ -173,23 +180,21 @@ export class DoubleEntryService {
   /**
    * Post a customer payment
    */
-  static async postCustomerPayment(sale: Sale, amount: number, method: string, date?: string, paymentRef?: string): Promise<void> {
+  static async postCustomerPayment(sale: Sale, amount: number, method: string, date?: string, paymentRef?: string, accountId?: string): Promise<void> {
     const accounts = await AccountingService.getAccounts();
-    const findAccount = (code: string) => {
-      const flatten = (accs: any[]): any[] => {
-        return accs.reduce((prev, curr) => {
-          return prev.concat(curr).concat(curr.children ? flatten(curr.children) : []);
-        }, []);
-      };
-      return flatten(accounts).find(a => a.code === code);
-    };
+    const allFlatAccounts = AccountingService.flattenAccounts(accounts);
+    const findAccount = (code: string) => allFlatAccounts.find(a => a.code === code);
 
-    const arAccount = findAccount('1120'); // Accounts Receivable
+    const arAccount = findAccount('1120') || findAccount('1200') || allFlatAccounts.find(a => a.account_type === 'asset' && /receivable/i.test(a.name)); // Accounts Receivable
     const cashAccount = findAccount('1110'); // Cash
-    const mpesaAccount = findAccount('1111'); // Bank - Mpesa/Card
+    const mpesaAccount = findAccount('1111') || allFlatAccounts.find(a => a.account_type === 'asset' && /bank|cash/i.test(a.name)); // Bank - Mpesa/Card
 
     let debitAccount = cashAccount;
-    if (method === 'mpesa' || method === 'card' || method === 'bank' || method === 'cheque') debitAccount = mpesaAccount;
+    if (accountId) {
+      debitAccount = allFlatAccounts.find(a => a.id === accountId) || debitAccount;
+    } else if (method === 'mpesa' || method === 'card' || method === 'bank' || method === 'cheque') {
+      debitAccount = mpesaAccount;
+    }
 
     if (!debitAccount || !arAccount) {
       console.error('Required accounts not found for payment posting');

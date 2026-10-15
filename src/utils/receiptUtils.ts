@@ -25,6 +25,7 @@ export interface ReceiptData {
   date: string;
   time: string;
   type?: 'sale' | 'payment' | 'donation' | 'school_fee' | 'distribution';
+  paymentAccountName?: string;
   childName?: string;
   donorName?: string;
   fundName?: string;
@@ -40,6 +41,7 @@ export function generateReceipt(
   paymentMethod: PaymentMethod,
   options?: {
     type?: 'sale' | 'payment' | 'donation' | 'school_fee' | 'distribution';
+    paymentAccountName?: string;
     childName?: string;
     donorName?: string;
     fundName?: string;
@@ -386,6 +388,7 @@ export function printPaymentReceipt(receipt: ReceiptData, businessDetails?: Rece
             ${receipt.fundName ? `<p><strong>Fund Account:</strong> ${receipt.fundName}</p>` : ''}
             <p><strong>Transfer Method:</strong> ${receipt.paymentMethod.toUpperCase().replace(/_/g, ' ')}</p>
             ${receipt.paymentReference ? `<p><strong>Payment Ref / Cheque #:</strong> ${receipt.paymentReference}</p>` : ''}
+            ${receipt.paymentAccountName ? `<p><strong>Receiving Account:</strong> ${receipt.paymentAccountName}</p>` : ''}
             <p><strong>Voucher Status:</strong>
               <span class="type-badge ${receipt.paymentMethod.includes('Fund') || isDistribution ? 'type-outflow' : 'type-inflow'}">
                 ${isDistribution ? 'In-Kind Inventory Disbursed' : isSchoolFee ? (receipt.paymentMethod.includes('Fund') ? 'NGO Outflow' : 'Guardian Inflow') : receipt.type || 'Payment'}
@@ -501,6 +504,7 @@ export function printReceipt(receipt: ReceiptData, businessDetails?: ReceiptBusi
           <div>Customer: ${receipt.customerName}</div>
           <div>Date: ${receipt.date} ${receipt.time}</div>
           <div>Payment: ${receipt.paymentMethod.toUpperCase()}</div>
+          ${receipt.paymentAccountName ? `<div>Account: ${receipt.paymentAccountName}</div>` : ''}
           <div class="divider"></div>
 
           <div class="bold">Items:</div>
@@ -582,6 +586,7 @@ export function printReceipt(receipt: ReceiptData, businessDetails?: ReceiptBusi
               <p style="margin: 5px 0;"><strong>Date:</strong> ${receipt.date}</p>
               <p style="margin: 5px 0;"><strong>Time:</strong> ${receipt.time}</p>
               <p style="margin: 5px 0;"><strong>Payment Method:</strong> ${receipt.paymentMethod.toUpperCase()}</p>
+              ${receipt.paymentAccountName ? `<p style="margin: 5px 0;"><strong>Receiving Account:</strong> ${receipt.paymentAccountName}</p>` : ''}
               ${receipt.type ? `<p style="margin: 5px 0;"><strong>Type:</strong> <span style="text-transform: uppercase; font-weight: bold;">${receipt.type.replace('_', ' ')}</span></p>` : ''}
             </div>
           </div>

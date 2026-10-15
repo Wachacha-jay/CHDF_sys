@@ -4,9 +4,10 @@ import { Download, Printer, Mail, Phone, MapPin, Building2, Receipt, ArrowLeft, 
 import { toast } from 'react-hot-toast';
 import { SalesService } from '../services/salesService';
 import { BusinessSettingsService } from '../services/businessSettingsService';
+import { AccountingService } from '../services/accountingService';
 import { printPaymentReceipt, ReceiptData } from '../utils/receiptUtils';
 import { useAuthContext } from '../contexts/useAuthContext';
-import type { Sale, BusinessSettings } from '../types';
+import type { Sale, BusinessSettings, Account } from '../types';
 
 const Invoice: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +15,8 @@ const Invoice: React.FC = () => {
   const { user } = useAuthContext();
   const [sale, setSale] = useState<Sale | null>(null);
   const [businessSettings, setBusinessSettings] = useState<BusinessSettings | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
+  const [paymentAccountId, setPaymentAccountId] = useState('');
   const [loading, setLoading] = useState(true);
   const [mpesaPayment, setMpesaPayment] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -40,12 +43,55 @@ const Invoice: React.FC = () => {
       
       setSale(saleData);
       setBusinessSettings(settingsData);
+
+      // Load bank and cash accounts
+      try {
+        const accs = await AccountingService.getAccounts({ account_type: 'asset' });
+        const flat = AccountingService.flattenAccounts(accs);
+        const filtered = flat.filter(a => {
+          const code = a.code || '';
+          const name = (a.name || '').toLowerCase();
+          const subtype = (a.account_subtype || '').toLowerCase();
+          return (
+            subtype.includes('cash') ||
+            subtype.includes('bank') ||
+            code.startsWith('111') ||
+            name.includes('cash') ||
+            name.includes('bank') ||
+            name.includes('mpesa') ||
+            name.includes('till') ||
+            name.includes('paybill') ||
+            name.includes('equity') ||
+            name.includes('kcb') ||
+            name.includes('coop')
+          );
+        });
+        const list = filtered.length > 0 ? filtered : flat;
+        setBankAccounts(list);
+        const defaultCash = list.find(a => a.code === '1110' || a.name.toLowerCase().includes('cash')) || list[0];
+        if (defaultCash) {
+          setPaymentAccountId(defaultCash.id);
+        }
+      } catch (accErr) {
+        console.error('Failed to load accounts in Invoice:', accErr);
+      }
     } catch (error) {
       toast.error('Failed to load invoice data');
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (bankAccounts.length === 0) return;
+    if (recordPaymentMethod === 'cash') {
+      const cashAcc = bankAccounts.find(a => a.code === '1110' || a.name.toLowerCase().includes('cash'));
+      if (cashAcc) setPaymentAccountId(cashAcc.id);
+    } else {
+      const bankAcc = bankAccounts.find(a => a.code === '1111' || a.name.toLowerCase().includes('bank') || a.name.toLowerCase().includes('mpesa'));
+      if (bankAcc) setPaymentAccountId(bankAcc.id);
+    }
+  }, [recordPaymentMethod, bankAccounts]);
 
   const displayCurrency = (!businessSettings || businessSettings?.default_currency === 'KES' || businessSettings?.default_currency === 'KSh' || !businessSettings?.default_currency) ? 'KSh' : businessSettings.default_currency;
 
@@ -560,7 +606,7 @@ const Invoice: React.FC = () => {
               <select
                 value={recordPaymentMethod}
                 onChange={(e) => setRecordPaymentMethod(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
               >
                 <option value="cash">Cash</option>
                 <option value="mpesa">M-Pesa</option>
@@ -568,6 +614,26 @@ const Invoice: React.FC = () => {
                 <option value="cheque">Cheque</option>
                 <option value="card">Card</option>
               </select>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Deposit to Account (Bank / Cash) *
+              </label>
+              <select
+                value={paymentAccountId}
+                onChange={(e) => setPaymentAccountId(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
+              >
+                <option value="">-- Select Receiving Account --</option>
+                {bankAccounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-gray-400 mt-1">
+                GL account to debit (DR Cash/Bank, CR Accounts Receivable).
+              </p>
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Ref / Cheque Number</label>
@@ -604,11 +670,19 @@ const Invoice: React.FC = () => {
                     return toast.error('Cannot pay more than balance due');
                   }
                   toast.loading('Recording payment...');
-                  const success = await SalesService.recordPayment(sale.id, Number(paymentAmount), recordPaymentMethod, paymentDate, paymentReference.trim());
+                  const success = await SalesService.recordPayment(
+                    sale.id, 
+                    Number(paymentAmount), 
+                    recordPaymentMethod, 
+                    paymentDate, 
+                    paymentReference.trim(),
+                    paymentAccountId || undefined
+                  );
                   toast.dismiss();
                   if (success) {
                     toast.success('Payment recorded successfully');
                     
+                    const depositAccount = bankAccounts.find(a => a.id === paymentAccountId);
                     // Generate and print receipt
                     const receipt: ReceiptData = {
                       saleNumber: sale.sale_number,
@@ -620,6 +694,7 @@ const Invoice: React.FC = () => {
                       paymentAmount: Number(paymentAmount),
                       paymentMethod: recordPaymentMethod,
                       paymentReference: paymentReference.trim() || undefined,
+                      paymentAccountName: depositAccount ? `${depositAccount.code} - ${depositAccount.name}` : undefined,
                       date: new Date().toLocaleDateString(),
                       time: new Date().toLocaleTimeString(),
                       type: 'payment'

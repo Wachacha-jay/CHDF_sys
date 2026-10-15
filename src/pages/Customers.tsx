@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, User, Mail, Phone } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, User, Mail, Phone, FileText, Printer } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { ApiService } from '../services/api';
 import { SalesService } from '../services/salesService';
 import type { Customer, Sale } from '../types';
-import { FileText } from 'lucide-react';
 import { useSettingsContext } from '../contexts/SettingsContext';
 
 const Customers: React.FC = () => {
@@ -110,6 +109,373 @@ const Customers: React.FC = () => {
     } finally {
       setLoadingOrders(false);
     }
+  };
+
+  const isWalkInCustomer = (customer: Customer | null) => {
+    if (!customer) return true;
+    const name = (customer.name || '').toLowerCase().trim();
+    const code = (customer.code || '').toLowerCase().trim();
+    return name === 'walk-in' || name === 'walk in' || name === 'walk-in customer' || code === 'walk-in';
+  };
+
+  const handlePrintCustomerStatement = async (customer: Customer, existingOrders?: Sale[]) => {
+    if (isWalkInCustomer(customer)) {
+      toast.error('Customer statement cannot be generated for walk-in customers. Statements are only available for registered customer accounts.');
+      return;
+    }
+
+    let orders = existingOrders;
+    if (!orders) {
+      toast.loading('Fetching customer transaction ledger...');
+      try {
+        const response = await ApiService.get<Sale>('sales', {
+          filters: { customer_id: customer.id }
+        });
+        toast.dismiss();
+        if (response.success && response.data) {
+          orders = response.data;
+        } else {
+          orders = [];
+        }
+      } catch (err) {
+        toast.dismiss();
+        toast.error('Failed to load transactions for statement');
+        return;
+      }
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Please allow popups to print customer statement');
+      return;
+    }
+
+    const businessName = settings?.business_name || 'Business Management System';
+    const businessAddress = settings?.business_address || '';
+    const businessPhone = settings?.business_phone || '';
+    const businessEmail = settings?.business_email || '';
+    const logoUrl = settings?.logo_url || '';
+    const currency = settings?.default_currency || 'KES';
+
+    // Sort chronologically
+    const sortedOrders = [...orders].sort(
+      (a, b) => new Date(a.sale_date || a.created_at || '').getTime() - new Date(b.sale_date || b.created_at || '').getTime()
+    );
+
+    let runningBalance = 0;
+    const ledger = sortedOrders.map(sale => {
+      const billed = Number(sale.total_amount) || 0;
+      const paid = Number(sale.paid_amount) || 0;
+      runningBalance += (billed - paid);
+      return {
+        ...sale,
+        billed,
+        paid,
+        balanceAtPoint: runningBalance
+      };
+    });
+
+    const totalBilled = ledger.reduce((sum, r) => sum + r.billed, 0);
+    const totalPaid = ledger.reduce((sum, r) => sum + r.paid, 0);
+    const netBalanceDue = totalBilled - totalPaid;
+    const asOfDate = new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' });
+    const statementNo = `STMT-${customer.code || customer.id.substring(0, 6).toUpperCase()}-${new Date().getFullYear()}`;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Customer Statement - ${customer.name}</title>
+        <meta charset="UTF-8" />
+        <style>
+          @page { size: A4; margin: 15mm; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            color: #1e293b;
+            background: #fff;
+            margin: 0;
+            padding: 20px;
+            font-size: 13px;
+            line-height: 1.5;
+          }
+          .statement-container { max-width: 850px; margin: 0 auto; }
+          .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 16px;
+            margin-bottom: 20px;
+          }
+          .company-logo { max-height: 70px; max-width: 180px; object-fit: contain; margin-bottom: 8px; }
+          .company-name { font-size: 20px; font-weight: 800; color: #0f172a; }
+          .company-sub { font-size: 11px; color: #64748b; line-height: 1.4; }
+          .statement-title-badge {
+            text-align: right;
+          }
+          .title-tag {
+            font-size: 18px;
+            font-weight: 900;
+            color: #2563eb;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .meta-line { font-size: 12px; color: #64748b; margin-top: 3px; }
+          .meta-line strong { color: #1e293b; }
+
+          .profile-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+          }
+          .profile-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 12px 16px;
+          }
+          .profile-box h4 {
+            margin: 0 0 8px 0;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #64748b;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 4px;
+          }
+          .profile-box p { margin: 3px 0; font-size: 12px; }
+
+          .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+          }
+          .card {
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+          }
+          .card-billed { background: #f8fafc; }
+          .card-paid { background: #f0fdf4; border-color: #bbf7d0; }
+          .card-balance { background: #fef2f2; border-color: #fecaca; }
+          .card-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; }
+          .card-val { font-size: 18px; font-weight: 900; margin-top: 4px; }
+          .text-billed { color: #1e293b; }
+          .text-paid { color: #16a34a; }
+          .text-balance { color: #dc2626; }
+
+          table.statement-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            font-size: 12px;
+          }
+          table.statement-table th {
+            background: #0f172a;
+            color: #ffffff;
+            font-weight: 700;
+            text-align: left;
+            padding: 8px 10px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          table.statement-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #e2e8f0;
+          }
+          table.statement-table tr:nth-child(even) td { background: #f8fafc; }
+          table.statement-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+          table.statement-table .total-row td {
+            font-weight: 800;
+            background: #f1f5f9;
+            border-top: 2px solid #94a3b8;
+            border-bottom: 2px solid #94a3b8;
+            font-size: 13px;
+          }
+
+          .remittance-box {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 24px;
+            font-size: 12px;
+          }
+          .remittance-box h5 {
+            margin: 0 0 6px 0;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #1d4ed8;
+          }
+
+          .signatures {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 36px;
+            padding-top: 16px;
+          }
+          .sig-line {
+            width: 200px;
+            border-top: 1px solid #94a3b8;
+            text-align: center;
+            font-size: 11px;
+            color: #64748b;
+            padding-top: 4px;
+          }
+
+          .footer-note {
+            text-align: center;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 30px;
+            border-top: 1px dashed #e2e8f0;
+            padding-top: 12px;
+          }
+
+          @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="statement-container">
+          <div class="header-row">
+            <div>
+              ${logoUrl ? `<img src="${logoUrl}" alt="Logo" class="company-logo" />` : ''}
+              <div class="company-name">${businessName}</div>
+              <div class="company-sub">
+                ${businessAddress ? `<div>${businessAddress}</div>` : ''}
+                ${businessPhone ? `<div>Tel: ${businessPhone}</div>` : ''}
+                ${businessEmail ? `<div>Email: ${businessEmail}</div>` : ''}
+              </div>
+            </div>
+            <div class="statement-title-badge">
+              <div class="title-tag">Customer Statement</div>
+              <div class="meta-line">Statement No: <strong>${statementNo}</strong></div>
+              <div class="meta-line">Statement Date: <strong>${asOfDate}</strong></div>
+              <div class="meta-line">Account Currency: <strong>${currency}</strong></div>
+            </div>
+          </div>
+
+          <div class="profile-grid">
+            <div class="profile-box">
+              <h4>Customer Details</h4>
+              <p><strong>Name:</strong> ${customer.name}</p>
+              <p><strong>Customer Code:</strong> ${customer.code || 'N/A'}</p>
+              <p><strong>Contact Phone:</strong> ${customer.phone || 'N/A'}</p>
+              <p><strong>Email Address:</strong> ${customer.email || 'N/A'}</p>
+              ${customer.address ? `<p><strong>Address:</strong> ${customer.address}</p>` : ''}
+            </div>
+            <div class="profile-box">
+              <h4>Statement Summary</h4>
+              <p><strong>Account Status:</strong> <span style="color: #16a34a; font-weight: bold;">ACTIVE</span></p>
+              <p><strong>Total Invoices Billed:</strong> ${orders.length}</p>
+              <p><strong>As of Date:</strong> ${asOfDate}</p>
+              <p><strong>Terms:</strong> Due Upon Receipt / 30 Days</p>
+            </div>
+          </div>
+
+          <div class="summary-cards">
+            <div class="card card-billed">
+              <div class="card-label">Total Billed</div>
+              <div class="card-val text-billed">${currency} ${totalBilled.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+            <div class="card card-paid">
+              <div class="card-label">Total Payments Received</div>
+              <div class="card-val text-paid">${currency} ${totalPaid.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+            <div class="card card-balance">
+              <div class="card-label">Outstanding Balance Due</div>
+              <div class="card-val ${netBalanceDue > 0 ? 'text-balance' : 'text-paid'}">
+                ${currency} ${netBalanceDue.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+
+          <table class="statement-table">
+            <thead>
+              <tr>
+                <th style="width: 85px;">Date</th>
+                <th style="width: 120px;">Ref / Invoice #</th>
+                <th>Description / Method</th>
+                <th style="width: 80px;">Status</th>
+                <th class="num" style="width: 100px;">Debit (${currency})</th>
+                <th class="num" style="width: 100px;">Credit (${currency})</th>
+                <th class="num" style="width: 110px;">Balance (${currency})</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ledger.length > 0 ? ledger.map(row => {
+                const dateStr = row.sale_date ? new Date(row.sale_date).toLocaleDateString() : new Date(row.created_at || '').toLocaleDateString();
+                const statusColor = row.payment_status === 'paid' ? '#16a34a' : row.payment_status === 'partial' ? '#d97706' : '#dc2626';
+                return `
+                  <tr>
+                    <td>${dateStr}</td>
+                    <td><strong>${row.sale_number}</strong></td>
+                    <td>
+                      <div>${(row.sale_type || 'Standard Sale').toUpperCase().replace('_', ' ')}</div>
+                      <div style="font-size: 10px; color: #64748b;">Method: ${(row.payment_method || 'N/A').toUpperCase().replace('_', ' ')}</div>
+                    </td>
+                    <td><span style="color: ${statusColor}; font-weight: bold; text-transform: uppercase; font-size: 10px;">${row.payment_status || 'PENDING'}</span></td>
+                    <td class="num font-medium">${row.billed > 0 ? row.billed.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                    <td class="num font-medium" style="color: #16a34a;">${row.paid > 0 ? row.paid.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                    <td class="num font-bold" style="color: ${row.balanceAtPoint > 0 ? '#dc2626' : '#16a34a'};">
+                      ${row.balanceAtPoint.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                `;
+              }).join('') : `
+                <tr>
+                  <td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8;">
+                    No transactions recorded for this customer account.
+                  </td>
+                </tr>
+              `}
+              <tr class="total-row">
+                <td colspan="4">TOTALS</td>
+                <td class="num">${currency} ${totalBilled.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td class="num" style="color: #16a34a;">${currency} ${totalPaid.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td class="num" style="color: ${netBalanceDue > 0 ? '#dc2626' : '#16a34a'};">${currency} ${netBalanceDue.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          ${netBalanceDue > 0 ? `
+            <div class="remittance-box">
+              <h5>Remittance / Payment Instructions</h5>
+              <div>Please remit payments referencing your Customer Code <strong>${customer.code || customer.name}</strong>.</div>
+              ${settings?.mpesa_business_number ? `<div>• <strong>M-Pesa Paybill / Till:</strong> ${settings.mpesa_business_number} &nbsp;|&nbsp; <strong>Account:</strong> ${customer.code || customer.name}</div>` : ''}
+              ${businessPhone ? `<div>• For payment confirmation inquiries, call <strong>${businessPhone}</strong></div>` : ''}
+            </div>
+          ` : `
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; color: #16a34a; font-weight: 600; font-size: 12px;">
+              ✓ This customer account is fully settled with zero balance due. Thank you for your prompt payments!
+            </div>
+          `}
+
+          <div class="signatures">
+            <div class="sig-line">Prepared By (Accounts)</div>
+            <div class="sig-line">Verified By / Finance Stamp</div>
+          </div>
+
+          <div class="footer-note">
+            Generated by ${businessName} Accounting &amp; ERP System &bull; Printed on ${new Date().toLocaleString()}
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 350);
   };
 
   const handleDelete = async (customerId: string) => {
@@ -218,26 +584,37 @@ const Customers: React.FC = () => {
                     <p className="text-sm text-gray-500">{customer.code}</p>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1">
                   <button
                     onClick={() => handleViewOrders(customer)}
-                    className="text-indigo-600 hover:text-indigo-900"
-                    title="View Orders"
+                    className="p-1.5 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg transition-colors"
+                    title="View Orders & Ledger"
                   >
                     <FileText className="h-4 w-4" />
                   </button>
+                  {!isWalkInCustomer(customer) && (
+                    <button
+                      onClick={() => handlePrintCustomerStatement(customer)}
+                      className="p-1.5 text-emerald-600 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg transition-colors"
+                      title="Print Customer Statement"
+                    >
+                      <Printer className="h-4 w-4" />
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setSelectedCustomer(customer);
                       setShowModal(true);
                     }}
-                    className="text-blue-600 hover:text-blue-900"
+                    className="p-1.5 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="Edit Customer"
                   >
                     <Edit className="h-4 w-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(customer.id)}
-                    className="text-red-600 hover:text-red-900"
+                    className="p-1.5 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete Customer"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -390,12 +767,24 @@ const Customers: React.FC = () => {
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">Review purchase history, balances, and payment status</p>
               </div>
-              <button
-                onClick={() => setShowOrdersModal(false)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold p-2"
-              >
-                &times;
-              </button>
+              <div className="flex items-center gap-3">
+                {selectedCustomer && !isWalkInCustomer(selectedCustomer) && (
+                  <button
+                    onClick={() => handlePrintCustomerStatement(selectedCustomer, customerOrders)}
+                    className="px-3.5 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-xs flex items-center shadow-xs"
+                    title="Print Statement"
+                  >
+                    <Printer className="h-3.5 w-3.5 mr-1.5" />
+                    Print Statement
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowOrdersModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-lg font-bold p-1 rounded-lg"
+                >
+                  &times;
+                </button>
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto flex-1">
@@ -454,13 +843,35 @@ const Customers: React.FC = () => {
               )}
             </div>
             
-            <div className="p-4 border-t border-gray-100 bg-gray-50 text-right">
-              <button
-                onClick={() => setShowOrdersModal(false)}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-              >
-                Close
-              </button>
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
+              <div>
+                {selectedCustomer && isWalkInCustomer(selectedCustomer) ? (
+                  <span className="text-xs text-amber-600 font-semibold italic">
+                    * Customer statements are not available for walk-in customers.
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-500 font-medium">
+                    {customerOrders.length} transaction(s) recorded for this account.
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {selectedCustomer && !isWalkInCustomer(selectedCustomer) && (
+                  <button
+                    onClick={() => handlePrintCustomerStatement(selectedCustomer, customerOrders)}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm flex items-center shadow-xs"
+                  >
+                    <Printer className="h-4 w-4 mr-2" />
+                    Print Statement
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowOrdersModal(false)}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

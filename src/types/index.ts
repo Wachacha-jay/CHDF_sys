@@ -281,6 +281,7 @@ export interface Sale {
   paid_amount: number;
   payment_status: 'pending' | 'partial' | 'paid' | 'overdue';
   payment_method?: string;
+  payment_account_id?: string;
   notes?: string;
   created_by?: string;
   created_at: string;

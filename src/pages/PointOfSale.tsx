@@ -48,6 +48,9 @@ const PointOfSale: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
 
+  const [bankAccounts, setBankAccounts] = useState<Account[]>([]);
+  const [paymentAccountId, setPaymentAccountId] = useState('');
+
   // Distribution form state
   const [destDepartmentId, setDestDepartmentId] = useState('');
   const [destExpenseAccountId, setDestExpenseAccountId] = useState('');
@@ -83,7 +86,52 @@ const PointOfSale: React.FC = () => {
     loadCustomers();
     loadNGODimensions();
     loadDistributionData();
+    loadBankAccounts();
   }, []);
+
+  const loadBankAccounts = async () => {
+    try {
+      const accounts = await AccountingService.getAccounts({ account_type: 'asset' });
+      const flat = AccountingService.flattenAccounts(accounts);
+      const filtered = flat.filter(a => {
+        const code = a.code || '';
+        const name = (a.name || '').toLowerCase();
+        const subtype = (a.account_subtype || '').toLowerCase();
+        return (
+          subtype.includes('cash') ||
+          subtype.includes('bank') ||
+          code.startsWith('111') ||
+          name.includes('cash') ||
+          name.includes('bank') ||
+          name.includes('mpesa') ||
+          name.includes('till') ||
+          name.includes('paybill') ||
+          name.includes('equity') ||
+          name.includes('kcb') ||
+          name.includes('coop')
+        );
+      });
+      const list = filtered.length > 0 ? filtered : flat;
+      setBankAccounts(list);
+      const defaultCash = list.find(a => a.code === '1110' || a.name.toLowerCase().includes('cash')) || list[0];
+      if (defaultCash) {
+        setPaymentAccountId(defaultCash.id);
+      }
+    } catch (err) {
+      console.error('Error loading bank accounts in POS:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (bankAccounts.length === 0) return;
+    if (paymentMethod === 'cash') {
+      const cashAcc = bankAccounts.find(a => a.code === '1110' || a.name.toLowerCase().includes('cash'));
+      if (cashAcc) setPaymentAccountId(cashAcc.id);
+    } else if (paymentMethod === 'mpesa' || paymentMethod === 'card') {
+      const mpesaAcc = bankAccounts.find(a => a.code === '1111' || a.name.toLowerCase().includes('mpesa') || a.name.toLowerCase().includes('bank'));
+      if (mpesaAcc) setPaymentAccountId(mpesaAcc.id);
+    }
+  }, [paymentMethod, bankAccounts]);
 
   const loadDistributionData = async () => {
     try {
@@ -283,7 +331,7 @@ const PointOfSale: React.FC = () => {
       return;
     }
     if (paymentMethod === 'credit' && !customerId) {
-      toast.error('Please select an existing customer for credit sales');
+      toast.error('Please select an existing registered customer for credit sales. Walk-in customers cannot purchase on credit.');
       return;
     }
 
@@ -294,13 +342,17 @@ const PointOfSale: React.FC = () => {
       const taxAmount = cartTax;
       const totalAmount = cartGrandTotal;
       
+      const receivingAccount = bankAccounts.find(a => a.id === paymentAccountId);
+      const accountNote = (paymentMethod !== 'credit' && receivingAccount) ? ` | Account: ${receivingAccount.name}` : '';
+
       const saleData = {
         sale_date: new Date().toISOString().split('T')[0],
         payment_method: paymentMethod,
+        payment_account_id: paymentMethod !== 'credit' ? paymentAccountId : undefined,
         customer_id: customerId || undefined,
         notes: paymentMethod === 'credit'
-          ? `Invoice generated for ${selectedCustomer?.name}`
-          : `Customer: ${customerName || 'Walk-in Customer'}${phoneNumber ? ` | Phone: ${phoneNumber}` : ''}`,
+          ? `Credit Invoice generated for ${selectedCustomer?.name || 'Customer'}`
+          : `Customer: ${selectedCustomer?.name || customerName || 'Walk-in Customer'}${phoneNumber ? ` | Phone: ${phoneNumber}` : ''}${accountNote}`,
         items: cart.map(item => ({
           product_id: item.product.id,
           quantity: item.quantity,
@@ -319,23 +371,33 @@ const PointOfSale: React.FC = () => {
         if (paymentMethod === 'credit') {
           toast((t) => (
             <div className="flex flex-col gap-2">
-              <span className="font-medium text-green-600">Invoice generated successfully!</span>
+              <span className="font-medium text-green-600 font-bold">Credit Invoice #{response.sale_number} generated!</span>
+              <span className="text-xs text-gray-500">Track balance and record payments in the Invoicing module.</span>
               <button 
                 onClick={() => {
                   toast.dismiss(t.id);
                   navigate(`/invoice/${response.id}`);
                 }}
-                className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+                className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shadow-xs"
               >
-                View Invoice
+                Open Invoice &amp; Record Payment →
               </button>
             </div>
-          ), { duration: 5000 });
+          ), { duration: 6000 });
         } else {
-          const receipt = generateReceipt(response.sale_number, customerName, cart, totalAmount, paymentMethod);
+          const receipt = generateReceipt(
+            response.sale_number, 
+            selectedCustomer?.name || customerName || 'Walk-in Customer', 
+            cart, 
+            totalAmount, 
+            paymentMethod,
+            {
+              paymentAccountName: receivingAccount ? `${receivingAccount.code} - ${receivingAccount.name}` : undefined
+            }
+          );
           setCurrentReceipt(receipt);
           setShowReceipt(true);
-          toast.success('Sale completed successfully!');
+          toast.success(`Sale completed successfully! Debited to ${receivingAccount?.name || 'Payment Account'}.`);
         }
 
         clearCart();
@@ -647,6 +709,9 @@ const PointOfSale: React.FC = () => {
                 customers={customers}
                 onAddCustomer={() => setShowAddCustomer(true)}
                 posMode="retail"
+                paymentAccountId={paymentAccountId}
+                setPaymentAccountId={setPaymentAccountId}
+                bankAccounts={bankAccounts}
               />
               <div className="pt-3 border-t border-gray-200 dark:border-slate-800">
                 <details className="group">

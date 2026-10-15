@@ -44,6 +44,7 @@ export interface CreateSaleData {
   discount_amount?: number;
   total_amount?: number;
   payment_method?: string;
+  payment_account_id?: string;
   notes?: string;
 }
 
@@ -192,6 +193,9 @@ export class SalesService {
 
         const sale = await this.getSaleById(saleId);
         if (sale) {
+          if (saleData.payment_account_id) {
+            sale.payment_account_id = saleData.payment_account_id;
+          }
           await DoubleEntryService.postSale(sale);
         }
         return sale;
@@ -295,7 +299,7 @@ export class SalesService {
   }
 
   // Payment operations
-  static async recordPayment(saleId: string, amount: number, paymentMethod?: string, date?: string, paymentRef?: string): Promise<boolean> {
+  static async recordPayment(saleId: string, amount: number, paymentMethod?: string, date?: string, paymentRef?: string, accountId?: string): Promise<boolean> {
     try {
       const sale = await this.getSaleById(saleId);
       if (!sale) return false;
@@ -327,7 +331,7 @@ export class SalesService {
 
       if (updateResponse) {
         // Create journal entry for payment
-        await DoubleEntryService.postCustomerPayment(sale, amount, paymentMethod || sale.payment_method || 'mpesa', date, paymentRef);
+        await DoubleEntryService.postCustomerPayment(sale, amount, paymentMethod || sale.payment_method || 'mpesa', date, paymentRef, accountId);
       }
 
       return !!updateResponse;

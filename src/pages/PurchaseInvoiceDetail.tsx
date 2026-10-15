@@ -5,7 +5,7 @@ import { BusinessSettingsService } from '../services/businessSettingsService';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import type { Purchase, BusinessSettings } from '../types';
 import RecordPaymentModal from '../components/inventory/RecordPaymentModal';
-import { ArrowLeft, Printer, CreditCard, Trash2 } from 'lucide-react';
+import { ArrowLeft, Printer, CreditCard, Trash2, FileText } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 const PurchaseInvoiceDetail: React.FC = () => {
