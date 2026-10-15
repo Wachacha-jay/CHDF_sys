@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Child, Guardian, JournalEntry, FundAccount, Department, Account, SchoolFeePayment, SchoolFeeStructure, StudentFeeYearSummary } from '../../types';
+import { Child, Guardian, JournalEntry, FundAccount, Department, Account, SchoolFeePayment, SchoolFeeStructure, StudentFeeYearSummary, Donor } from '../../types';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
 import { BusinessSettingsService } from '../../services/businessSettingsService';
@@ -8,7 +8,7 @@ import {
   UserPlus, Search, Filter, GraduationCap, Plus,
   Calendar, ArrowDownLeft, Receipt, DollarSign, AlertCircle,
   Printer, Trash2, Eye, Edit2, X, School, CheckCircle2, AlertTriangle, ArrowRight,
-  TrendingUp, CreditCard, ChevronRight, Layers, FileText
+  TrendingUp, CreditCard, ChevronRight, Layers, FileText, Heart
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -67,6 +67,7 @@ const ChildManagement: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [funds, setFunds] = useState<FundAccount[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [donors, setDonors] = useState<Donor[]>([]);
   
   // School Fee Specific Data
   const [feeStructures, setFeeStructures] = useState<SchoolFeeStructure[]>([]);
@@ -91,6 +92,9 @@ const ChildManagement: React.FC = () => {
     fund_id: '',
     department_id: '',
     notes: '',
+    payer_type: 'guardian' as 'guardian' | 'donor',
+    payer_name: '',
+    donor_id: '',
     entry_date: new Date().toISOString().split('T')[0]
   });
 
@@ -129,84 +133,28 @@ const ChildManagement: React.FC = () => {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [childrenData, guardiansData, accList, fundList, deptList, settingsData, structuresData, feePaymentsData, journalEntries] = await Promise.all([
+      const [childrenData, guardiansData, accList, fundList, deptList, donorList, settingsData, structuresData, unifiedPayments] = await Promise.all([
         FundAccountingService.getChildren(),
         FundAccountingService.getGuardians(),
         AccountingService.getAccounts(),
         FundAccountingService.getFundAccounts(),
         FundAccountingService.getDepartments(),
+        FundAccountingService.getDonors(),
         BusinessSettingsService.getSettings(),
         SchoolFeeService.getFeeStructures(selectedAcademicYear === 0 ? undefined : selectedAcademicYear),
-        SchoolFeeService.getFeePayments({ academic_year: selectedAcademicYear }),
-        AccountingService.getJournalEntries()
+        SchoolFeeService.getUnifiedFeeRecords({ academic_year: selectedAcademicYear })
       ]);
       
-      setChildren(childrenData);
-      setGuardians(guardiansData);
+      setChildren(childrenData || []);
+      setGuardians(guardiansData || []);
       const flatAccs = accList ? AccountingService.flattenAccounts(accList) : [];
       setAccounts(flatAccs);
-      setFunds(fundList);
-      setDepartments(deptList);
+      setFunds(fundList || []);
+      setDepartments(deptList || []);
+      setDonors(donorList || []);
       setBusinessSettings(settingsData);
-      setFeeStructures(structuresData);
-
-      // Synthesize any journal entries that are fee payments but not yet in school_fee_payments
-      const existingJEntryIds = new Set(feePaymentsData.map(p => p.journal_entry_id).filter(Boolean));
-      const childMap = new Map(childrenData.map(c => [c.id, c]));
-
-      const synthesized: SchoolFeePayment[] = [];
-      (journalEntries || []).forEach(entry => {
-        if (existingJEntryIds.has(entry.id)) return;
-
-        const descLower = (entry.description || '').toLowerCase();
-        const isFeeDesc = descLower.includes('school fee') || descLower.includes('tuition fee');
-        const isNotDonationOrExpense = !descLower.includes('donation') && !descLower.includes('expense') && !descLower.includes('procurement');
-
-        const lines = entry.lines || [];
-        const childLine = lines.find(l => l.child_id);
-        const feeRevLine = lines.find(l => l.account?.code === '4300' || (l.credit_amount > 0 && l.account?.name?.toLowerCase().includes('school fee')));
-
-        if ((isFeeDesc || feeRevLine) && isNotDonationOrExpense) {
-          let childId = childLine?.child_id || '';
-          if (!childId && childrenData.length > 0) {
-            for (const c of childrenData) {
-              const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
-              if (descLower.includes(fullName) || (c.code && descLower.includes(c.code.toLowerCase()))) {
-                childId = c.id;
-                break;
-              }
-            }
-          }
-          if (!childId && childrenData.length > 0) childId = childrenData[0].id;
-
-          const matchedChild = childMap.get(childId);
-          const amount = Number(entry.total_debit || entry.total_credit || 0);
-          const pDate = entry.entry_date ? new Date(entry.entry_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-          const pYear = new Date(pDate).getFullYear();
-
-          let term: 'Term 1' | 'Term 2' | 'Term 3' = 'Term 2';
-          if (descLower.includes('term 1')) term = 'Term 1';
-          else if (descLower.includes('term 3')) term = 'Term 3';
-
-          synthesized.push({
-            id: `syn-${entry.id}`,
-            receipt_number: entry.entry_number || entry.reference || `RCP-${entry.id.slice(-6)}`,
-            child_id: childId,
-            child: matchedChild,
-            academic_year: pYear,
-            term: term,
-            amount: amount,
-            payment_date: pDate,
-            payment_method: 'mpesa',
-            reference_number: entry.reference || undefined,
-            journal_entry_id: entry.id,
-            notes: entry.description
-          });
-        }
-      });
-
-      const combinedFeePayments = [...feePaymentsData, ...synthesized];
-      setFeePayments(combinedFeePayments);
+      setFeeStructures(structuresData || []);
+      setFeePayments(unifiedPayments as SchoolFeePayment[]);
     } catch (error) {
       console.error('Error loading child management data:', error);
       toast.error('Failed to load school fee data');
@@ -253,6 +201,9 @@ const ChildManagement: React.FC = () => {
       fund_id: funds.find(f => f.code === 'FUND-EDU' || f.name.toLowerCase().includes('education'))?.id || (funds[0]?.id || ''),
       department_id: empowerSchoolDepartment?.id || '',
       notes: '',
+      payer_type: 'guardian',
+      payer_name: '',
+      donor_id: '',
       entry_date: new Date().toISOString().split('T')[0]
     });
     setShowPaymentModal(true);
@@ -447,7 +398,7 @@ const ChildManagement: React.FC = () => {
     }
   };
 
-  // Handle Payment Submit: Strictly Guardian Payment -> Equity Bank & Empower School
+  // Handle Payment Submit: Supports Guardian Inflow and Donor Sponsorship Inflow
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentFormData.child_id || !paymentFormData.amount) {
@@ -470,6 +421,12 @@ const ChildManagement: React.FC = () => {
     try {
       setPaymentSubmitting(true);
 
+      const isDonor = paymentFormData.payer_type === 'donor';
+      const selectedDonorObj = isDonor && paymentFormData.donor_id ? donors.find(d => d.id === paymentFormData.donor_id) : null;
+      const payerName = isDonor 
+        ? (selectedDonorObj ? selectedDonorObj.name : (paymentFormData.payer_name?.trim() || 'Donor Sponsor'))
+        : (selectedChildObj.guardian?.name || 'Guardian');
+
       const result = await SchoolFeeService.recordFeePayment(
         {
           child_id: paymentFormData.child_id,
@@ -482,7 +439,10 @@ const ChildManagement: React.FC = () => {
           bank_account_id: bankAcc.id,
           department_id: paymentFormData.department_id || empowerSchoolDepartment?.id,
           fund_id: paymentFormData.fund_id || undefined,
-          notes: paymentFormData.notes || undefined
+          notes: paymentFormData.notes || undefined,
+          payer_type: paymentFormData.payer_type,
+          payer_name: payerName,
+          donor_id: paymentFormData.donor_id || undefined
         },
         {
           child: selectedChildObj,
@@ -496,16 +456,16 @@ const ChildManagement: React.FC = () => {
         toast.success(`School fee payment of KSh ${Number(paymentFormData.amount).toLocaleString()} posted successfully`);
         setShowPaymentModal(false);
 
-        // Fetch fresh payment data
-        const updatedPayments = await SchoolFeeService.getFeePayments({ academic_year: selectedAcademicYear });
-        setFeePayments(updatedPayments);
+        // Fetch fresh payment data using getUnifiedFeeRecords
+        const updatedPayments = await SchoolFeeService.getUnifiedFeeRecords({ academic_year: selectedAcademicYear });
+        setFeePayments(updatedPayments as SchoolFeePayment[]);
 
         // Prompt to print receipt
         const updatedSummary = SchoolFeeService.calculateChildFeeSummary(
           selectedChildObj,
           Number(paymentFormData.academic_year),
           feeStructures,
-          updatedPayments
+          updatedPayments as SchoolFeePayment[]
         );
         const termKey = paymentFormData.term === 'Term 1' ? 'term1' : (paymentFormData.term === 'Term 2' ? 'term2' : 'term3');
 
@@ -1033,7 +993,7 @@ const ChildManagement: React.FC = () => {
                     <th className="px-6 py-4 font-semibold">Date</th>
                     <th className="px-6 py-4 font-semibold">Receipt No.</th>
                     <th className="px-6 py-4 font-semibold">Beneficiary (Student)</th>
-                    <th className="px-6 py-4 font-semibold">Guardian Payer</th>
+                    <th className="px-6 py-4 font-semibold">Payer / Source</th>
                     <th className="px-6 py-4 font-semibold">Academic Term</th>
                     <th className="px-6 py-4 font-semibold">Amount Paid</th>
                     <th className="px-6 py-4 font-semibold">Receiving Bank</th>
@@ -1060,8 +1020,18 @@ const ChildManagement: React.FC = () => {
                         <div className="font-bold text-gray-900">{payment.child ? `${payment.child.first_name} ${payment.child.last_name}` : 'Student'}</div>
                         <div className="text-xs font-mono text-gray-400">{payment.child?.code} • {payment.child?.class_name || 'Class N/A'}</div>
                       </td>
-                      <td className="px-6 py-4 text-gray-600">
-                        {payment.child?.guardian?.name || 'Guardian'}
+                      <td className="px-6 py-4">
+                        {payment.payer_type === 'donor' ? (
+                          <span className="px-2.5 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-bold inline-flex items-center gap-1 shadow-xs">
+                            <Heart size={12} className="text-purple-600 fill-purple-200 shrink-0" />
+                            {payment.payer_name || 'Donor Sponsored'}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold inline-flex items-center gap-1">
+                            <GraduationCap size={12} className="text-emerald-600 shrink-0" />
+                            {payment.child?.guardian?.name || payment.payer_name || 'Guardian'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold">
@@ -1332,6 +1302,73 @@ const ChildManagement: React.FC = () => {
                   )}
                 </div>
               )}
+
+              {/* Payer Source Classification: Guardian vs Donor */}
+              <div className="bg-gray-50/80 p-4 rounded-2xl border border-gray-200">
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
+                  Payer Source / Classification *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentFormData({ ...paymentFormData, payer_type: 'guardian' })}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
+                      paymentFormData.payer_type === 'guardian'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                  >
+                    <GraduationCap size={15} />
+                    Parent / Guardian
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentFormData({ ...paymentFormData, payer_type: 'donor' })}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
+                      paymentFormData.payer_type === 'donor'
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Heart size={15} />
+                    Donor / Sponsor
+                  </button>
+                </div>
+
+                {paymentFormData.payer_type === 'donor' ? (
+                  <div className="mt-3 space-y-2">
+                    <label className="block text-[11px] font-bold text-purple-900 uppercase tracking-wider">
+                      Select Donor / Sponsor *
+                    </label>
+                    <select
+                      className="w-full rounded-xl border-purple-300 bg-purple-50/50 text-xs font-bold text-purple-950 py-2 px-3 focus:ring-purple-500 focus:border-purple-500"
+                      value={paymentFormData.donor_id}
+                      onChange={(e) => setPaymentFormData({ ...paymentFormData, donor_id: e.target.value })}
+                    >
+                      <option value="">-- Select Registered Donor or Sponsor --</option>
+                      {donors.map(d => (
+                        <option key={d.id} value={d.id}>{d.name} ({d.donor_type})</option>
+                      ))}
+                    </select>
+                    {!paymentFormData.donor_id && (
+                      <input
+                        type="text"
+                        placeholder="Or enter donor / sponsor organization name..."
+                        className="w-full rounded-xl border-purple-300 bg-white text-xs font-medium py-2 px-3"
+                        value={paymentFormData.payer_name}
+                        onChange={(e) => setPaymentFormData({ ...paymentFormData, payer_name: e.target.value })}
+                      />
+                    )}
+                    <p className="text-[10px] text-purple-600">
+                      ✓ This payment will be credited to the child's school fee standing as an inflow and tagged as Donor Sponsored in reports.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-gray-500">
+                    Payer: <strong>{livePaymentSummary?.studentSummary?.child?.guardian?.name || 'Child Guardian'}</strong> (Direct Family Inflow)
+                  </div>
+                )}
+              </div>
 
               {/* Amount & Date */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

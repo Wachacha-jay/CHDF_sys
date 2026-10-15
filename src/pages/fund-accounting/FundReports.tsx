@@ -3,6 +3,7 @@ import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
 import { ApiService } from '../../services/api';
 import { BusinessSettingsService } from '../../services/businessSettingsService';
+import { SchoolFeeService, type UnifiedSchoolFeeRecord } from '../../services/schoolFeeService';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { printPaymentReceipt } from '../../utils/receiptUtils';
@@ -84,6 +85,7 @@ const FundReports: React.FC = () => {
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [transfers, setTransfers] = useState<InternalTransfer[]>([]);
   const [donationsList, setDonationsList] = useState<any[]>([]);
+  const [unifiedFeeRecords, setUnifiedFeeRecords] = useState<UnifiedSchoolFeeRecord[]>([]);
 
   // Master Data Loader
   const loadMasterData = async () => {
@@ -211,38 +213,37 @@ const FundReports: React.FC = () => {
     toast.success('Filters reset to default');
   };
 
-  const handlePrintReceipt = (payment: JournalEntry) => {
-    const lineWithChild = payment.lines?.find(l => l.child_id);
-    const childId = lineWithChild?.child_id;
-    const child = children.find(c => c.id === childId);
-    const isRevenue = payment.description?.toLowerCase().includes('inflow') || 
-                      payment.lines?.some(l => (l.account?.code === '4300' || l.account?.account_type === 'revenue') && l.credit_amount > 0);
-    const fund = funds.find(f => f.id === lineWithChild?.fund_id);
+  const handlePrintReceipt = (record: UnifiedSchoolFeeRecord | any) => {
+    const isDonor = record.payer_type === 'donor';
+    const payerTitle = isDonor 
+      ? `Donor Sponsor: ${record.payer_name || record.payer_label || 'Sponsor'}` 
+      : `Guardian: ${record.guardian_name || 'Guardian'}`;
 
-    const childName = child ? `${child.first_name} ${child.last_name}` : 'N/A';
-    const guardianName = child?.guardian?.name || 'N/A';
+    const childFullName = record.child_name || (record.child ? `${record.child.first_name} ${record.child.last_name}` : 'Student');
+    const childIdCode = record.child_code || record.child?.code || '';
+    const paymentAmt = Number(record.amount || record.total_debit || 0);
 
     const cartItems = [{
       id: 'fee-pay',
-      name: `School Fee Payment (${isRevenue ? 'Guardian Inflow' : 'NGO Outflow'})`,
+      name: `School Fee - ${childFullName} (${record.term || 'Term'} ${record.academic_year || ''}) [${record.payer_label || (record.is_inflow ? 'Inflow' : 'NGO Outflow')}]`,
       quantity: 1,
-      unitPrice: payment.total_debit,
-      subtotal: payment.total_debit,
-      product: { cost_price: 0, selling_price: payment.total_debit } as any
+      unitPrice: paymentAmt,
+      subtotal: paymentAmt,
+      product: { cost_price: 0, selling_price: paymentAmt } as any
     }];
 
     const receipt = {
-      saleNumber: payment.entry_number,
-      customerName: guardianName,
+      saleNumber: record.receipt_number || record.entry_number || 'RCP-OFFICIAL',
+      customerName: payerTitle,
       items: cartItems,
-      total: payment.total_debit,
-      paymentMethod: isRevenue ? 'M-Pesa / Cash' : 'Fund Restricted',
-      date: normalizeDate(payment.entry_date),
+      total: paymentAmt,
+      paymentMethod: (record.payment_method || 'mpesa').toUpperCase(),
+      date: normalizeDate(record.payment_date || record.entry_date),
       time: 'N/A',
       type: 'school_fee' as any,
-      childName,
-      donorName: guardianName,
-      fundName: fund?.name || 'Education Fund'
+      childName: `${childFullName} ${childIdCode ? `(${childIdCode})` : ''}`,
+      donorName: isDonor ? (record.payer_name || 'Donor Sponsor') : (record.guardian_name || 'Guardian'),
+      fundName: record.fund_name || 'Education Fund'
     };
 
     const details = {
@@ -257,9 +258,20 @@ const FundReports: React.FC = () => {
     printPaymentReceipt(receipt, details, false);
   };
 
-  const handleDeletePayment = async (id: string) => {
-    if (!window.confirm('Are you sure you want to void and delete this payment record? This will remove the transaction from the General Ledger.')) return;
-    const success = await AccountingService.deleteJournalEntry(id);
+  const handleDeletePayment = async (record: UnifiedSchoolFeeRecord | any) => {
+    const receiptNo = record.receipt_number || record.entry_number || record.id;
+    if (!window.confirm(`Are you sure you want to void and delete fee record #${receiptNo}? This will remove the transaction from the General Ledger and update the student's balance.`)) return;
+    
+    let success = false;
+    const recId = record.id || '';
+    const jeId = record.journal_entry_id || (recId.startsWith('syn-') ? recId.replace('syn-', '') : recId);
+    
+    if (recId.startsWith('syn-')) {
+      success = await AccountingService.deleteJournalEntry(jeId);
+    } else {
+      success = await SchoolFeeService.voidFeePayment(recId, jeId);
+    }
+
     if (success) {
       toast.success('School Fee Payment voided successfully.');
       loadReportData();
@@ -297,7 +309,14 @@ const FundReports: React.FC = () => {
         setTransfers(list);
       }
 
-      // 4. Refresh live bank balances
+      // 4. Fetch unified school fee records (Single authoritative source of truth)
+      const feeRecs = await SchoolFeeService.getUnifiedFeeRecords({
+        start_date: startDate || undefined,
+        end_date: endDate || undefined
+      });
+      setUnifiedFeeRecords(feeRecs || []);
+
+      // 5. Refresh live bank balances
       const balances = await FundAccountingService.getBankAndCashBalances();
       setBankBalances(balances || []);
     } catch (e) {
@@ -731,71 +750,18 @@ const FundReports: React.FC = () => {
     };
   }, [journalEntries, accountMap, selectedDept, selectedFund, selectedChild, selectedDonor, departments, funds, employees]);
 
-  // Tab 2: School Fee Records Computed
+  // Tab 2: School Fee Records Computed (Authoritative Unified Source)
   const schoolFeeRecords = useMemo(() => {
-    const feeRecords: any[] = [];
-    const seenEntryIds = new Set<string>();
-
-    journalEntries.forEach(entry => {
-      const desc = (entry.description || '').toLowerCase();
-      const isFeeEntry = desc.includes('school fee') || desc.includes('tuition') || desc.includes('fee payment');
-      
-      entry.lines?.forEach(line => {
-        const lineDesc = (line.description || '').toLowerCase();
-        const lineAccountCode = line.account?.code || '';
-        const isFeeLine = line.child_id || 
-                          lineAccountCode === '4300' || lineAccountCode === '5310' || lineAccountCode === '5350' ||
-                          lineAccountCode === '4240' || lineAccountCode === '5300' ||
-                          isFeeEntry || lineDesc.includes('school fee') || lineDesc.includes('tuition');
-
-        if (!isFeeLine) return;
-
-        // Target either revenue/expense line to avoid double counting bank/cash line
-        const isRevLine = line.account?.account_type === 'revenue' || lineAccountCode.startsWith('4') || line.credit_amount > 0;
-        const isExpLine = line.account?.account_type === 'expense' || lineAccountCode.startsWith('5') || (!lineAccountCode.startsWith('1') && line.debit_amount > 0);
-
-        if (!isRevLine && !isExpLine) return;
-
-        // Child tag from line or sibling lines
-        const childId = line.child_id || entry.lines?.find(l => l.child_id)?.child_id;
-        const fundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
-        const deptId = resolveLineDepartment(line, entry);
-
-        // Apply filters
-        if (selectedChild && childId !== selectedChild) return;
-        if (selectedFund && fundId !== selectedFund) return;
-        if (!isDeptMatch(deptId)) return;
-
-        // Deduplicate per journal entry line
-        const uniqueKey = `${entry.id}-${line.id || lineAccountCode}`;
-        if (seenEntryIds.has(uniqueKey)) return;
-        seenEntryIds.add(uniqueKey);
-
-        const childObj = children.find(c => c.id === childId);
-        const childName = childObj ? `${childObj.first_name} ${childObj.last_name}` : 'Beneficiary Child';
-        const childCode = childObj?.code || 'N/A';
-
-        const isInflow = isRevLine || desc.includes('inflow');
-        const amount = Number(line.credit_amount > 0 ? line.credit_amount : line.debit_amount);
-
-        feeRecords.push({
-          id: entry.id,
-          entry,
-          entryNumber: entry.entry_number,
-          date: normalizeDate(entry.entry_date),
-          childName,
-          childCode,
-          description: line.description || entry.description,
-          type: isInflow ? 'Inflow (Guardian Pay)' : 'Outflow (NGO Pay School)',
-          amount,
-          fund: funds.find(f => f.id === fundId)?.name || 'General Education',
-          dept: departments.find(d => d.id === deptId || d.name.toLowerCase() === (deptId || '').toLowerCase())?.name || 'Education'
-        });
-      });
+    return unifiedFeeRecords.filter(rec => {
+      if (selectedChild && rec.child_id !== selectedChild) return false;
+      if (selectedFund && rec.fund_id !== selectedFund) return false;
+      if (selectedDept && !isDeptMatch(rec.department_id)) return false;
+      if (selectedDonor && rec.payer_type === 'donor') {
+        if (rec.donor_id && rec.donor_id !== selectedDonor) return false;
+      }
+      return true;
     });
-
-    return feeRecords;
-  }, [journalEntries, selectedChild, selectedFund, selectedDept, children, funds, departments, employees]);
+  }, [unifiedFeeRecords, selectedChild, selectedFund, selectedDept, selectedDonor, departments]);
 
   // Tab 3: Donations Records Computed
   const filteredDonations = useMemo(() => {
@@ -1152,16 +1118,32 @@ const FundReports: React.FC = () => {
       `;
     } else if (activeTab === 'fees') {
       reportTitle = 'School Fee Payments & Tuition Ledger';
-      const totalFees = schoolFeeRecords.reduce((sum, r) => sum + r.amount, 0);
+      const guardianInflows = schoolFeeRecords.filter(r => r.payer_type === 'guardian').reduce((sum, r) => sum + r.amount, 0);
+      const donorInflows = schoolFeeRecords.filter(r => r.payer_type === 'donor').reduce((sum, r) => sum + r.amount, 0);
+      const ngoOutflows = schoolFeeRecords.filter(r => r.payer_type === 'ngo_scholarship').reduce((sum, r) => sum + r.amount, 0);
+      const totalInflows = guardianInflows + donorInflows;
+
       summaryCardsHtml = `
-        <div class="summary-grid">
+        <div class="summary-grid" style="grid-template-columns: repeat(4, 1fr);">
           <div class="card in-card">
-            <div class="card-label">Total School Fees Processed</div>
-            <div class="card-val">${currency} ${totalFees.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div class="card-label">Total Fee Inflows (All Sources)</div>
+            <div class="card-val">${currency} ${totalInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">${schoolFeeRecords.filter(r => r.is_inflow).length} Inflow Transaction(s)</div>
           </div>
-          <div class="card net-card">
-            <div class="card-label">Total Fee Transactions</div>
-            <div class="card-val">${schoolFeeRecords.length} Record(s)</div>
+          <div class="card in-card">
+            <div class="card-label">Guardian Direct Payments</div>
+            <div class="card-val">${currency} ${guardianInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Parent / Family Direct Fees</div>
+          </div>
+          <div class="card in-card" style="border-left-color: #8b5cf6;">
+            <div class="card-label">Donor Sponsored Inflows</div>
+            <div class="card-val" style="color: #7c3aed;">${currency} ${donorInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Designated Student Sponsorships</div>
+          </div>
+          <div class="card out-card">
+            <div class="card-label">NGO External Tuition Outflows</div>
+            <div class="card-val">${currency} ${ngoOutflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div style="font-size: 8px; opacity: 0.8; margin-top: 2px;">Disbursements to Outside Schools</div>
           </div>
         </div>
       `;
@@ -1170,12 +1152,12 @@ const FundReports: React.FC = () => {
         <table>
           <thead>
             <tr>
-              <th style="width: 12%">Date</th>
-              <th style="width: 22%">Beneficiary Child</th>
-              <th style="width: 18%">Type</th>
-              <th style="width: 20%">Fund / Center</th>
-              <th style="width: 16%">Memo / Description</th>
-              <th style="width: 12%; text-align: right;">Amount (${currency})</th>
+              <th style="width: 10%">Date</th>
+              <th style="width: 14%">Receipt No.</th>
+              <th style="width: 20%">Beneficiary Child</th>
+              <th style="width: 22%">Payer Classification</th>
+              <th style="width: 18%">Department / Fund</th>
+              <th style="width: 16%; text-align: right;">Amount (${currency})</th>
             </tr>
           </thead>
           <tbody>
@@ -1183,20 +1165,20 @@ const FundReports: React.FC = () => {
               ? '<tr><td colspan="6" class="empty-cell">No school fee payments match chosen filters</td></tr>'
               : schoolFeeRecords.map(r => `
                 <tr>
-                  <td>${r.date}</td>
-                  <td><strong>${r.childName}</strong><br><small style="color: #64748b">${r.childCode}</small></td>
-                  <td><span class="badge ${r.type.startsWith('Inflow') ? 'badge-green' : 'badge-amber'}">${r.type}</span></td>
-                  <td><strong>${r.fund}</strong><br><small style="color: #64748b">${r.dept}</small></td>
-                  <td>${r.description}</td>
-                  <td style="text-align: right; font-weight: bold;">${r.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  <td>${r.payment_date || r.date}</td>
+                  <td><span class="font-mono" style="font-weight: bold; color: #4338ca;">${r.receipt_number || r.entryNumber}</span><br><small style="color: #64748b">${r.term} ${r.academic_year}</small></td>
+                  <td><strong>${r.child_name || r.childName}</strong><br><small style="color: #64748b">${r.child_code || r.childCode}</small></td>
+                  <td><span class="badge ${r.payer_type === 'donor' ? 'badge-blue' : (r.is_inflow ? 'badge-green' : 'badge-amber')}">${r.payer_label || r.type}</span></td>
+                  <td><strong>${r.department_name || r.dept}</strong><br><small style="color: #64748b">${r.fund_name || r.fund}</small></td>
+                  <td style="text-align: right; font-weight: bold; color: ${r.is_inflow ? '#047857' : '#b91c1c'};">${r.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                 </tr>
               `).join('')
             }
           </tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="5">TOTAL AMOUNT</td>
-              <td style="text-align: right;">${currency} ${totalFees.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td colspan="5">TOTAL SCHOOL FEE INFLOWS (GUARDIAN + DONOR SPONSORED)</td>
+              <td style="text-align: right;">${currency} ${totalInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
             </tr>
           </tfoot>
         </table>
@@ -2486,23 +2468,62 @@ const FundReports: React.FC = () => {
   };
 
   const renderSchoolFeesReport = () => {
-    const totalFees = schoolFeeRecords.reduce((sum, r) => sum + r.amount, 0);
+    const guardianInflows = schoolFeeRecords.filter(r => r.payer_type === 'guardian').reduce((sum, r) => sum + r.amount, 0);
+    const donorInflows = schoolFeeRecords.filter(r => r.payer_type === 'donor').reduce((sum, r) => sum + r.amount, 0);
+    const ngoOutflows = schoolFeeRecords.filter(r => r.payer_type === 'ngo_scholarship').reduce((sum, r) => sum + r.amount, 0);
+    const totalInflows = guardianInflows + donorInflows;
 
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-indigo-50 border border-indigo-100 p-5 rounded-2xl">
-            <span className="text-xs font-bold text-indigo-800 uppercase tracking-wider block">Total School Fees Processed</span>
-            <span className="text-2xl md:text-3xl font-bold text-indigo-950 mt-1 block">{currency} {totalFees.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+      <div className="space-y-6">
+        {/* KPI CARDS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/60 border border-indigo-200 p-5 rounded-2xl shadow-xs">
+            <span className="text-xs font-bold text-indigo-800 uppercase tracking-wider block">Total Fee Inflows (All)</span>
+            <span className="text-2xl font-black text-indigo-950 mt-1 block font-mono">
+              {currency} {totalInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-indigo-600 font-semibold mt-1 block">
+              {schoolFeeRecords.filter(r => r.is_inflow).length} Inflow Transaction(s)
+            </span>
           </div>
-          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Total Recorded Transactions</span>
-            <span className="text-2xl md:text-3xl font-bold text-slate-900 mt-1 block">{schoolFeeRecords.length} Payment(s)</span>
+
+          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/60 border border-emerald-200 p-5 rounded-2xl shadow-xs">
+            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block">Guardian Direct Payments</span>
+            <span className="text-2xl font-black text-emerald-950 mt-1 block font-mono">
+              {currency} {guardianInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-emerald-700 font-semibold mt-1 block">
+              Parent & Family Inflows
+            </span>
+          </div>
+
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100/60 border border-purple-200 p-5 rounded-2xl shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-purple-800 uppercase tracking-wider block">Donor Sponsored Inflows</span>
+              <Heart size={14} className="text-purple-600 fill-purple-200" />
+            </div>
+            <span className="text-2xl font-black text-purple-950 mt-1 block font-mono">
+              {currency} {donorInflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-purple-700 font-semibold mt-1 block">
+              Direct Child Fee Sponsorships
+            </span>
+          </div>
+
+          <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200 p-5 rounded-2xl shadow-xs">
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">NGO External Outflows</span>
+            <span className="text-2xl font-black text-slate-900 mt-1 block font-mono">
+              {currency} {ngoOutflows.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[11px] text-slate-500 font-semibold mt-1 block">
+              External Tuition Disbursements
+            </span>
           </div>
         </div>
 
+        {/* TRANSACTIONS TABLE */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+          <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex flex-wrap gap-3 justify-between items-center">
             <h3 className="font-bold text-gray-900 flex items-center gap-2">
               <GraduationCap className="text-indigo-600" /> School Fee Payments & Tuition Ledger
             </h3>
@@ -2515,9 +2536,10 @@ const FundReports: React.FC = () => {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
                   <th className="py-3 px-6">Date</th>
+                  <th className="py-3 px-6">Receipt #</th>
                   <th className="py-3 px-6">Beneficiary</th>
-                  <th className="py-3 px-6">Transaction Type</th>
-                  <th className="py-3 px-6">Fund / Center</th>
+                  <th className="py-3 px-6">Payer Classification</th>
+                  <th className="py-3 px-6">Department / Fund</th>
                   <th className="py-3 px-6">Memo / Notes</th>
                   <th className="py-3 px-6 text-right">Amount ({currency})</th>
                   <th className="py-3 px-6 text-right print:hidden">Actions</th>
@@ -2526,44 +2548,59 @@ const FundReports: React.FC = () => {
               <tbody className="divide-y divide-gray-100 text-sm">
                 {schoolFeeRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-gray-400 font-medium">
+                    <td colSpan={8} className="py-8 text-center text-gray-400 font-medium">
                       No school fee transactions match the filter criteria. Try clicking "All Records" or "Reset All Filters".
                     </td>
                   </tr>
                 ) : (
                   schoolFeeRecords.map((row, idx) => (
                     <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="py-3 px-6 font-mono text-xs">{row.date}</td>
-                      <td className="py-3 px-6">
-                        <span className="font-bold text-gray-800">{row.childName}</span>
-                        <span className="text-xs text-gray-400 block">{row.childCode}</span>
+                      <td className="py-3 px-6 font-mono text-xs">{row.payment_date || row.date}</td>
+                      <td className="py-3 px-6 font-mono font-bold text-indigo-600 text-xs">
+                        {row.receipt_number || row.entryNumber}
+                        <div className="text-[10px] text-gray-400 font-normal font-sans">{row.term} {row.academic_year}</div>
                       </td>
                       <td className="py-3 px-6">
-                        <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full ${
-                          row.type.startsWith('Inflow') ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                        }`}>
-                          {row.type}
-                        </span>
+                        <span className="font-bold text-gray-800 block">{row.child_name || row.childName}</span>
+                        <span className="text-xs font-mono text-gray-400 block">{row.child_code || row.childCode}</span>
                       </td>
-                      <td className="py-3 px-6 text-gray-600">
-                        <span className="block font-medium">{row.fund}</span>
-                        <span className="text-xs text-gray-400 block">{row.dept}</span>
+                      <td className="py-3 px-6">
+                        {row.payer_type === 'donor' ? (
+                          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-purple-50 text-purple-700 border border-purple-200 inline-flex items-center gap-1.5 shadow-xs">
+                            <Heart size={12} className="text-purple-600 fill-purple-200 shrink-0" />
+                            {row.payer_label || row.type}
+                          </span>
+                        ) : row.is_inflow ? (
+                          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1.5 shadow-xs">
+                            <GraduationCap size={12} className="text-emerald-600 shrink-0" />
+                            {row.payer_label || row.type}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1.5 shadow-xs">
+                            <ArrowUpRight size={12} className="text-amber-600 shrink-0" />
+                            {row.payer_label || row.type}
+                          </span>
+                        )}
                       </td>
-                      <td className="py-3 px-6 text-gray-500 max-w-xs truncate">{row.description}</td>
-                      <td className="py-3 px-6 text-right font-bold text-gray-900">
+                      <td className="py-3 px-6 text-gray-600 text-xs">
+                        <span className="block font-semibold text-gray-800">{row.department_name || row.dept}</span>
+                        <span className="text-gray-400 block">{row.fund_name || row.fund}</span>
+                      </td>
+                      <td className="py-3 px-6 text-gray-500 max-w-xs truncate text-xs">{row.notes || row.description}</td>
+                      <td className={`py-3 px-6 text-right font-mono font-bold text-sm ${row.is_inflow ? 'text-gray-900' : 'text-rose-600'}`}>
                         {currency} {row.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 px-6 text-right print:hidden">
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => handlePrintReceipt(row.entry)}
+                            onClick={() => handlePrintReceipt(row)}
                             className="p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
                             title="Print Receipt"
                           >
                             <Printer size={14} />
                           </button>
                           <button
-                            onClick={() => handleDeletePayment(row.id)}
+                            onClick={() => handleDeletePayment(row)}
                             className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors"
                             title="Void / Delete"
                           >

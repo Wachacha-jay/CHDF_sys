@@ -783,6 +783,12 @@ export interface SchoolFeePayment {
   fund_id?: string;
   journal_entry_id?: string;
   notes?: string;
+  payer_type?: 'guardian' | 'donor' | 'ngo_scholarship';
+  payer_name?: string;
+  payer_label?: string;
+  is_inflow?: boolean;
+  donor_id?: string;
+  donor?: Donor;
   created_at?: string;
   updated_at?: string;
   child?: Child;

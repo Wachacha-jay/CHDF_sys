@@ -8,7 +8,8 @@ import type {
   StudentFeeYearSummary, 
   JournalEntry,
   Account,
-  Department
+  Department,
+  Donor
 } from '../types';
 
 export interface RecordFeePaymentPayload {
@@ -23,6 +24,48 @@ export interface RecordFeePaymentPayload {
   department_id?: string;
   fund_id?: string;
   notes?: string;
+  payer_type?: 'guardian' | 'donor' | 'ngo_scholarship';
+  payer_name?: string;
+  donor_id?: string;
+}
+
+export interface UnifiedSchoolFeeRecord {
+  id: string;
+  receipt_number: string;
+  payment_date: string;
+  child_id: string;
+  child_name: string;
+  child_code: string;
+  guardian_name?: string;
+  academic_year: number;
+  term: 'Term 1' | 'Term 2' | 'Term 3';
+  amount: number;
+  payment_method: string;
+  reference_number?: string;
+  bank_account_id?: string;
+  department_id?: string;
+  department_name?: string;
+  fund_id?: string;
+  fund_name?: string;
+  notes?: string;
+  payer_type: 'guardian' | 'donor' | 'ngo_scholarship';
+  payer_name?: string;
+  payer_label: string;
+  is_inflow: boolean;
+  donor_id?: string;
+  donor?: Donor;
+  journal_entry_id?: string;
+  journal_entry?: JournalEntry;
+  child?: Child;
+  date?: string;
+  childName?: string;
+  childCode?: string;
+  type?: string;
+  fund?: string;
+  dept?: string;
+  description?: string;
+  entryNumber?: string;
+  entry?: JournalEntry;
 }
 
 export class SchoolFeeService {
@@ -90,6 +133,257 @@ export class SchoolFeeService {
   }
 
   /**
+   * Authoritative, unified source of truth for all school fee payments & tuition records.
+   * Reconciles school_fee_payments with journal entries, resolving student, guardian, donor,
+   * and properly distinguishing Guardian Direct Payments from Donor-Sponsored Payments.
+   */
+  static async getUnifiedFeeRecords(filters?: {
+    academic_year?: number;
+    term?: string;
+    child_id?: string;
+    department_id?: string;
+    fund_id?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<UnifiedSchoolFeeRecord[]> {
+    try {
+      const [feePaymentsRes, journalEntries, childrenRes, deptsRes, fundsRes, donorsRes] = await Promise.all([
+        ApiService.get<SchoolFeePayment>('school_fee_payments'),
+        AccountingService.getJournalEntries(),
+        ApiService.get<Child>('children'),
+        ApiService.get<Department>('departments'),
+        ApiService.get<any>('fund_accounts'),
+        ApiService.get<any>('donors')
+      ]);
+
+      const feePayments = feePaymentsRes.success ? (feePaymentsRes.data || []) : [];
+      const children = childrenRes.success ? (childrenRes.data || []) : [];
+      const depts = deptsRes.success ? (deptsRes.data || []) : [];
+      const funds = fundsRes.success ? (fundsRes.data || []) : [];
+      const donors = donorsRes.success ? (donorsRes.data || []) : [];
+
+      const childMap = new Map(children.map(c => [c.id, c]));
+      const deptMap = new Map(depts.map(d => [d.id, d.name]));
+      const fundMap = new Map(funds.map(f => [f.id, f.name]));
+      const donorMap = new Map(donors.map(d => [d.id, d.name]));
+      const jEntryMap = new Map((journalEntries || []).map(je => [je.id, je]));
+
+      const unifiedRecords: UnifiedSchoolFeeRecord[] = [];
+      const seenPaymentKeys = new Set<string>();
+
+      // 1. Process persisted payments in school_fee_payments
+      for (const p of feePayments) {
+        const child = childMap.get(p.child_id);
+        const childName = child ? `${child.first_name} ${child.last_name}` : 'Student Beneficiary';
+        const childCode = child?.code || 'N/A';
+        const guardianName = child?.guardian?.name || 'Guardian';
+        const pDate = p.payment_date ? String(p.payment_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const pYear = p.academic_year ? Number(p.academic_year) : new Date(pDate).getFullYear();
+        const pTerm = (p.term || 'Term 2') as 'Term 1' | 'Term 2' | 'Term 3';
+        const linkedJE = p.journal_entry_id ? jEntryMap.get(p.journal_entry_id) : undefined;
+
+        // Determine Payer Type
+        const notesLower = `${p.notes || ''} ${linkedJE?.description || ''}`.toLowerCase();
+        let payerType: 'guardian' | 'donor' | 'ngo_scholarship' = 'guardian';
+        let payerLabel = `Inflow (Guardian Pay - ${guardianName})`;
+
+        if (p.payer_type === 'donor' || p.donor_id || notesLower.includes('donor') || notesLower.includes('sponsor')) {
+          payerType = 'donor';
+          const donorName = p.donor_id ? donorMap.get(p.donor_id) : (p.payer_name || undefined);
+          payerLabel = donorName ? `Inflow (Donor Sponsored - ${donorName})` : 'Inflow (Donor Sponsored)';
+        } else if (p.payer_type === 'ngo_scholarship' || notesLower.includes('scholarship') || (notesLower.includes('outflow') && !notesLower.includes('inflow'))) {
+          payerType = 'ngo_scholarship';
+          payerLabel = 'NGO Outflow (External Tuition)';
+        }
+
+        const record: UnifiedSchoolFeeRecord = {
+          id: p.id,
+          receipt_number: p.receipt_number || (p.reference_number ? `REF-${p.reference_number}` : `RCP-${p.id.slice(0, 8).toUpperCase()}`),
+          payment_date: pDate,
+          child_id: p.child_id,
+          child_name: childName,
+          child_code: childCode,
+          guardian_name: guardianName,
+          academic_year: pYear,
+          term: pTerm,
+          amount: Number(p.amount || 0),
+          payment_method: p.payment_method || 'mpesa',
+          reference_number: p.reference_number,
+          bank_account_id: p.bank_account_id,
+          department_id: p.department_id,
+          department_name: p.department_id ? deptMap.get(p.department_id) : 'Empower Hearts Special School',
+          fund_id: p.fund_id,
+          fund_name: p.fund_id ? fundMap.get(p.fund_id) : 'Education Fund',
+          notes: p.notes,
+          payer_type: payerType,
+          payer_name: p.payer_name || (payerType === 'donor' ? (p.donor_id ? donorMap.get(p.donor_id) : 'Donor Sponsor') : guardianName),
+          payer_label: payerLabel,
+          is_inflow: payerType !== 'ngo_scholarship',
+          donor_id: p.donor_id,
+          journal_entry_id: p.journal_entry_id,
+          journal_entry: linkedJE,
+          child: child,
+          date: pDate,
+          childName,
+          childCode,
+          type: payerLabel,
+          fund: p.fund_id ? fundMap.get(p.fund_id) : 'Education Fund',
+          dept: p.department_id ? deptMap.get(p.department_id) : 'Empower Hearts Special School',
+          description: p.notes,
+          entryNumber: p.receipt_number,
+          entry: linkedJE
+        };
+
+        const dedupeKey = `${p.child_id}-${pDate}-${Number(p.amount).toFixed(2)}`;
+        seenPaymentKeys.add(dedupeKey);
+        if (p.journal_entry_id) {
+          seenPaymentKeys.add(p.journal_entry_id);
+        }
+
+        unifiedRecords.push(record);
+      }
+
+      // 2. Synthesize residual journal entries that are fee payments or child sponsorship revenues
+      (journalEntries || []).forEach(entry => {
+        if (seenPaymentKeys.has(entry.id)) return;
+
+        const descLower = (entry.description || '').toLowerCase();
+        const lines = entry.lines || [];
+        const isFeeDesc = descLower.includes('school fee') || descLower.includes('tuition');
+        const feeRevLine = lines.find(l => l.account?.code === '4300' || (l.credit_amount > 0 && (l.account?.name || '').toLowerCase().includes('school fee')));
+        const sponsorRevLine = lines.find(l => l.account?.code === '4240' || (l.credit_amount > 0 && (l.account?.name || '').toLowerCase().includes('child sponsorship')));
+        const feeExpLine = lines.find(l => l.account?.code === '5310' || l.account?.code === '5350' || (l.debit_amount > 0 && (l.account?.name || '').toLowerCase().includes('school fee')));
+
+        if (!isFeeDesc && !feeRevLine && !sponsorRevLine && !feeExpLine) return;
+
+        // Find associated child
+        let childId = lines.find(l => l.child_id)?.child_id || '';
+        if (!childId) {
+          for (const c of children) {
+            const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
+            if (descLower.includes(fullName) || (c.code && descLower.includes(c.code.toLowerCase()))) {
+              childId = c.id;
+              break;
+            }
+          }
+        }
+        if (!childId && children.length > 0) {
+          childId = children[0].id;
+        }
+
+        const child = childMap.get(childId);
+        const childName = child ? `${child.first_name} ${child.last_name}` : 'Student Beneficiary';
+        const childCode = child?.code || 'N/A';
+        const guardianName = child?.guardian?.name || 'Guardian';
+
+        const pDate = entry.entry_date ? String(entry.entry_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const pYear = new Date(pDate).getFullYear();
+        let pTerm: 'Term 1' | 'Term 2' | 'Term 3' = 'Term 2';
+        if (descLower.includes('term 1')) pTerm = 'Term 1';
+        else if (descLower.includes('term 3')) pTerm = 'Term 3';
+
+        const amount = Number(entry.total_debit || entry.total_credit || 0);
+        const dedupeKey = `${childId}-${pDate}-${amount.toFixed(2)}`;
+        if (seenPaymentKeys.has(dedupeKey)) return;
+        seenPaymentKeys.add(dedupeKey);
+
+        let payerType: 'guardian' | 'donor' | 'ngo_scholarship' = 'guardian';
+        let payerLabel = `Inflow (Guardian Pay - ${guardianName})`;
+        let payerName = guardianName;
+
+        if (sponsorRevLine || descLower.includes('donor') || descLower.includes('sponsor')) {
+          payerType = 'donor';
+          let matchedDonorName = '';
+          for (const d of donors) {
+            if (descLower.includes(d.name.toLowerCase())) {
+              matchedDonorName = d.name;
+              break;
+            }
+          }
+          payerName = matchedDonorName || 'Donor Sponsor';
+          payerLabel = matchedDonorName ? `Inflow (Donor Sponsored - ${matchedDonorName})` : 'Inflow (Donor Sponsored)';
+        } else if (feeExpLine && !feeRevLine && !descLower.includes('inflow')) {
+          payerType = 'ngo_scholarship';
+          payerLabel = 'NGO Outflow (External Tuition)';
+          payerName = 'NGO Scholarship';
+        }
+
+        const lineDeptId = lines.find(l => l.department_id)?.department_id;
+        const lineFundId = lines.find(l => l.fund_id)?.fund_id;
+        const deptName = lineDeptId ? deptMap.get(lineDeptId) : 'Empower Hearts Special School';
+        const fundName = lineFundId ? fundMap.get(lineFundId) : 'Education Fund';
+        const receiptNo = entry.entry_number || entry.reference || `RCP-${entry.id.slice(0, 6).toUpperCase()}`;
+
+        unifiedRecords.push({
+          id: `syn-${entry.id}`,
+          receipt_number: receiptNo,
+          payment_date: pDate,
+          child_id: childId,
+          child_name: childName,
+          child_code: childCode,
+          guardian_name: guardianName,
+          academic_year: pYear,
+          term: pTerm,
+          amount: amount,
+          payment_method: 'mpesa',
+          reference_number: entry.reference || undefined,
+          department_id: lineDeptId,
+          department_name: deptName,
+          fund_id: lineFundId,
+          fund_name: fundName,
+          notes: entry.description,
+          payer_type: payerType,
+          payer_name: payerName,
+          payer_label: payerLabel,
+          is_inflow: payerType !== 'ngo_scholarship',
+          journal_entry_id: entry.id,
+          journal_entry: entry,
+          child: child,
+          date: pDate,
+          childName,
+          childCode,
+          type: payerLabel,
+          fund: fundName,
+          dept: deptName,
+          description: entry.description,
+          entryNumber: receiptNo,
+          entry
+        });
+      });
+
+      // Apply query filters
+      let filtered = unifiedRecords;
+
+      if (filters?.academic_year && Number(filters.academic_year) !== 0) {
+        filtered = filtered.filter(r => r.academic_year === Number(filters.academic_year));
+      }
+      if (filters?.term && filters.term !== 'all') {
+        filtered = filtered.filter(r => r.term.toLowerCase() === filters.term?.toLowerCase());
+      }
+      if (filters?.child_id) {
+        filtered = filtered.filter(r => r.child_id === filters.child_id);
+      }
+      if (filters?.department_id && filters.department_id !== 'all') {
+        filtered = filtered.filter(r => r.department_id === filters.department_id);
+      }
+      if (filters?.fund_id && filters.fund_id !== 'all') {
+        filtered = filtered.filter(r => r.fund_id === filters.fund_id);
+      }
+      if (filters?.start_date) {
+        filtered = filtered.filter(r => r.payment_date >= filters.start_date!);
+      }
+      if (filters?.end_date) {
+        filtered = filtered.filter(r => r.payment_date <= filters.end_date!);
+      }
+
+      return filtered.sort((a, b) => b.payment_date.localeCompare(a.payment_date));
+    } catch (err) {
+      console.error('Error fetching unified fee records:', err);
+      return [];
+    }
+  }
+
+  /**
    * Delete / Void a school fee payment and its linked General Ledger journal entry
    */
   static async voidFeePayment(paymentId: string, journalEntryId?: string): Promise<boolean> {
@@ -106,7 +400,7 @@ export class SchoolFeeService {
   }
 
   /**
-   * Record a Guardian School Fee Payment:
+   * Record a School Fee Payment (Guardian Inflow or Donor-Sponsored Inflow):
    * 1. Creates proper double-entry Journal Entry (Debit Equity Bank, Credit School Fees Revenue)
    * 2. Persists payment in school_fee_payments
    */
@@ -129,6 +423,9 @@ export class SchoolFeeService {
       const receiptNumber = context.receiptNumber || `RCP-${Date.now().toString().slice(-6)}`;
       const guardianName = context.child.guardian?.name || 'Guardian';
       const studentName = `${context.child.first_name} ${context.child.last_name}`;
+      const payerType = payload.payer_type || 'guardian';
+      const payerName = payload.payer_name || (payerType === 'donor' ? 'Donor Sponsor' : guardianName);
+      const payerTag = payerType === 'donor' ? `(Donor Sponsored by ${payerName})` : `(Guardian Inflow)`;
 
       // 1. Post to General Ledger (Double-Entry Posting)
       const debitAccount = context.equityBank;
@@ -137,13 +434,13 @@ export class SchoolFeeService {
       let journalEntryId: string | undefined = undefined;
 
       if (debitAccount && creditAccount) {
-        const description = `School Fee Payment (Guardian Inflow) - ${payload.term} ${payload.academic_year}: ${studentName} (${context.child.code}) - ${receiptNumber}`;
+        const description = `School Fee Payment ${payerTag} - ${payload.term} ${payload.academic_year}: ${studentName} (${context.child.code}) - ${receiptNumber}`;
         const refText = payload.reference_number ? `Ref: ${payload.reference_number}` : `Method: ${payload.payment_method.toUpperCase()}`;
 
         const lines = [
           {
             account_id: debitAccount.id,
-            description: `Tuition received into ${debitAccount.name} from ${guardianName} for ${studentName} (${payload.term} ${payload.academic_year}) - ${refText}`,
+            description: `Tuition received into ${debitAccount.name} from ${payerName} for ${studentName} (${payload.term} ${payload.academic_year}) - ${refText}`,
             debit_amount: amt,
             credit_amount: 0,
             child_id: payload.child_id,
@@ -188,7 +485,10 @@ export class SchoolFeeService {
         department_id: payload.department_id || context.empowerDept?.id,
         fund_id: payload.fund_id,
         journal_entry_id: journalEntryId,
-        notes: payload.notes || undefined
+        notes: payload.notes ? `${payload.notes} [Payer: ${payerName}]` : `Payer: ${payerName}`,
+        payer_type: payerType,
+        payer_name: payerName,
+        donor_id: payload.donor_id
       };
 
       const res = await ApiService.create<SchoolFeePayment>('school_fee_payments', paymentRecord);
@@ -268,7 +568,7 @@ export class SchoolFeeService {
     // TERM 1
     const t1Expected = getExpectedForTerm('Term 1');
     const t1Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 1', p.payment_date));
-    const t1Paid = t1Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t1Paid = t1Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t1Opening = 0;
     const t1TotalBilled = t1Opening + t1Expected;
     const t1Closing = t1TotalBilled - t1Paid;
@@ -295,7 +595,7 @@ export class SchoolFeeService {
     const t2Opening = t1Closing;
     const t2Expected = getExpectedForTerm('Term 2');
     const t2Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 2', p.payment_date));
-    const t2Paid = t2Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t2Paid = t2Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t2TotalBilled = t2Opening + t2Expected;
     const t2Closing = t2TotalBilled - t2Paid;
 
@@ -314,7 +614,7 @@ export class SchoolFeeService {
     const t3Opening = t2Closing;
     const t3Expected = getExpectedForTerm('Term 3');
     const t3Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 3', p.payment_date));
-    const t3Paid = t3Payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t3Paid = t3Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t3TotalBilled = t3Opening + t3Expected;
     const t3Closing = t3TotalBilled - t3Paid;
 
