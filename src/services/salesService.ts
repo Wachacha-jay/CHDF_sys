@@ -126,7 +126,34 @@ export class SalesService {
     `;
 
     const response = await ApiService.getById<Sale>('sales', id, select);
-    return response.success ? response.data : null;
+    if (response.success && response.data) {
+      const sale = response.data;
+      // Deduplicate items if duplicate rows were previously created
+      if (sale.items && sale.items.length > 1) {
+        const seen = new Set<string>();
+        const uniqueItems: SaleItem[] = [];
+        const duplicateIdsToDelete: string[] = [];
+
+        for (const item of sale.items) {
+          const key = `${item.product_id}_${item.quantity}_${item.unit_price}`;
+          if (seen.has(key)) {
+            duplicateIdsToDelete.push(item.id);
+          } else {
+            seen.add(key);
+            uniqueItems.push(item);
+          }
+        }
+
+        if (duplicateIdsToDelete.length > 0) {
+          sale.items = uniqueItems;
+          for (const dupId of duplicateIdsToDelete) {
+            ApiService.delete('sale_items', dupId).catch(() => {});
+          }
+        }
+      }
+      return sale;
+    }
+    return null;
   }
 
   static async createSale(saleData: CreateSaleData): Promise<Sale | null> {
@@ -174,21 +201,21 @@ export class SalesService {
       });
 
       if (response.success && response.data) {
-        // Create sale items manually if they are not product-based (for fees)
         const saleId = response.data.id;
+        // NOTE: Standard items with product_id are already inserted transactionally by the backend /api/sales route.
+        // Only ad-hoc items missing product_id (e.g. fees) need manual insertion:
         for (const item of saleData.items) {
-            // If product_id is missing, it's a service/fee. We might need a dummy product or just insert into sale_items with null product_id if DB allows.
-            // Check: sale_items table schema requires product_id NOT NULL.
-            // I should use a "System Service" product for fees.
+          if (!item.product_id) {
             await ApiService.post('sale_items', {
-                sale_id: saleId,
-                product_id: item.product_id || 'SERVICE-FEES-0000-0000-000000000001', 
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                discount_amount: item.discount_amount || 0,
-                tax_amount: (item.quantity * item.unit_price) * taxRate,
-                total_amount: (item.quantity * item.unit_price) * (1 + taxRate)
+              sale_id: saleId,
+              product_id: 'SERVICE-FEES-0000-0000-000000000001', 
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              discount_amount: item.discount_amount || 0,
+              tax_amount: (item.quantity * item.unit_price) * taxRate,
+              total_amount: (item.quantity * item.unit_price) * (1 + taxRate)
             });
+          }
         }
 
         const sale = await this.getSaleById(saleId);

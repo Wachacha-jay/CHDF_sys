@@ -208,7 +208,7 @@ const PointOfSale: React.FC = () => {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const products = await ProductService.getProducts({ is_active: true });
+      const products = await ProductService.getProducts({ is_active: true, is_service: false });
       setProducts(products);
     } catch (error) {
       toast.error('Failed to load products');
@@ -218,6 +218,16 @@ const PointOfSale: React.FC = () => {
   };
 
   const filteredProducts = products.filter(product => {
+    // Exclude services from POS commercial products
+    const isService = Boolean(
+      product.is_service === true ||
+      (product.is_service as any) === 1 ||
+      (product.is_service as any) === '1' ||
+      product.category?.name?.toLowerCase().includes('service') ||
+      (product as any).type === 'service'
+    );
+    if (isService) return false;
+
     // Mode isolation: ring-fence in-kind items to distribution mode only
     if (posMode === 'retail' && product.is_in_kind) return false;
     if (posMode === 'distribution' && !product.is_in_kind) return false;
