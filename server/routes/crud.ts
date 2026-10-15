@@ -657,7 +657,7 @@ async function ensureInKindSchema() {
             DELETE jel FROM journal_entry_lines jel
             JOIN accounts a ON jel.account_id = a.id
             WHERE a.code IN ('4900', '5900') 
-               OR LOWER(a.name) LIKE '%internal transfer%'
+               OR (LOWER(a.name) LIKE '%internal transfer%' AND a.account_type IN ('revenue', 'expense'))
           `);
 
           // b. Delete journal entry lines for legacy ITR internal transfer vouchers
@@ -695,7 +695,7 @@ async function ensureInKindSchema() {
           await pool.query(`
             DELETE FROM accounts 
             WHERE code IN ('4900', '5900') 
-               OR LOWER(name) LIKE '%internal transfer%'
+               OR (LOWER(name) LIKE '%internal transfer%' AND account_type IN ('revenue', 'expense'))
           `);
 
           // g. Backfill department_id on employees where missing
@@ -892,7 +892,7 @@ router.post('/maintenance/cleanup-transfers-and-fix-payroll', authenticate, asyn
       DELETE jel FROM journal_entry_lines jel
       JOIN accounts a ON jel.account_id = a.id
       WHERE a.code IN ('4900', '5900') 
-         OR LOWER(a.name) LIKE '%internal transfer%'
+         OR (LOWER(a.name) LIKE '%internal transfer%' AND a.account_type IN ('revenue', 'expense'))
     `);
 
     // 2. Delete journal entry lines for legacy ITR internal transfer vouchers
@@ -930,7 +930,7 @@ router.post('/maintenance/cleanup-transfers-and-fix-payroll', authenticate, asyn
     const [delAccsResult]: any = await connection.query(`
       DELETE FROM accounts 
       WHERE code IN ('4900', '5900') 
-         OR LOWER(name) LIKE '%internal transfer%'
+         OR (LOWER(name) LIKE '%internal transfer%' AND account_type IN ('revenue', 'expense'))
     `);
 
     // 7. Backfill department_id on employees where missing

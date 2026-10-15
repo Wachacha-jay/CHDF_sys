@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, BookOpen, Search, Info } from 'lucide-react';
+import { Plus, Edit2, Trash2, BookOpen, Search, Info, RefreshCw } from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
 import { Account, AccountCategory } from '../../types';
 import toast from 'react-hot-toast';
@@ -8,6 +8,7 @@ const ChartOfAccounts: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<AccountCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cleaningUp, setCleaningUp] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,6 +25,26 @@ const ChartOfAccounts: React.FC = () => {
     loadData();
   }, []);
 
+  const handleCleanLegacyTransfers = async () => {
+    if (!window.confirm('Are you sure you want to permanently scrap legacy internal transfer accounts (4900, 5900) and sync all historical payroll lines to their departments? This action aligns your reports with IFRS standards.')) {
+      return;
+    }
+    try {
+      setCleaningUp(true);
+      const res = await AccountingService.purgeLegacyTransferAccountsAndSyncPayroll();
+      if (res.success) {
+        toast.success(res.message);
+        await loadData();
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to execute cleanup');
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -31,7 +52,9 @@ const ChartOfAccounts: React.FC = () => {
         AccountingService.getAccounts(),
         AccountingService.getAccountCategories()
       ]);
-      setAccounts(flatAccounts(accountsData));
+      const cleanFlat = flatAccounts(accountsData)
+        .filter(acc => !AccountingService.isLegacyInternalTransferAccount(acc));
+      setAccounts(cleanFlat);
       setCategories(categoriesData);
     } catch (error) {
       toast.error('Failed to load chart of accounts');
@@ -110,13 +133,24 @@ const ChartOfAccounts: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900 border-b-2 border-green-500 pb-1">Chart of Accounts</h1>
           <p className="text-gray-600">Complete list of all accounts used by your business</p>
         </div>
-        <button
-          onClick={() => openModal()}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center transition-all shadow-md active:scale-95"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Account
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={handleCleanLegacyTransfers}
+            disabled={cleaningUp}
+            className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors shadow-sm disabled:opacity-50"
+            title="Clean legacy 4900/5900 internal transfer accounts and synchronize department attribution"
+          >
+            {cleaningUp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-amber-600" />}
+            Scrap Legacy Accounts & Sync Depts
+          </button>
+          <button
+            onClick={() => openModal()}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center transition-all shadow-md active:scale-95"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Account
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

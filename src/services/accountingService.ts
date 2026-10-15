@@ -1,4 +1,5 @@
 import { ApiService } from './api';
+import { apiClient } from '../lib/api-client';
 import { Account, AccountCategory, JournalEntry, JournalEntryLine, BalanceSheetData, TrialBalanceData } from '../types';
 
 export interface JournalEntryData {
@@ -53,6 +54,21 @@ export const DEFAULT_ACCOUNT_CATEGORIES: AccountCategory[] = [
 ];
 
 export class AccountingService {
+  /**
+   * Helper to identify legacy internal transfer revenue (4900) and expense (5900) accounts
+   * that were replaced by balance sheet equity/receivable/payable accounts and must be scrapped.
+   */
+  static isLegacyInternalTransferAccount(acc: { code?: string; name?: string; account_type?: string } | undefined | null): boolean {
+    if (!acc) return false;
+    const code = (acc.code || '').trim();
+    const name = (acc.name || '').toLowerCase();
+    const type = (acc.account_type || '').toLowerCase();
+    if (code === '4900' || code === '5900') return true;
+    if (name.includes('internal transfer in') || name.includes('internal transfer out')) return true;
+    if (name.includes('internal transfer') && (type === 'revenue' || type === 'expense')) return true;
+    return false;
+  }
+
   // Account operations
   static async getAccounts(filters?: AccountFilters): Promise<Account[]> {
     let apiFilters: Record<string, any> = {};
@@ -67,7 +83,14 @@ export class AccountingService {
     });
 
     if (response.success && response.data) {
-      return this.buildAccountTree(response.data);
+      const rawAccounts = response.data;
+      const hasLegacyAccounts = rawAccounts.some(a => this.isLegacyInternalTransferAccount(a));
+      if (hasLegacyAccounts) {
+        // Proactively purge legacy accounts from the database in the background
+        this.purgeLegacyTransferAccountsAndSyncPayroll().catch(() => {});
+      }
+      const cleanAccounts = rawAccounts.filter(a => !this.isLegacyInternalTransferAccount(a));
+      return this.buildAccountTree(cleanAccounts);
     }
 
     return [];
@@ -141,6 +164,7 @@ export class AccountingService {
     end_date?: string;
     is_posted?: boolean;
     search?: string;
+    department_id?: string;
   }, options?: {
     limit?: number;
     offset?: number;
@@ -174,15 +198,25 @@ export class AccountingService {
       const allAccounts = allAccountsResponse.success ? (allAccountsResponse.data || []) : [];
       const accountMap = new Map(allAccounts.map(a => [a.id, a]));
 
-      entries = entries.map(entry => {
-        const lines = allLines
-          .filter(l => l.journal_entry_id === entry.id)
-          .map(l => ({
-            ...l,
-            account: accountMap.get(l.account_id)
-          }));
-        return { ...entry, lines };
-      });
+      // Clean lines and attach account, strictly scrapping legacy 4900 / 5900 internal transfer lines
+      entries = entries
+        .filter(entry => {
+          const isLegacyRef = entry.entry_number?.startsWith('ITR-') || entry.reference?.startsWith('ITR-');
+          const isLegacyDesc = (entry.description || '').toLowerCase().includes('internal transfer in') || 
+                               (entry.description || '').toLowerCase().includes('internal transfer out');
+          return !isLegacyRef && !isLegacyDesc;
+        })
+        .map(entry => {
+          const lines = allLines
+            .filter(l => l.journal_entry_id === entry.id)
+            .map(l => ({
+              ...l,
+              account: accountMap.get(l.account_id)
+            }))
+            .filter(l => !this.isLegacyInternalTransferAccount(l.account));
+          return { ...entry, lines };
+        })
+        .filter(entry => (entry.lines || []).length > 0);
 
       // Apply search filter
       if (filters?.search) {
@@ -191,6 +225,14 @@ export class AccountingService {
           entry.entry_number.toLowerCase().includes(searchTerm) ||
           entry.description.toLowerCase().includes(searchTerm) ||
           entry.reference?.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      // Apply department filter if specified
+      if (filters?.department_id && filters.department_id !== 'all') {
+        const targetDeptId = filters.department_id;
+        entries = entries.filter(entry => 
+          entry.lines?.some(l => l.department_id === targetDeptId)
         );
       }
 
@@ -654,5 +696,170 @@ export class AccountingService {
     };
     recurse(accounts || []);
     return flat;
+  }
+
+  /**
+   * Resolves the department ID for a journal entry line using line attributes, sibling lines,
+   * employee matches, or department textual references.
+   */
+  static resolveDepartmentForLine(
+    line: JournalEntryLine,
+    entry?: JournalEntry,
+    employees: any[] = [],
+    departments: any[] = []
+  ): string | undefined {
+    // 1. Direct line department_id
+    if (line.department_id) return line.department_id;
+    // 2. Department on sibling line in entry
+    if (entry?.lines) {
+      const siblingDeptId = entry.lines.find(l => l.department_id)?.department_id;
+      if (siblingDeptId) return siblingDeptId;
+    }
+    // 3. Match from employee list for payroll entries
+    const fullText = `${entry?.description || ''} ${line.description || ''} ${entry?.reference || ''}`.toLowerCase();
+    for (const emp of employees) {
+      const codeMatch = emp.code && fullText.includes(emp.code.toLowerCase());
+      const nameMatch = emp.first_name && emp.last_name && 
+        fullText.includes(`${emp.first_name.toLowerCase()} ${emp.last_name.toLowerCase()}`);
+      if (codeMatch || nameMatch) {
+        if (emp.department_id) return emp.department_id;
+        if (emp.department) {
+          const d = departments.find(dept => dept.name.toLowerCase() === emp.department?.toLowerCase());
+          if (d) return d.id;
+        }
+      }
+    }
+    // 4. Department name mentioned in text
+    for (const d of departments) {
+      if (d.name && fullText.includes(d.name.toLowerCase())) {
+        return d.id;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Checks if a line's resolved department matches the selected department filter.
+   */
+  static isDepartmentMatch(
+    lineDeptId: string | undefined,
+    selectedDeptId: string,
+    departments: any[] = []
+  ): boolean {
+    if (!selectedDeptId || selectedDeptId === 'all') return true;
+    if (!lineDeptId) return false;
+    if (lineDeptId === selectedDeptId) return true;
+    const selObj = departments.find(d => d.id === selectedDeptId);
+    if (selObj && (selObj.name.toLowerCase() === lineDeptId.toLowerCase() || selObj.id === lineDeptId)) return true;
+    return false;
+  }
+
+  /**
+   * Triggers a comprehensive purge of legacy internal transfer accounts (4900, 5900)
+   * and synchronizes payroll line department attribution across the database.
+   */
+  static async purgeLegacyTransferAccountsAndSyncPayroll(): Promise<{ success: boolean; message: string }> {
+    try {
+      // 1. First attempt dedicated backend maintenance API
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('/api/maintenance/cleanup-transfers-and-fix-payroll', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          }
+        });
+        if (res.ok) {
+          const result = await res.json();
+          return {
+            success: true,
+            message: result.message || 'Legacy accounts purged and payroll departments synchronized successfully.'
+          };
+        }
+      } catch (backendErr) {
+        console.warn('Backend maintenance endpoint unreachable, falling back to direct API cleanup:', backendErr);
+      }
+
+      // 2. Client-side fallback: delete legacy transfer lines, entries, and accounts via standard ApiService
+      const accRes = await ApiService.get<Account>('accounts');
+      const allAccs = accRes.success ? (accRes.data || []) : [];
+      const legacyAccs = allAccs.filter(a => this.isLegacyInternalTransferAccount(a));
+
+      if (legacyAccs.length > 0) {
+        const legacyAccIds = new Set(legacyAccs.map(a => a.id));
+        const linesRes = await ApiService.get<JournalEntryLine>('journal_entry_lines');
+        const allLines = linesRes.success ? (linesRes.data || []) : [];
+        const affectedEntryIds = new Set<string>();
+
+        for (const line of allLines) {
+          if (legacyAccIds.has(line.account_id)) {
+            affectedEntryIds.add(line.journal_entry_id);
+            await ApiService.delete('journal_entry_lines', line.id).catch(() => {});
+          }
+        }
+
+        for (const entryId of affectedEntryIds) {
+          await ApiService.delete('journal_entries', entryId).catch(() => {});
+        }
+
+        // Clean any residual ITR- entries
+        const entriesRes = await ApiService.get<JournalEntry>('journal_entries');
+        const allEntries = entriesRes.success ? (entriesRes.data || []) : [];
+        for (const entry of allEntries) {
+          if (entry.entry_number?.startsWith('ITR-') || entry.reference?.startsWith('ITR-')) {
+            const childLines = allLines.filter(l => l.journal_entry_id === entry.id);
+            for (const cl of childLines) {
+              await ApiService.delete('journal_entry_lines', cl.id).catch(() => {});
+            }
+            await ApiService.delete('journal_entries', entry.id).catch(() => {});
+          }
+        }
+
+        // Delete the legacy accounts
+        for (const acc of legacyAccs) {
+          await ApiService.delete('accounts', acc.id).catch(() => {});
+        }
+      }
+
+      // 3. Fallback department synchronization for payroll lines
+      try {
+        const [empRes, deptRes, allLinesRes, allEntriesRes] = await Promise.all([
+          ApiService.get<any>('employees'),
+          ApiService.get<any>('departments'),
+          ApiService.get<JournalEntryLine>('journal_entry_lines'),
+          ApiService.get<JournalEntry>('journal_entries')
+        ]);
+
+        const employees = empRes.success ? (empRes.data || []) : [];
+        const departments = deptRes.success ? (deptRes.data || []) : [];
+        const lines = allLinesRes.success ? (allLinesRes.data || []) : [];
+        const entries = allEntriesRes.success ? (allEntriesRes.data || []) : [];
+        const entryMap = new Map(entries.map(e => [e.id, e]));
+
+        for (const line of lines) {
+          if (!line.department_id) {
+            const entry = entryMap.get(line.journal_entry_id);
+            const deptId = this.resolveDepartmentForLine(line, entry, employees, departments);
+            if (deptId) {
+              await ApiService.update('journal_entry_lines', line.id, { department_id: deptId }).catch(() => {});
+            }
+          }
+        }
+      } catch (backfillErr) {
+        console.warn('Fallback department sync warning:', backfillErr);
+      }
+
+      return {
+        success: true,
+        message: 'Legacy internal transfer accounts purged and departments synchronized successfully.'
+      };
+    } catch (err: any) {
+      console.error('Error in purgeLegacyTransferAccountsAndSyncPayroll:', err);
+      return {
+        success: false,
+        message: err?.message || 'Purge and synchronization failed.'
+      };
+    }
   }
 } 

@@ -8,7 +8,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 DELETE jel FROM journal_entry_lines jel
 JOIN accounts a ON jel.account_id = a.id
 WHERE a.code IN ('4900', '5900') 
-   OR LOWER(a.name) LIKE '%internal transfer%';
+   OR (LOWER(a.name) LIKE '%internal transfer%' AND a.account_type IN ('revenue', 'expense'));
 
 -- 2. Delete journal entry lines for legacy ITR internal transfer entries
 DELETE jel FROM journal_entry_lines jel
@@ -38,7 +38,7 @@ DELETE FROM internal_transfers;
 -- 6. Remove legacy internal transfer accounts from Chart of Accounts
 DELETE FROM accounts 
 WHERE code IN ('4900', '5900') 
-   OR LOWER(name) LIKE '%internal transfer%';
+   OR (LOWER(name) LIKE '%internal transfer%' AND account_type IN ('revenue', 'expense'));
 
 -- 7. Backfill department_id on employees where name matches an active department
 UPDATE employees e

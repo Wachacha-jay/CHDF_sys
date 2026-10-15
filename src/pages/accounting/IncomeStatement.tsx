@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, 
   TrendingDown, 
-  ArrowRightLeft, 
   Printer, 
   Download,
   Calendar,
   Filter,
   FileSpreadsheet,
-  RotateCcw
+  RotateCcw,
+  Building2,
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
+import { FundAccountingService } from '../../services/fundAccountingService';
+import { ApiService } from '../../services/api';
+import { Department } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import toast from 'react-hot-toast';
@@ -34,32 +39,95 @@ const IncomeStatement: React.FC = () => {
   const currentYear = new Date().getFullYear();
 
   const [loading, setLoading] = useState(true);
+  const [cleaningUp, setCleaningUp] = useState(false);
   const [data, setData] = useState<IncomeStatementData | null>(null);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [dateRange, setDateRange] = useState({
     startDate: `${currentYear}-01-01`,
     endDate: new Date().toISOString().split('T')[0]
   });
 
   useEffect(() => {
+    loadDepartments();
+  }, []);
+
+  useEffect(() => {
     loadIncomeStatement();
-  }, [dateRange]);
+  }, [dateRange, selectedDepartment]);
+
+  const loadDepartments = async () => {
+    try {
+      const depts = await FundAccountingService.getDepartments();
+      setDepartments(depts || []);
+    } catch (e) {
+      console.warn('Failed to load departments', e);
+    }
+  };
+
+  const handleCleanLegacyTransfers = async () => {
+    if (!window.confirm('Are you sure you want to permanently scrap legacy internal transfer accounts (4900, 5900) and sync all historical payroll lines to their departments? This action aligns your reports with IFRS standards.')) {
+      return;
+    }
+    try {
+      setCleaningUp(true);
+      const res = await AccountingService.purgeLegacyTransferAccountsAndSyncPayroll();
+      if (res.success) {
+        toast.success(res.message);
+        await loadIncomeStatement();
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to execute cleanup');
+    } finally {
+      setCleaningUp(false);
+    }
+  };
 
   const loadIncomeStatement = async () => {
     try {
       setLoading(true);
-      // Fetch accounts and entries
-      const accountsTree = await AccountingService.getAccounts();
-      const allAccounts = AccountingService.flattenAccounts(accountsTree);
-      const entries = await AccountingService.getJournalEntries({
-        start_date: dateRange.startDate,
-        end_date: dateRange.endDate,
-        is_posted: true
-      });
+
+      // Fetch accounts, journal entries, employees, and departments concurrently
+      const [accountsTree, entries, empRes, depts] = await Promise.all([
+        AccountingService.getAccounts(),
+        AccountingService.getJournalEntries({
+          start_date: dateRange.startDate,
+          end_date: dateRange.endDate,
+          is_posted: true
+        }),
+        ApiService.get<any>('employees'),
+        departments.length > 0 ? departments : FundAccountingService.getDepartments()
+      ]);
+
+      if (depts.length > 0 && departments.length === 0) {
+        setDepartments(depts);
+      }
+
+      const allAccounts = AccountingService.flattenAccounts(accountsTree)
+        .filter(acc => !AccountingService.isLegacyInternalTransferAccount(acc));
+
+      const employees = empRes.success ? (empRes.data || []) : [];
 
       // Aggregate balances from journal entries (debits - credits)
       const balances = new Map<string, number>();
+
       entries.forEach(entry => {
         entry.lines?.forEach(line => {
+          if (AccountingService.isLegacyInternalTransferAccount(line.account)) {
+            return;
+          }
+
+          // Departmental filtering
+          if (selectedDepartment !== 'all') {
+            const lineDeptId = AccountingService.resolveDepartmentForLine(line, entry, employees, depts);
+            const isMatch = AccountingService.isDepartmentMatch(lineDeptId, selectedDepartment, depts);
+            if (!isMatch) {
+              return;
+            }
+          }
+
           const current = balances.get(line.account_id) || 0;
           balances.set(line.account_id, current + Number(line.debit_amount || 0) - Number(line.credit_amount || 0));
         });
@@ -128,6 +196,11 @@ const IncomeStatement: React.FC = () => {
     })}`;
   };
 
+  const selectedDepartmentObj = departments.find(d => d.id === selectedDepartment);
+  const selectedDeptName = selectedDepartment === 'all' 
+    ? 'All Departments (Consolidated)' 
+    : (selectedDepartmentObj?.name || 'Department');
+
   const setDatePreset = (preset: 'this_month' | 'this_year' | 'last_30' | 'all') => {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
@@ -152,6 +225,7 @@ const IncomeStatement: React.FC = () => {
     }
     const rows = [
       [`${businessName} - Income Statement`],
+      [`Department: ${selectedDeptName}`],
       [`Period: ${dateRange.startDate} to ${dateRange.endDate}`],
       [`Currency: ${currency}`],
       [],
@@ -178,7 +252,7 @@ const IncomeStatement: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `Income_Statement_${dateRange.startDate}_to_${dateRange.endDate}.csv`);
+    link.setAttribute('download', `Income_Statement_${selectedDepartment !== 'all' ? selectedDeptName.replace(/[^a-zA-Z0-9]/g, '_') + '_' : ''}${dateRange.startDate}_to_${dateRange.endDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -222,7 +296,7 @@ const IncomeStatement: React.FC = () => {
           ${logoHtml}
           <h1>${businessName}</h1>
           <h2>INCOME STATEMENT</h2>
-          <p>For the period: <strong>${new Date(dateRange.startDate).toLocaleDateString()}</strong> to <strong>${new Date(dateRange.endDate).toLocaleDateString()}</strong> &bull; Currency: <strong>${currency}</strong></p>
+          <p>Department: <strong>${selectedDeptName}</strong> &bull; Period: <strong>${new Date(dateRange.startDate).toLocaleDateString()}</strong> to <strong>${new Date(dateRange.endDate).toLocaleDateString()}</strong> &bull; Currency: <strong>${currency}</strong></p>
         </div>
 
         <div class="section">
@@ -280,6 +354,7 @@ const IncomeStatement: React.FC = () => {
         </div>
 
         <div class="footer">
+          <span>Department: ${selectedDeptName}</span>
           <span>Prepared by: ${user?.name || user?.email || 'System User'}</span>
           <span>Printed on: ${new Date().toLocaleString()}</span>
         </div>
@@ -306,9 +381,20 @@ const IncomeStatement: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Income Statement</h1>
-          <p className="text-sm text-gray-500">Profit and Loss report for {businessName}</p>
+          <p className="text-sm text-gray-500">
+            Profit and Loss statement adhering to professional accounting standards &bull; {businessName}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button 
+            onClick={handleCleanLegacyTransfers}
+            disabled={cleaningUp}
+            className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors shadow-sm disabled:opacity-50"
+            title="Clean legacy 4900/5900 internal transfer accounts and synchronize department attribution"
+          >
+            {cleaningUp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-amber-600" />}
+            Scrap Legacy Accounts & Sync Depts
+          </button>
           <button 
             onClick={handlePrint}
             className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors shadow-sm"
@@ -327,6 +413,23 @@ const IncomeStatement: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
+            {/* Department Filter */}
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-300 rounded-lg px-2.5 py-1">
+              <Building2 className="w-4 h-4 text-gray-500" />
+              <label className="text-xs font-medium text-gray-600">Department:</label>
+              <select
+                value={selectedDepartment}
+                onChange={(e) => setSelectedDepartment(e.target.value)}
+                className="bg-transparent text-sm font-semibold text-gray-800 outline-none cursor-pointer"
+              >
+                <option value="all">All Departments (Consolidated)</option>
+                {departments.map(dept => (
+                  <option key={dept.id} value={dept.id}>{dept.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range Filter */}
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-gray-400" />
               <input
@@ -387,6 +490,7 @@ const IncomeStatement: React.FC = () => {
             )}
             <h2 className="text-xl font-bold text-gray-900 uppercase tracking-wide">{businessName}</h2>
             <p className="text-gray-600 font-semibold mt-1">INCOME STATEMENT</p>
+            <p className="text-sm font-medium text-indigo-700 mt-0.5">{selectedDeptName}</p>
             <p className="text-xs text-gray-500 mt-0.5">For the period {new Date(dateRange.startDate).toLocaleDateString()} to {new Date(dateRange.endDate).toLocaleDateString()} &bull; Currency: {currency}</p>
           </div>
 
@@ -394,12 +498,16 @@ const IncomeStatement: React.FC = () => {
             {/* Revenue */}
             <div>
               <h3 className="font-bold text-gray-900 border-b border-gray-900 mb-2">REVENUE</h3>
-              {data?.revenue.map((item, idx) => (
-                <div key={idx} className="flex justify-between py-1 text-sm">
-                  <span>{item.name}</span>
-                  <span>{formatCurrency(item.amount)}</span>
-                </div>
-              ))}
+              {data?.revenue.length === 0 ? (
+                <div className="py-2 text-sm text-gray-400 italic">No revenue recognized for this selection</div>
+              ) : (
+                data?.revenue.map((item, idx) => (
+                  <div key={idx} className="flex justify-between py-1 text-sm">
+                    <span>{item.name}</span>
+                    <span>{formatCurrency(item.amount)}</span>
+                  </div>
+                ))
+              )}
               <div className="flex justify-between py-2 font-bold border-t border-gray-300 mt-2">
                 <span>Total Revenue</span>
                 <span>{formatCurrency(data?.totalRevenue || 0)}</span>
@@ -409,12 +517,16 @@ const IncomeStatement: React.FC = () => {
             {/* COGS */}
             <div>
               <h3 className="font-bold text-gray-900 border-b border-gray-900 mb-2">COST OF GOODS SOLD</h3>
-              {data?.costOfGoodsSold.map((item, idx) => (
-                <div key={idx} className="flex justify-between py-1 text-sm">
-                  <span>{item.name}</span>
-                  <span>({formatCurrency(item.amount)})</span>
-                </div>
-              ))}
+              {data?.costOfGoodsSold.length === 0 ? (
+                <div className="py-2 text-sm text-gray-400 italic">No direct cost of sales recorded</div>
+              ) : (
+                data?.costOfGoodsSold.map((item, idx) => (
+                  <div key={idx} className="flex justify-between py-1 text-sm">
+                    <span>{item.name}</span>
+                    <span>({formatCurrency(item.amount)})</span>
+                  </div>
+                ))
+              )}
               <div className="flex justify-between py-2 font-bold border-t border-gray-300 mt-2">
                 <span>Total Cost of Goods Sold</span>
                 <span>({formatCurrency(data?.totalCOGS || 0)})</span>
@@ -430,12 +542,16 @@ const IncomeStatement: React.FC = () => {
             {/* Operating Expenses */}
             <div>
               <h3 className="font-bold text-gray-900 border-b border-gray-900 mb-2">OPERATING EXPENSES</h3>
-              {data?.operatingExpenses.map((item, idx) => (
-                <div key={idx} className="flex justify-between py-1 text-sm">
-                  <span>{item.name}</span>
-                  <span>{formatCurrency(item.amount)}</span>
-                </div>
-              ))}
+              {data?.operatingExpenses.length === 0 ? (
+                <div className="py-2 text-sm text-gray-400 italic">No operating expenses recorded for this selection</div>
+              ) : (
+                data?.operatingExpenses.map((item, idx) => (
+                  <div key={idx} className="flex justify-between py-1 text-sm">
+                    <span>{item.name}</span>
+                    <span>{formatCurrency(item.amount)}</span>
+                  </div>
+                ))
+              )}
               <div className="flex justify-between py-2 font-bold border-t border-gray-300 mt-2">
                 <span>Total Operating Expenses</span>
                 <span>{formatCurrency(data?.totalExpenses || 0)}</span>
@@ -444,7 +560,7 @@ const IncomeStatement: React.FC = () => {
 
             {/* Net Income */}
             <div className="flex justify-between py-4 font-bold text-xl border-y-4 border-double border-gray-900 bg-gray-50 px-4">
-              <span>NET INCOME</span>
+              <span>NET INCOME / SURPLUS</span>
               <span className={data?.netIncome && data.netIncome >= 0 ? 'text-green-600' : 'text-red-600'}>
                 {formatCurrency(data?.netIncome || 0)}
               </span>

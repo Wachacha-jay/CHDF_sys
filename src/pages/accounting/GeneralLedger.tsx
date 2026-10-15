@@ -1,7 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Search, Filter, Download, Plus, Printer, FileSpreadsheet, RotateCcw } from 'lucide-react';
+import { 
+  BookOpen, 
+  Search, 
+  Filter, 
+  Download, 
+  Plus, 
+  Printer, 
+  FileSpreadsheet, 
+  RotateCcw,
+  Building2,
+  Trash2,
+  RefreshCw
+} from 'lucide-react';
 import { AccountingService } from '../../services/accountingService';
-import { JournalEntry, Account } from '../../types';
+import { FundAccountingService } from '../../services/fundAccountingService';
+import { ApiService } from '../../services/api';
+import { JournalEntry, Account, Department, JournalEntryLine } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { format } from 'date-fns';
@@ -13,7 +27,11 @@ const GeneralLedger: React.FC = () => {
   const { user } = useAuthContext();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [cleaningUp, setCleaningUp] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('');
   const currentYear = new Date().getFullYear();
@@ -32,15 +50,20 @@ const GeneralLedger: React.FC = () => {
     try {
       setLoading(true);
 
-      // Fetch accounts and all journal entries
-      const [accountsData, entriesData] = await Promise.all([
+      const [accountsData, entriesData, deptsData, empsData] = await Promise.all([
         AccountingService.getAccounts({ is_active: true }),
-        AccountingService.getJournalEntries()
+        AccountingService.getJournalEntries(),
+        FundAccountingService.getDepartments(),
+        ApiService.get<any>('employees')
       ]);
 
-      const flatAccounts = AccountingService.flattenAccounts(accountsData || []);
+      const flatAccounts = AccountingService.flattenAccounts(accountsData || [])
+        .filter(acc => !AccountingService.isLegacyInternalTransferAccount(acc));
+
       setAccounts(flatAccounts);
       setEntries(entriesData || []);
+      setDepartments(deptsData || []);
+      setEmployees(empsData.success ? (empsData.data || []) : []);
     } catch (error: any) {
       console.error('Error fetching data:', error);
       toast.error('Failed to load general ledger data');
@@ -49,37 +72,131 @@ const GeneralLedger: React.FC = () => {
     }
   };
 
+  const handleCleanLegacyTransfers = async () => {
+    if (!window.confirm('Are you sure you want to permanently scrap legacy internal transfer accounts (4900, 5900) and sync all historical payroll lines to their departments? This action aligns your reports with IFRS standards.')) {
+      return;
+    }
+    try {
+      setCleaningUp(true);
+      const res = await AccountingService.purgeLegacyTransferAccountsAndSyncPayroll();
+      if (res.success) {
+        toast.success(res.message);
+        await fetchData();
+      } else {
+        toast.error(res.message);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to execute cleanup');
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  const selectedAccountObj = accounts.find(a => a.id === selectedAccount);
+  const selectedDeptObj = departments.find(d => d.id === selectedDepartment);
+  const selectedDeptName = selectedDepartment === 'all' ? 'All Departments (Consolidated)' : (selectedDeptObj?.name || 'Department');
+
+  // Account normal balance check:
+  // Asset (1xxx) & Expense (5xxx): normal balance is Debit (DR)
+  // Liability (2xxx), Equity (3xxx), Revenue (4xxx): normal balance is Credit (CR)
+  const isDebitNormal = (acc?: Account) => {
+    if (!acc) return true;
+    const type = (acc.account_type || '').toLowerCase();
+    const code = (acc.code || '').trim();
+    if (type === 'asset' || type === 'expense' || code.startsWith('1') || code.startsWith('5')) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to resolve department for any line
+  const getLineDeptId = (line: JournalEntryLine, entry: JournalEntry): string | undefined => {
+    return AccountingService.resolveDepartmentForLine(line, entry, employees, departments);
+  };
+
+  const isLineInSelectedDept = (line: JournalEntryLine, entry: JournalEntry): boolean => {
+    if (selectedDepartment === 'all') return true;
+    const lineDeptId = getLineDeptId(line, entry);
+    return AccountingService.isDepartmentMatch(lineDeptId, selectedDepartment, departments);
+  };
+
+  // Opening Balance calculation for selected account prior to dateFrom
+  const calculateOpeningBalance = (): number => {
+    if (!selectedAccount || !dateFrom) return 0;
+    let balance = 0;
+    const debitNormal = isDebitNormal(selectedAccountObj);
+
+    entries.forEach(entry => {
+      const entryDate = String(entry.entry_date || '').slice(0, 10);
+      if (entryDate < dateFrom && entry.is_posted) {
+        entry.lines?.forEach(line => {
+          if (line.account_id === selectedAccount && isLineInSelectedDept(line, entry)) {
+            const dr = Number(line.debit_amount || 0);
+            const cr = Number(line.credit_amount || 0);
+            if (debitNormal) {
+              balance += (dr - cr);
+            } else {
+              balance += (cr - dr);
+            }
+          }
+        });
+      }
+    });
+
+    return balance;
+  };
+
+  const openingBalance = calculateOpeningBalance();
+
+  // Filter entries for the report period and criteria
   const filteredEntries = entries.filter(entry => {
     const matchesSearch = !searchTerm || 
       (entry.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (entry.entry_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (entry.reference || '').toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesAccount = !selectedAccount ||
-      entry.lines?.some(line => line.account_id === selectedAccount);
-
     const entryDate = String(entry.entry_date || '').slice(0, 10);
     const matchesDateFrom = !dateFrom || entryDate >= dateFrom;
     const matchesDateTo = !dateTo || entryDate <= dateTo;
 
-    return matchesSearch && matchesAccount && matchesDateFrom && matchesDateTo;
+    // Must match account if account selected
+    const matchesAccount = !selectedAccount ||
+      entry.lines?.some(line => line.account_id === selectedAccount);
+
+    // Must match department if department selected
+    const matchesDepartment = selectedDepartment === 'all' ||
+      entry.lines?.some(line => isLineInSelectedDept(line, entry));
+
+    return matchesSearch && matchesAccount && matchesDateFrom && matchesDateTo && matchesDepartment;
   });
 
+  // Calculate totals
   const totalDebits = filteredEntries.reduce((sum, entry) => {
     if (selectedAccount) {
-      const lineDebits = entry.lines?.filter(l => l.account_id === selectedAccount).reduce((s, l) => s + Number(l.debit_amount || 0), 0) || 0;
+      const lineDebits = entry.lines
+        ?.filter(l => l.account_id === selectedAccount && isLineInSelectedDept(l, entry))
+        .reduce((s, l) => s + Number(l.debit_amount || 0), 0) || 0;
       return sum + lineDebits;
     }
-    return sum + Number(entry.total_debit || 0);
+    const filteredLines = entry.lines?.filter(l => isLineInSelectedDept(l, entry)) || [];
+    return sum + filteredLines.reduce((s, l) => s + Number(l.debit_amount || 0), 0);
   }, 0);
 
   const totalCredits = filteredEntries.reduce((sum, entry) => {
     if (selectedAccount) {
-      const lineCredits = entry.lines?.filter(l => l.account_id === selectedAccount).reduce((s, l) => s + Number(l.credit_amount || 0), 0) || 0;
+      const lineCredits = entry.lines
+        ?.filter(l => l.account_id === selectedAccount && isLineInSelectedDept(l, entry))
+        .reduce((s, l) => s + Number(l.credit_amount || 0), 0) || 0;
       return sum + lineCredits;
     }
-    return sum + Number(entry.total_credit || 0);
+    const filteredLines = entry.lines?.filter(l => isLineInSelectedDept(l, entry)) || [];
+    return sum + filteredLines.reduce((s, l) => s + Number(l.credit_amount || 0), 0);
   }, 0);
+
+  const debitNormal = isDebitNormal(selectedAccountObj);
+  const closingBalance = selectedAccount 
+    ? (debitNormal ? (openingBalance + totalDebits - totalCredits) : (openingBalance + totalCredits - totalDebits))
+    : 0;
 
   const setDatePreset = (preset: 'this_month' | 'this_year' | 'last_30' | 'all') => {
     const today = new Date();
@@ -105,8 +222,9 @@ const GeneralLedger: React.FC = () => {
   const resetFilters = () => {
     setSearchTerm('');
     setSelectedAccount('');
-    setDateFrom('');
-    setDateTo('');
+    setSelectedDepartment('all');
+    setDateFrom(`${currentYear}-01-01`);
+    setDateTo(new Date().toISOString().split('T')[0]);
   };
 
   const handleExportCSV = () => {
@@ -117,61 +235,89 @@ const GeneralLedger: React.FC = () => {
 
     const rows: (string | number)[][] = [
       [`${businessName} - General Ledger Report`],
-      [`Period: ${dateFrom || 'All'} to ${dateTo || 'All'}`],
+      [`Department: ${selectedDeptName}`],
+      [`Account: ${selectedAccountObj ? `${selectedAccountObj.code} - ${selectedAccountObj.name}` : 'All Accounts'}`],
+      [`Period: ${dateFrom || 'Beginning'} to ${dateTo || 'Present'}`],
       [`Currency: ${currency}`],
-      [],
-      ['Entry Number', 'Date', 'Reference', 'Entry Description', 'Account Code', 'Account Name', 'Line Memo', `Debit (${currency})`, `Credit (${currency})`, 'Status']
+      []
     ];
 
-    filteredEntries.forEach(entry => {
+    if (selectedAccount) {
+      rows.push(['OPENING BALANCE', '', '', '', '', '', '', '', (debitNormal ? (openingBalance >= 0 ? openingBalance.toFixed(2) : `(${Math.abs(openingBalance).toFixed(2)})`) : (openingBalance >= 0 ? openingBalance.toFixed(2) : `(${Math.abs(openingBalance).toFixed(2)})`))]);
+      rows.push([]);
+    }
+
+    rows.push(['Entry Number', 'Date', 'Reference', 'Entry Description', 'Account Code', 'Account Name', 'Line Memo', 'Department', `Debit (${currency})`, `Credit (${currency})`, ...(selectedAccount ? [`Running Balance (${currency})`] : []), 'Status']);
+
+    let currentRunning = openingBalance;
+
+    // Sort entries chronologically for running balance
+    const sortedEntries = [...filteredEntries].sort((a, b) => 
+      String(a.entry_date || '').localeCompare(String(b.entry_date || ''))
+    );
+
+    sortedEntries.forEach(entry => {
       const dateStr = String(entry.entry_date || '').slice(0, 10);
       const status = entry.is_posted ? 'Posted' : 'Draft';
       const ref = `"${(entry.reference || '').replace(/"/g, '""')}"`;
       const desc = `"${(entry.description || '').replace(/"/g, '""')}"`;
 
-      if (entry.lines && entry.lines.length > 0) {
-        entry.lines.forEach(line => {
-          const accCode = line.account?.code || '';
-          const accName = `"${(line.account?.name || '').replace(/"/g, '""')}"`;
-          const lineMemo = `"${(line.description || '').replace(/"/g, '""')}"`;
-          rows.push([
-            entry.entry_number,
-            dateStr,
-            ref,
-            desc,
-            accCode,
-            accName,
-            lineMemo,
-            Number(line.debit_amount || 0).toFixed(2),
-            Number(line.credit_amount || 0).toFixed(2),
-            status
-          ]);
-        });
-      } else {
+      const validLines = (entry.lines || []).filter(line => {
+        if (selectedAccount && line.account_id !== selectedAccount) return false;
+        return isLineInSelectedDept(line, entry);
+      });
+
+      validLines.forEach(line => {
+        const accCode = line.account?.code || '';
+        const accName = `"${(line.account?.name || '').replace(/"/g, '""')}"`;
+        const lineMemo = `"${(line.description || '').replace(/"/g, '""')}"`;
+        const lineDeptId = getLineDeptId(line, entry);
+        const deptName = departments.find(d => d.id === lineDeptId)?.name || 'General';
+
+        const dr = Number(line.debit_amount || 0);
+        const cr = Number(line.credit_amount || 0);
+
+        if (selectedAccount) {
+          if (debitNormal) {
+            currentRunning += (dr - cr);
+          } else {
+            currentRunning += (cr - dr);
+          }
+        }
+
         rows.push([
           entry.entry_number,
           dateStr,
           ref,
           desc,
-          '',
-          '',
-          '',
-          Number(entry.total_debit || 0).toFixed(2),
-          Number(entry.total_credit || 0).toFixed(2),
+          accCode,
+          accName,
+          lineMemo,
+          `"${deptName}"`,
+          dr.toFixed(2),
+          cr.toFixed(2),
+          ...(selectedAccount ? [currentRunning.toFixed(2)] : []),
           status
         ]);
-      }
+      });
     });
 
     rows.push([]);
-    rows.push(['TOTALS', '', '', '', '', '', '', totalDebits.toFixed(2), totalCredits.toFixed(2), '']);
+    rows.push([
+      'TOTALS / CLOSING', 
+      '', '', '', '', '', '', '', 
+      totalDebits.toFixed(2), 
+      totalCredits.toFixed(2), 
+      ...(selectedAccount ? [closingBalance.toFixed(2)] : []), 
+      ''
+    ]);
 
     const csvContent = rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `General_Ledger_${dateFrom || 'start'}_to_${dateTo || 'end'}.csv`);
+    link.setAttribute('download', `General_Ledger_${selectedDepartment !== 'all' ? selectedDeptName.replace(/[^a-zA-Z0-9]/g, '_') + '_' : ''}${dateFrom || 'start'}_to_${dateTo || 'end'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -190,6 +336,11 @@ const GeneralLedger: React.FC = () => {
       toast.error('Unable to open print window. Please allow popups.');
       return;
     }
+
+    let runningBal = openingBalance;
+    const sortedEntries = [...filteredEntries].sort((a, b) => 
+      String(a.entry_date || '').localeCompare(String(b.entry_date || ''))
+    );
 
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -214,6 +365,7 @@ const GeneralLedger: React.FC = () => {
           tr.entry-header { background: #f8fafc; font-weight: 600; }
           tr.line-item td { color: #475569; font-size: 10.5px; }
           tr.totals-row td { font-weight: 800; background: #0f172a; color: #fff; border-color: #0f172a; font-size: 12px; }
+          .badge { display: inline-block; padding: 2px 5px; font-size: 9px; font-weight: 600; border-radius: 4px; background: #e2e8f0; color: #334155; }
           .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; }
         </style>
       </head>
@@ -222,55 +374,88 @@ const GeneralLedger: React.FC = () => {
           ${logoHtml}
           <h1>${businessName}</h1>
           <h2>GENERAL LEDGER REPORT</h2>
-          <p>Period: <strong>${dateFrom || 'Beginning'}</strong> to <strong>${dateTo || 'Present'}</strong> &bull; Currency: <strong>${currency}</strong> &bull; Total Entries: <strong>${filteredEntries.length}</strong></p>
+          <p>
+            Department: <strong>${selectedDeptName}</strong> &bull; 
+            Account: <strong>${selectedAccountObj ? `${selectedAccountObj.code} - ${selectedAccountObj.name}` : 'All Accounts'}</strong><br/>
+            Period: <strong>${dateFrom || 'Beginning'}</strong> to <strong>${dateTo || 'Present'}</strong> &bull; 
+            Currency: <strong>${currency}</strong>
+          </p>
         </div>
 
         <table>
           <thead>
             <tr>
               <th style="width: 12%;">Entry / Date</th>
-              <th style="width: 15%;">Reference</th>
-              <th style="width: 43%;">Account / Description</th>
+              <th style="width: 14%;">Reference</th>
+              <th style="width: 32%;">Account & Description</th>
+              <th style="width: 12%;">Department</th>
               <th class="right" style="width: 15%;">Debit (${currency})</th>
               <th class="right" style="width: 15%;">Credit (${currency})</th>
+              ${selectedAccount ? `<th class="right" style="width: 15%;">Balance (${currency})</th>` : ''}
             </tr>
           </thead>
           <tbody>
-            ${filteredEntries.map(entry => {
+            ${selectedAccount ? `
+              <tr style="background: #eef2ff; font-weight: 700;">
+                <td colspan="4"><strong>OPENING BALANCE (As of ${dateFrom || 'Start'})</strong></td>
+                <td class="right">—</td>
+                <td class="right">—</td>
+                <td class="right"><strong>${currency} ${openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></td>
+              </tr>
+            ` : ''}
+            ${sortedEntries.map(entry => {
               const entryDate = String(entry.entry_date || '').slice(0, 10);
-              const headerRow = `
-                <tr class="entry-header">
-                  <td><strong>${entry.entry_number}</strong><br/><span style="color:#64748b; font-size:9.5px;">${entryDate}</span></td>
-                  <td>${entry.reference || '—'}</td>
-                  <td><strong>${entry.description || '—'}</strong></td>
-                  <td class="right"><strong>${currency} ${Number(entry.total_debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></td>
-                  <td class="right"><strong>${currency} ${Number(entry.total_credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></td>
-                </tr>
-              `;
-              const linesRows = (entry.lines || []).map(line => `
-                <tr class="line-item">
-                  <td></td>
-                  <td></td>
-                  <td style="padding-left: 20px;">
-                    &bull; <strong>${line.account?.code || ''}</strong> - ${line.account?.name || ''}
-                    ${line.description ? `<div style="font-size:9.5px; color:#64748b;">${line.description}</div>` : ''}
-                  </td>
-                  <td class="right">${Number(line.debit_amount || 0) > 0 ? `${currency} ${Number(line.debit_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
-                  <td class="right">${Number(line.credit_amount || 0) > 0 ? `${currency} ${Number(line.credit_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
-                </tr>
-              `).join('');
-              return headerRow + linesRows;
+              const validLines = (entry.lines || []).filter(line => {
+                if (selectedAccount && line.account_id !== selectedAccount) return false;
+                return isLineInSelectedDept(line, entry);
+              });
+
+              if (validLines.length === 0) return '';
+
+              return validLines.map(line => {
+                const lineDeptId = getLineDeptId(line, entry);
+                const deptName = departments.find(d => d.id === lineDeptId)?.name || 'General';
+                const dr = Number(line.debit_amount || 0);
+                const cr = Number(line.credit_amount || 0);
+
+                if (selectedAccount) {
+                  if (debitNormal) {
+                    runningBal += (dr - cr);
+                  } else {
+                    runningBal += (cr - dr);
+                  }
+                }
+
+                return `
+                  <tr class="line-item">
+                    <td><strong>${entry.entry_number}</strong><br/><span style="color:#64748b; font-size:9.5px;">${entryDate}</span></td>
+                    <td>${entry.reference || '—'}</td>
+                    <td>
+                      <strong>${line.account?.code || ''}</strong> - ${line.account?.name || ''}
+                      <div style="font-size:9.5px; color:#475569;">${line.description || entry.description || ''}</div>
+                    </td>
+                    <td><span class="badge">${deptName}</span></td>
+                    <td class="right">${dr > 0 ? `${currency} ${dr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
+                    <td class="right">${cr > 0 ? `${currency} ${cr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}</td>
+                    ${selectedAccount ? `<td class="right font-bold">${currency} ${runningBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>` : ''}
+                  </tr>
+                `;
+              }).join('');
             }).join('')}
+          </tbody>
+          <tfoot>
             <tr class="totals-row">
-              <td colspan="3">ANNUAL GRAND TOTALS (${filteredEntries.length} entries)</td>
+              <td colspan="4">TOTALS / CLOSING BALANCE</td>
               <td class="right">${currency} ${totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
               <td class="right">${currency} ${totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              ${selectedAccount ? `<td class="right">${currency} ${closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>` : ''}
             </tr>
-          </tbody>
+          </tfoot>
         </table>
 
         <div class="footer">
-          <span>Prepared by: ${user?.name || user?.email || 'Authorized User'}</span>
+          <span>Department: ${selectedDeptName}</span>
+          <span>Prepared by: ${user?.name || user?.email || 'System User'}</span>
           <span>Printed on: ${new Date().toLocaleString()}</span>
         </div>
       </body>
@@ -283,65 +468,78 @@ const GeneralLedger: React.FC = () => {
     }, 400);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
+  // Build sorted flat list of active lines with running balance for the UI table
+  let runningBalanceCounter = openingBalance;
+  const sortedEntries = [...filteredEntries].sort((a, b) => 
+    String(a.entry_date || '').localeCompare(String(b.entry_date || ''))
+  );
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center">
-            <BookOpen className="w-6 h-6 mr-2 text-indigo-600" />
-            General Ledger
-          </h1>
-          <p className="text-gray-600 mt-1">View and export all financial journal entries for {businessName}</p>
+          <h1 className="text-2xl font-bold text-gray-900">General Ledger</h1>
+          <p className="text-sm text-gray-500">
+            Audit-grade double-entry general ledger with departmental running balances &bull; {businessName}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button 
+            onClick={handleCleanLegacyTransfers}
+            disabled={cleaningUp}
+            className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors shadow-sm disabled:opacity-50"
+            title="Clean legacy 4900/5900 internal transfer accounts and synchronize department attribution"
+          >
+            {cleaningUp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-amber-600" />}
+            Scrap Legacy Accounts & Sync Depts
+          </button>
           <button 
             onClick={handlePrint}
-            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors flex items-center text-sm font-medium shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors shadow-sm"
           >
-            <Printer className="w-4 h-4 mr-2 text-gray-600" />
-            Print / PDF
+            <Printer className="w-4 h-4 text-gray-600" /> Print / PDF
           </button>
           <button 
             onClick={handleExportCSV}
-            className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors flex items-center text-sm font-medium shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
           >
-            <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Export CSV
+            <FileSpreadsheet className="w-4 h-4" /> Export CSV
           </button>
-          <button 
+          <button
             onClick={() => setShowModal(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center text-sm font-medium shadow-sm ml-2"
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
           >
-            <Plus className="w-4 h-4 mr-1.5" />
-            New Entry
+            <Plus className="w-4 h-4" /> New Entry
           </button>
         </div>
       </div>
 
-      <JournalEntryModal 
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        onSuccess={() => {
-          fetchData();
-          setShowModal(false);
-        }}
-      />
+      {/* Filter Bar */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {/* Department Filter */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase flex items-center gap-1">
+              <Building2 className="w-3.5 h-3.5 text-gray-500" /> Department
+            </label>
+            <select
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-medium"
+            >
+              <option value="all">All Departments (Consolidated)</option>
+              {departments.map(dept => (
+                <option key={dept.id} value={dept.id}>{dept.name}</option>
+              ))}
+            </select>
+          </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Search Box */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">Search</label>
             <div className="relative">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 value={searchTerm}
@@ -352,6 +550,7 @@ const GeneralLedger: React.FC = () => {
             </div>
           </div>
 
+          {/* Account Filter */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">Account</label>
             <select
@@ -368,6 +567,7 @@ const GeneralLedger: React.FC = () => {
             </select>
           </div>
 
+          {/* Date From */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">From Date</label>
             <input
@@ -378,6 +578,7 @@ const GeneralLedger: React.FC = () => {
             />
           </div>
 
+          {/* Date To */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase">To Date</label>
             <input
@@ -428,121 +629,188 @@ const GeneralLedger: React.FC = () => {
         </div>
       </div>
 
-      {/* Summary */}
+      {/* Summary KPI Cards */}
       <div className={`grid grid-cols-1 ${selectedAccount ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-6`}>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Total Entries</h3>
+          <h3 className="text-xs uppercase font-semibold text-gray-500 mb-1">Total Entries</h3>
           <p className="text-2xl font-bold text-gray-900">{filteredEntries.length}</p>
+          <span className="text-xs text-indigo-600 font-medium">{selectedDeptName}</span>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">
-            {selectedAccount ? 'Account Debits' : 'Total Debits'}
+          <h3 className="text-xs uppercase font-semibold text-gray-500 mb-1">
+            {selectedAccount ? 'Account Period Debits' : 'Total Period Debits'}
           </h3>
           <p className="text-2xl font-bold text-green-600">{currency} {totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <span className="text-xs text-gray-400">Total inflows / debits</span>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">
-            {selectedAccount ? 'Account Credits' : 'Total Credits'}
+          <h3 className="text-xs uppercase font-semibold text-gray-500 mb-1">
+            {selectedAccount ? 'Account Period Credits' : 'Total Period Credits'}
           </h3>
           <p className="text-2xl font-bold text-red-600">{currency} {totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <span className="text-xs text-gray-400">Total outflows / credits</span>
         </div>
         {selectedAccount && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Net Position</h3>
+            <h3 className="text-xs uppercase font-semibold text-gray-500 mb-1">Closing Balance</h3>
             <p className="text-2xl font-bold text-indigo-600">
-              {currency} {Math.abs(totalDebits - totalCredits).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {currency} {closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               <span className="text-xs font-semibold ml-1.5 text-gray-500 uppercase">
-                {totalDebits >= totalCredits ? 'DR' : 'CR'}
+                {debitNormal ? (closingBalance >= 0 ? 'DR' : 'CR') : (closingBalance >= 0 ? 'CR' : 'DR')}
               </span>
             </p>
+            <span className="text-xs text-gray-400">
+              Opening: {currency} {openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Journal Entries Table */}
+      {/* Journal Entries & General Ledger Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Entry #
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Entry / Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Description
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                   Reference
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Debit
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Account & Description
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Credit
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Department
                 </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Debit ({currency})
+                </th>
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  Credit ({currency})
+                </th>
+                {selectedAccount && (
+                  <th className="px-5 py-3 text-right text-xs font-semibold text-indigo-700 uppercase tracking-wider">
+                    Running Balance ({currency})
+                  </th>
+                )}
+                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
                   Status
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEntries.map((entry) => (
-                <React.Fragment key={entry.id}>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                      {entry.entry_number}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {format(new Date(entry.entry_date), 'MMM dd, yyyy')}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      {entry.description}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {entry.reference || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600 font-medium">
-                      {currency} {entry.total_debit.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-600 font-medium">
-                      {currency} {entry.total_credit.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${entry.is_posted
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                        {entry.is_posted ? 'Posted' : 'Draft'}
-                      </span>
-                    </td>
-                  </tr>
-                  {/* Entry Lines */}
-                  {entry.lines?.map((line) => (
-                    <tr key={line.id} className="bg-gray-50">
-                      <td className="px-6 py-2"></td>
-                      <td className="px-6 py-2"></td>
-                        <td className="px-6 py-2 text-sm text-gray-600 pl-8">
-                        {line.account?.code} - {line.account?.name}
-                        {line.description && (
-                          <div className="text-xs text-gray-500 mt-1">{line.description}</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-2"></td>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-right text-gray-600">
-                        {line.debit_amount > 0 ? `${currency} ${line.debit_amount.toLocaleString()}` : '-'}
-                      </td>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-right text-gray-600">
-                        {line.credit_amount > 0 ? `${currency} ${line.credit_amount.toLocaleString()}` : '-'}
-                      </td>
-                      <td className="px-6 py-2"></td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              ))}
+              {/* If account selected, render Opening Balance row */}
+              {selectedAccount && (
+                <tr className="bg-indigo-50/50 font-semibold border-b border-indigo-100">
+                  <td className="px-5 py-3 text-sm text-indigo-900" colSpan={4}>
+                    Opening Balance (As of {dateFrom || 'Start'})
+                  </td>
+                  <td className="px-5 py-3 text-right text-sm text-gray-400">—</td>
+                  <td className="px-5 py-3 text-right text-sm text-gray-400">—</td>
+                  <td className="px-5 py-3 text-right text-sm text-indigo-900 font-bold">
+                    {currency} {openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-3 text-center text-xs text-indigo-600 uppercase font-bold">
+                    {debitNormal ? (openingBalance >= 0 ? 'DR' : 'CR') : (openingBalance >= 0 ? 'CR' : 'DR')}
+                  </td>
+                </tr>
+              )}
+
+              {sortedEntries.map((entry) => {
+                const entryDate = String(entry.entry_date || '').slice(0, 10);
+                const validLines = (entry.lines || []).filter(line => {
+                  if (selectedAccount && line.account_id !== selectedAccount) return false;
+                  return isLineInSelectedDept(line, entry);
+                });
+
+                if (validLines.length === 0) return null;
+
+                return (
+                  <React.Fragment key={entry.id}>
+                    {validLines.map((line) => {
+                      const lineDeptId = getLineDeptId(line, entry);
+                      const deptName = departments.find(d => d.id === lineDeptId)?.name || 'General';
+                      const dr = Number(line.debit_amount || 0);
+                      const cr = Number(line.credit_amount || 0);
+
+                      if (selectedAccount) {
+                        if (debitNormal) {
+                          runningBalanceCounter += (dr - cr);
+                        } else {
+                          runningBalanceCounter += (cr - dr);
+                        }
+                      }
+
+                      return (
+                        <tr key={line.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-5 py-3 whitespace-nowrap text-sm">
+                            <span className="font-semibold text-blue-600">{entry.entry_number}</span>
+                            <div className="text-xs text-gray-500">{entryDate}</div>
+                          </td>
+                          <td className="px-5 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">
+                            {entry.reference || '—'}
+                          </td>
+                          <td className="px-5 py-3 text-sm text-gray-900">
+                            <div className="font-semibold text-gray-900">
+                              <span className="text-gray-500 font-mono mr-1.5">{line.account?.code}</span>
+                              {line.account?.name}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              {line.description || entry.description}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-xs">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
+                              {deptName}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-green-700">
+                            {dr > 0 ? `${currency} ${dr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
+                          </td>
+                          <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-red-700">
+                            {cr > 0 ? `${currency} ${cr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
+                          </td>
+                          {selectedAccount && (
+                            <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-bold text-indigo-700">
+                              {currency} {runningBalanceCounter.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                          )}
+                          <td className="px-4 py-3 whitespace-nowrap text-center">
+                            <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                              entry.is_posted ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {entry.is_posted ? 'Posted' : 'Draft'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
+            {/* Table Footer Totals */}
+            <tfoot className="bg-gray-100 font-bold border-t-2 border-gray-300">
+              <tr>
+                <td className="px-5 py-3 text-sm text-gray-900" colSpan={4}>
+                  TOTALS / CLOSING SUMMARY
+                </td>
+                <td className="px-5 py-3 text-right text-sm text-green-700 font-extrabold">
+                  {currency} {totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </td>
+                <td className="px-5 py-3 text-right text-sm text-red-700 font-extrabold">
+                  {currency} {totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </td>
+                {selectedAccount && (
+                  <td className="px-5 py-3 text-right text-sm text-indigo-800 font-extrabold">
+                    {currency} {closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                )}
+                <td></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
 
@@ -550,10 +818,24 @@ const GeneralLedger: React.FC = () => {
           <div className="text-center py-12">
             <BookOpen className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No journal entries found</h3>
-            <p className="text-gray-500">Create your first journal entry to get started.</p>
+            <p className="text-gray-500">Try adjusting your filters or department selection.</p>
           </div>
         )}
       </div>
+
+      {showModal && (
+        <JournalEntryModal
+          isOpen={showModal}
+          onClose={() => {
+            setShowModal(false);
+            fetchData();
+          }}
+          onSuccess={() => {
+            setShowModal(false);
+            fetchData();
+          }}
+        />
+      )}
     </div>
   );
 };
