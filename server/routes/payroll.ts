@@ -147,7 +147,8 @@ async function postPayrollAccrualJournalEntry(
   saccoWelfare: number,
   otherDeductions: number,
   createdBy: string,
-  empLabel?: string
+  empLabel?: string,
+  departmentId?: string | null
 ) {
   const accountCodes = ['5210', '2125', '2121', '2122', '2123', '2124', '2126', '2120'];
   const [accountRows]: any = await connection.query(
@@ -201,9 +202,9 @@ async function postPayrollAccrualJournalEntry(
   for (const line of lines) {
     const lineId = crypto.randomUUID();
     await connection.query(
-      `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [lineId, journalId, line.account_id, line.description, line.debit, line.credit]
+      `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [lineId, journalId, line.account_id, line.description, line.debit, line.credit, departmentId || null]
     );
   }
 
@@ -224,7 +225,8 @@ async function postPayrollDisbursementJournalEntry(
   reference: string,
   notes: string,
   createdBy: string,
-  empLabel: string
+  empLabel: string,
+  departmentId?: string | null
 ) {
   // Find Net Salary Payable account (2125)
   const [netSalaryRows]: any = await connection.query(
@@ -258,16 +260,16 @@ async function postPayrollDisbursementJournalEntry(
 
   // Line 1: Debit Net Salary Payable (clearing the liability)
   await connection.query(
-    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-     VALUES (?, ?, ?, ?, ?, 0)`,
-    [crypto.randomUUID(), journalId, netSalaryPayableId, `Salary disbursement: ${empLabel}`, netPay]
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id)
+     VALUES (?, ?, ?, ?, ?, 0, ?)`,
+    [crypto.randomUUID(), journalId, netSalaryPayableId, `Salary disbursement: ${empLabel}`, netPay, departmentId || null]
   );
 
   // Line 2: Credit Bank / Cash Asset Account (money outflow)
   await connection.query(
-    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount)
-     VALUES (?, ?, ?, ?, 0, ?)`,
-    [crypto.randomUUID(), journalId, paymentAccountId, `Paid from [${payAcc.code}] ${payAcc.name} to ${empLabel}`, netPay]
+    `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id)
+     VALUES (?, ?, ?, ?, 0, ?, ?)`,
+    [crypto.randomUUID(), journalId, paymentAccountId, `Paid from [${payAcc.code}] ${payAcc.name} to ${empLabel}`, netPay, departmentId || null]
   );
 
   return journalId;
@@ -802,7 +804,8 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
 
     const [rows]: any = await connection.query(
       `SELECT pr.*, pp.period_name, pp.pay_date as period_pay_date,
-              e.first_name, e.last_name, e.code as employee_code
+              e.first_name, e.last_name, e.code as employee_code,
+              e.department_id as emp_department_id, e.department as emp_department
        FROM payroll_runs pr
        JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
        JOIN employees e ON pr.employee_id = e.id
@@ -820,6 +823,22 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
       await connection.rollback();
       res.status(400).json({ success: false, error: 'This payroll run has already been paid' });
       return;
+    }
+
+    // Resolve employee department ID for general ledger departmental reporting
+    let deptId = run.emp_department_id || null;
+    if (!deptId && run.emp_department) {
+      try {
+        const [deptRows]: any = await connection.query(
+          'SELECT id FROM departments WHERE LOWER(name) = LOWER(?) LIMIT 1',
+          [run.emp_department]
+        );
+        if (deptRows.length > 0) {
+          deptId = deptRows[0].id;
+        }
+      } catch (deptErr) {
+        console.warn('Could not resolve department by name:', deptErr);
+      }
     }
 
     const payDate = payment_date || run.period_pay_date || new Date().toISOString().split('T')[0];
@@ -884,7 +903,7 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
       return;
     }
 
-    // 1. Post Accrual Journal Entry if not yet created
+    // 1. Post Accrual Journal Entry if not yet created (with department_id tagged on lines)
     let accrualJournalId = run.journal_entry_id;
     if (!accrualJournalId) {
       accrualJournalId = await postPayrollAccrualJournalEntry(
@@ -900,11 +919,12 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
         Number(run.sacco_welfare_deduction || 0),
         Number(run.other_deductions),
         createdBy,
-        empLabel
+        empLabel,
+        deptId
       );
     }
 
-    // 2. Post Disbursement Journal Entries (Debit 2125 Net Salary Payable, Credit Chosen Account)
+    // 2. Post Disbursement Journal Entries (Debit 2125 Net Salary Payable, Credit Chosen Account, with department_id)
     const disbursementJournalIds: string[] = [];
     for (const pl of paymentLines) {
       const disbDescNote = pl.notes || notes || '';
@@ -917,7 +937,8 @@ router.put('/runs/:id/pay', authenticate, async (req, res): Promise<void> => {
         pl.payment_reference,
         disbDescNote,
         createdBy,
-        empLabel
+        empLabel,
+        deptId
       );
       disbursementJournalIds.push(disbJournalId);
 

@@ -163,9 +163,7 @@ async function ensureInKindSchema() {
         (UUID(), '1300', 'Inter-departmental Receivables', 'asset', 1),
         (UUID(), '2300', 'Inter-departmental Payables', 'liability', 1),
         (UUID(), '3810', 'Inter-departmental Grants Out (Equity)', 'equity', 1),
-        (UUID(), '3820', 'Inter-departmental Grants In (Equity)', 'equity', 1),
-        (UUID(), '4900', 'Internal Transfer In (Revenue)', 'revenue', 1),
-        (UUID(), '5900', 'Internal Transfer Out (Expense)', 'expense', 1)
+        (UUID(), '3820', 'Inter-departmental Grants In (Equity)', 'equity', 1)
     `);
 
     // 9. Ensure internal_transfers columns (transfer_type, from_bank_account_id, to_bank_account_id)
@@ -646,6 +644,130 @@ async function ensureInKindSchema() {
     } catch (unpostMigErr) {
       console.warn('Error running unpost migration in ensureInKindSchema:', unpostMigErr);
     }
+
+    // 13. One-time cleanup: Scrapping legacy internal transfer accounts & records, backfilling payroll department IDs
+    try {
+      const [mig29Rows]: any = await pool.query("SELECT id FROM _migrations WHERE name = '029_scrapping_internal_transfer_accounts_and_backfill_payroll'");
+      if (!mig29Rows || mig29Rows.length === 0) {
+        console.log('Executing one-time cleanup for internal transfer accounts & backfilling payroll departments...');
+        await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+          // a. Delete journal entry lines referencing accounts 4900, 5900 or internal transfer revenue/expense
+          await pool.query(`
+            DELETE jel FROM journal_entry_lines jel
+            JOIN accounts a ON jel.account_id = a.id
+            WHERE a.code IN ('4900', '5900') 
+               OR LOWER(a.name) LIKE '%internal transfer%'
+          `);
+
+          // b. Delete journal entry lines for legacy ITR internal transfer vouchers
+          await pool.query(`
+            DELETE jel FROM journal_entry_lines jel
+            JOIN journal_entries je ON jel.journal_entry_id = je.id
+            WHERE je.reference LIKE 'ITR-%' 
+               OR je.entry_number LIKE 'ITR-%'
+               OR LOWER(je.description) LIKE '%internal transfer%'
+               OR LOWER(je.description) LIKE '%interdepartmental loan%'
+               OR LOWER(je.description) LIKE '%interdepartmental grant%'
+          `);
+
+          // c. Delete the journal entries themselves
+          await pool.query(`
+            DELETE FROM journal_entries 
+            WHERE reference LIKE 'ITR-%' 
+               OR entry_number LIKE 'ITR-%'
+               OR LOWER(description) LIKE '%internal transfer%'
+               OR LOWER(description) LIKE '%interdepartmental loan%'
+               OR LOWER(description) LIKE '%interdepartmental grant%'
+          `);
+
+          // d. Clean up orphan journal entries that have no lines left
+          await pool.query(`
+            DELETE je FROM journal_entries je
+            LEFT JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+            WHERE jel.id IS NULL
+          `);
+
+          // e. Clear internal_transfers table for clean restart
+          await pool.query("DELETE FROM internal_transfers");
+
+          // f. Delete legacy internal transfer revenue and expense accounts from accounts table
+          await pool.query(`
+            DELETE FROM accounts 
+            WHERE code IN ('4900', '5900') 
+               OR LOWER(name) LIKE '%internal transfer%'
+          `);
+
+          // g. Backfill department_id on employees where missing
+          try {
+            await pool.query(`
+              UPDATE employees e
+              JOIN departments d ON LOWER(e.department) = LOWER(d.name)
+              SET e.department_id = d.id
+              WHERE e.department_id IS NULL AND e.department IS NOT NULL
+            `);
+          } catch (empUpErr) {
+            console.warn('Could not backfill employees.department_id:', empUpErr);
+          }
+
+          // h. Backfill journal_entry_lines.department_id for all existing payroll accrual and disbursement entries
+          // 1) From payroll_runs.journal_entry_id
+          await pool.query(`
+            UPDATE journal_entry_lines jel
+            JOIN payroll_runs pr ON jel.journal_entry_id = pr.journal_entry_id
+            JOIN employees e ON pr.employee_id = e.id
+            SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+            WHERE jel.department_id IS NULL
+          `);
+
+          // 2) From payroll_runs.payment_journal_entry_id
+          await pool.query(`
+            UPDATE journal_entry_lines jel
+            JOIN payroll_runs pr ON jel.journal_entry_id = pr.payment_journal_entry_id
+            JOIN employees e ON pr.employee_id = e.id
+            SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+            WHERE jel.department_id IS NULL
+          `);
+
+          // 3) From payroll_disbursements.journal_entry_id
+          await pool.query(`
+            UPDATE journal_entry_lines jel
+            JOIN payroll_disbursements pd ON jel.journal_entry_id = pd.journal_entry_id
+            JOIN payroll_runs pr ON pd.payroll_run_id = pr.id
+            JOIN employees e ON pr.employee_id = e.id
+            SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+            WHERE jel.department_id IS NULL
+          `);
+
+          // 4) For any journal entries where entry_number or description matches employee code or employee name
+          await pool.query(`
+            UPDATE journal_entry_lines jel
+            JOIN journal_entries je ON jel.journal_entry_id = je.id
+            JOIN employees e ON (
+              (e.code IS NOT NULL AND e.code != '' AND je.description LIKE CONCAT('%', e.code, '%'))
+              OR (e.first_name IS NOT NULL AND e.last_name IS NOT NULL AND je.description LIKE CONCAT('%', e.first_name, '%', e.last_name, '%'))
+            )
+            SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+            WHERE jel.department_id IS NULL
+          `);
+
+          // 5) If any Salary Expense (5210/5200) line still has no department_id, assign to first active department or Administration
+          await pool.query(`
+            UPDATE journal_entry_lines jel
+            JOIN accounts a ON jel.account_id = a.id
+            SET jel.department_id = (SELECT id FROM departments ORDER BY (LOWER(name) = 'administration') DESC LIMIT 1)
+            WHERE jel.department_id IS NULL AND a.code IN ('5210', '5200')
+          `);
+
+          await pool.query("INSERT IGNORE INTO _migrations (name) VALUES ('029_scrapping_internal_transfer_accounts_and_backfill_payroll')");
+          console.log('✅ Internal transfer accounts cleanup & payroll department backfill completed successfully.');
+        } finally {
+          await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('Error running internal transfer cleanup / payroll backfill migration:', cleanErr);
+    }
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
   } finally {
@@ -753,6 +875,145 @@ router.post('/internal_transfers/unpost-all', authenticate, async (req, res): Pr
     console.error('Error unposting all internal transfers:', error);
     res.status(500).json({ success: false, error: error.message });
   } finally {
+    connection.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ON-DEMAND CLEANUP ENDPOINT: Scrap internal transfer accounts & backfill payroll departments
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/maintenance/cleanup-transfers-and-fix-payroll', authenticate, async (req, res): Promise<void> => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+
+    // 1. Delete journal entry lines referencing accounts 4900, 5900 or internal transfer revenue/expense
+    const [delLinesResult]: any = await connection.query(`
+      DELETE jel FROM journal_entry_lines jel
+      JOIN accounts a ON jel.account_id = a.id
+      WHERE a.code IN ('4900', '5900') 
+         OR LOWER(a.name) LIKE '%internal transfer%'
+    `);
+
+    // 2. Delete journal entry lines for legacy ITR internal transfer vouchers
+    const [delItrLinesResult]: any = await connection.query(`
+      DELETE jel FROM journal_entry_lines jel
+      JOIN journal_entries je ON jel.journal_entry_id = je.id
+      WHERE je.reference LIKE 'ITR-%' 
+         OR je.entry_number LIKE 'ITR-%'
+         OR LOWER(je.description) LIKE '%internal transfer%'
+         OR LOWER(je.description) LIKE '%interdepartmental loan%'
+         OR LOWER(je.description) LIKE '%interdepartmental grant%'
+    `);
+
+    // 3. Delete the journal entries themselves
+    const [delJesResult]: any = await connection.query(`
+      DELETE FROM journal_entries 
+      WHERE reference LIKE 'ITR-%' 
+         OR entry_number LIKE 'ITR-%'
+         OR LOWER(description) LIKE '%internal transfer%'
+         OR LOWER(description) LIKE '%interdepartmental loan%'
+         OR LOWER(description) LIKE '%interdepartmental grant%'
+    `);
+
+    // 4. Clean up orphan journal entries that have no lines left
+    const [delOrphansResult]: any = await connection.query(`
+      DELETE je FROM journal_entries je
+      LEFT JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+      WHERE jel.id IS NULL
+    `);
+
+    // 5. Clear internal_transfers table
+    const [delTransfersResult]: any = await connection.query("DELETE FROM internal_transfers");
+
+    // 6. Delete legacy internal transfer revenue and expense accounts from accounts table
+    const [delAccsResult]: any = await connection.query(`
+      DELETE FROM accounts 
+      WHERE code IN ('4900', '5900') 
+         OR LOWER(name) LIKE '%internal transfer%'
+    `);
+
+    // 7. Backfill department_id on employees where missing
+    let empUpdated = 0;
+    try {
+      const [empUpResult]: any = await connection.query(`
+        UPDATE employees e
+        JOIN departments d ON LOWER(e.department) = LOWER(d.name)
+        SET e.department_id = d.id
+        WHERE e.department_id IS NULL AND e.department IS NOT NULL
+      `);
+      empUpdated = empUpResult?.affectedRows || 0;
+    } catch (_) {}
+
+    // 8. Backfill journal_entry_lines.department_id for all existing payroll accrual and disbursement entries
+    let payrollLinesUpdated = 0;
+    const [up1]: any = await connection.query(`
+      UPDATE journal_entry_lines jel
+      JOIN payroll_runs pr ON jel.journal_entry_id = pr.journal_entry_id
+      JOIN employees e ON pr.employee_id = e.id
+      SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+      WHERE jel.department_id IS NULL
+    `);
+    payrollLinesUpdated += up1?.affectedRows || 0;
+
+    const [up2]: any = await connection.query(`
+      UPDATE journal_entry_lines jel
+      JOIN payroll_runs pr ON jel.journal_entry_id = pr.payment_journal_entry_id
+      JOIN employees e ON pr.employee_id = e.id
+      SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+      WHERE jel.department_id IS NULL
+    `);
+    payrollLinesUpdated += up2?.affectedRows || 0;
+
+    const [up3]: any = await connection.query(`
+      UPDATE journal_entry_lines jel
+      JOIN payroll_disbursements pd ON jel.journal_entry_id = pd.journal_entry_id
+      JOIN payroll_runs pr ON pd.payroll_run_id = pr.id
+      JOIN employees e ON pr.employee_id = e.id
+      SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+      WHERE jel.department_id IS NULL
+    `);
+    payrollLinesUpdated += up3?.affectedRows || 0;
+
+    const [up4]: any = await connection.query(`
+      UPDATE journal_entry_lines jel
+      JOIN journal_entries je ON jel.journal_entry_id = je.id
+      JOIN employees e ON (
+        (e.code IS NOT NULL AND e.code != '' AND je.description LIKE CONCAT('%', e.code, '%'))
+        OR (e.first_name IS NOT NULL AND e.last_name IS NOT NULL AND je.description LIKE CONCAT('%', e.first_name, '%', e.last_name, '%'))
+      )
+      SET jel.department_id = COALESCE(e.department_id, (SELECT id FROM departments WHERE LOWER(name) = LOWER(e.department) LIMIT 1))
+      WHERE jel.department_id IS NULL
+    `);
+    payrollLinesUpdated += up4?.affectedRows || 0;
+
+    const [up5]: any = await connection.query(`
+      UPDATE journal_entry_lines jel
+      JOIN accounts a ON jel.account_id = a.id
+      SET jel.department_id = (SELECT id FROM departments ORDER BY (LOWER(name) = 'administration') DESC LIMIT 1)
+      WHERE jel.department_id IS NULL AND a.code IN ('5210', '5200')
+    `);
+    payrollLinesUpdated += up5?.affectedRows || 0;
+
+    await connection.query("INSERT IGNORE INTO _migrations (name) VALUES ('029_scrapping_internal_transfer_accounts_and_backfill_payroll')");
+
+    res.json({
+      success: true,
+      message: 'Internal transfer accounts scrapped and payroll department tags backfilled successfully.',
+      details: {
+        accountsDeleted: delAccsResult?.affectedRows || 0,
+        transferLinesDeleted: (delLinesResult?.affectedRows || 0) + (delItrLinesResult?.affectedRows || 0),
+        journalEntriesDeleted: (delJesResult?.affectedRows || 0) + (delOrphansResult?.affectedRows || 0),
+        internalTransfersCleared: delTransfersResult?.affectedRows || 0,
+        employeesUpdated: empUpdated,
+        payrollLinesTaggedWithDepartment: payrollLinesUpdated
+      }
+    });
+  } catch (error: any) {
+    console.error('Error executing cleanup and department backfill:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
     connection.release();
   }
 });

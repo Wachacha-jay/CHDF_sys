@@ -10,10 +10,11 @@ import {
   FileText, Calendar, Printer, Filter, DollarSign, ArrowUpRight, 
   ArrowDownLeft, ArrowRightLeft, Users, GraduationCap, Heart, HelpCircle,
   Trash2, Download, RotateCcw, Building2, CheckCircle2, X, Landmark,
-  Wallet, PieChart, BarChart3, TrendingUp, AlertCircle
+  Wallet, PieChart, BarChart3, TrendingUp, AlertCircle, Sparkles, RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { Department, FundAccount, Child, Donor, JournalEntry, InternalTransfer, Account } from '../../types';
+import { apiClient } from '../../lib/api-client';
+import type { Department, FundAccount, Child, Donor, JournalEntry, InternalTransfer, Account, Employee, JournalEntryLine } from '../../types';
 import { BankBalanceOverview } from '../../components/fund-accounting/BankBalanceOverview';
 
 export type ReportTab = 'activities' | 'income-statement' | 'fees' | 'donations' | 'transfers' | 'treasury';
@@ -72,10 +73,12 @@ const FundReports: React.FC = () => {
   // Dropdown Master Data
   const [funds, setFunds] = useState<FundAccount[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [children, setChildren] = useState<Child[]>([]);
   const [donors, setDonors] = useState<Donor[]>([]);
   const [allAccounts, setAllAccounts] = useState<Account[]>([]);
   const [bankBalances, setBankBalances] = useState<Array<{ account: Account; balance: number; currency: string }>>([]);
+  const [cleaningUp, setCleaningUp] = useState(false);
 
   // Loaded Transaction Data
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
@@ -85,17 +88,19 @@ const FundReports: React.FC = () => {
   // Master Data Loader
   const loadMasterData = async () => {
     try {
-      const [fList, dList, cList, donorList, settings, rawAccounts, liveBankBalances] = await Promise.all([
+      const [fList, dList, cList, donorList, settings, rawAccounts, liveBankBalances, empResponse] = await Promise.all([
         FundAccountingService.getFundAccounts(),
         FundAccountingService.getDepartments(),
         FundAccountingService.getChildren(),
         FundAccountingService.getDonors(),
         BusinessSettingsService.getSettings(),
         AccountingService.getAccounts(),
-        FundAccountingService.getBankAndCashBalances()
+        FundAccountingService.getBankAndCashBalances(),
+        ApiService.get<Employee>('employees')
       ]);
       setFunds(fList || []);
       setDepartments(dList || []);
+      setEmployees(empResponse?.success && empResponse.data ? empResponse.data : []);
       setChildren(cList || []);
       setDonors(donorList || []);
       setBusinessSettings(settings);
@@ -109,6 +114,65 @@ const FundReports: React.FC = () => {
   const accountMap = useMemo(() => {
     return new Map<string, Account>(allAccounts.map(a => [a.id, a]));
   }, [allAccounts]);
+
+  // Trigger on-demand maintenance to clean up legacy internal transfer accounts and backfill payroll departments
+  const handleCleanupTransfersAndFixPayroll = async () => {
+    if (!window.confirm('Run database cleanup to permanently remove legacy internal transfer accounts and sync payroll department entries?')) return;
+    setCleaningUp(true);
+    try {
+      const res: any = await apiClient.post('/maintenance/cleanup-transfers-and-fix-payroll');
+      if (res?.success) {
+        toast.success(res.message || 'Cleanup completed successfully');
+        await loadMasterData();
+        await loadReportData();
+      } else {
+        toast.error(res?.error || 'Cleanup failed');
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || err.message || 'Failed to execute cleanup');
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  // Helper to resolve department ID for any journal entry line (handles line, sibling lines, or payroll employee matching)
+  const resolveLineDepartment = (line: JournalEntryLine, entry: JournalEntry): string | undefined => {
+    // 1. Direct department_id on line
+    if (line.department_id) return line.department_id;
+    // 2. Department ID on any sibling line in the entry
+    const siblingDeptId = entry.lines?.find(l => l.department_id)?.department_id;
+    if (siblingDeptId) return siblingDeptId;
+    // 3. Match from employee list for payroll entries
+    const fullText = `${entry.description || ''} ${line.description || ''} ${entry.reference || ''}`.toLowerCase();
+    for (const emp of employees) {
+      const codeMatch = emp.code && fullText.includes(emp.code.toLowerCase());
+      const nameMatch = emp.first_name && emp.last_name && 
+        fullText.includes(`${emp.first_name.toLowerCase()} ${emp.last_name.toLowerCase()}`);
+      if (codeMatch || nameMatch) {
+        if (emp.department_id) return emp.department_id;
+        if (emp.department) {
+          const d = departments.find(dept => dept.name.toLowerCase() === emp.department?.toLowerCase());
+          if (d) return d.id;
+        }
+      }
+    }
+    // 4. Department name mentioned in description
+    for (const d of departments) {
+      if (d.name && fullText.includes(d.name.toLowerCase())) {
+        return d.id;
+      }
+    }
+    return undefined;
+  };
+
+  const isDeptMatch = (lineDeptId: string | undefined): boolean => {
+    if (!selectedDept) return true;
+    if (!lineDeptId) return false;
+    if (lineDeptId === selectedDept) return true;
+    const selObj = departments.find(d => d.id === selectedDept);
+    if (selObj && (selObj.name.toLowerCase() === lineDeptId.toLowerCase() || selObj.id === lineDeptId)) return true;
+    return false;
+  };
 
   // Helper to normalize any date string to YYYY-MM-DD
   const normalizeDate = (d: any): string => {
@@ -288,15 +352,19 @@ const FundReports: React.FC = () => {
         const lineAccount = line.account || accountMap.get(line.account_id);
         const code = lineAccount?.code || '';
         const type = (lineAccount?.account_type || '').toLowerCase();
+        const accName = lineAccount?.name || '';
 
-        // Tagged fund/dept on either the line or parent entry lines
+        // Exclude legacy internal transfer revenue and expense accounts
+        if (code === '4900' || code === '5900' || accName.toLowerCase().includes('internal transfer')) return;
+
+        // Tagged fund/dept on either the line, parent entry lines, or employee
         const entryFundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
-        const entryDeptId = line.department_id || entry.lines?.find(l => l.department_id)?.department_id;
+        const entryDeptId = resolveLineDepartment(line, entry);
         const entryChildId = line.child_id || entry.lines?.find(l => l.child_id)?.child_id;
         const entryDonorId = line.donor_id || entry.lines?.find(l => l.donor_id)?.donor_id;
 
         if (selectedFund && entryFundId !== selectedFund) return;
-        if (selectedDept && entryDeptId !== selectedDept) return;
+        if (!isDeptMatch(entryDeptId)) return;
         if (selectedChild && entryChildId !== selectedChild) return;
         if (selectedDonor && entryDonorId !== selectedDonor) return;
 
@@ -316,8 +384,7 @@ const FundReports: React.FC = () => {
                               code === '4260' ? 'In-Kind Donations' :
                               code === '4220' ? 'Temporarily Restricted Donations' :
                               code === '4210' ? 'Unrestricted Donations' :
-                              code === '4200' ? 'General Donations' :
-                              code === '4900' ? 'Inter-Departmental Allocation Inflow' : 'Operating Revenue';
+                              code === '4200' ? 'General Donations' : 'Operating Revenue';
           const streamName = lineAccount?.name || defaultName;
 
           if (!revenueStreamsMap.has(streamKey)) {
@@ -351,7 +418,7 @@ const FundReports: React.FC = () => {
               amount: cr > 0 ? cr : -dr,
               netAmount: cr - dr,
               fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
-              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
+              dept: departments.find(d => d.id === entryDeptId || d.name.toLowerCase() === (entryDeptId || '').toLowerCase())?.name || 'General Admin'
             });
           }
         } else if (isExpense) {
@@ -388,7 +455,7 @@ const FundReports: React.FC = () => {
               amount: dr > 0 ? dr : -cr,
               netAmount: dr - cr,
               fund: funds.find(f => f.id === entryFundId)?.name || 'General Operations',
-              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin'
+              dept: departments.find(d => d.id === entryDeptId || d.name.toLowerCase() === (entryDeptId || '').toLowerCase())?.name || 'General Admin'
             });
           }
         }
@@ -425,7 +492,7 @@ const FundReports: React.FC = () => {
       totalExpense: totalNetExpense, 
       netChange 
     };
-  }, [journalEntries, accountMap, selectedFund, selectedDept, selectedChild, selectedDonor, funds, departments]);
+  }, [journalEntries, accountMap, selectedFund, selectedDept, selectedChild, selectedDonor, funds, departments, employees]);
 
   // Tab: Professional Accounting Income Statement Computed (Departmental & Consolidated)
   const incomeStatementData = useMemo(() => {
@@ -472,14 +539,17 @@ const FundReports: React.FC = () => {
         const name = lineAccount?.name || 'Operating Account';
         const category = lineAccount?.category || '';
 
-        // Tagged fund/dept on either the line or parent entry lines
+        // Exclude legacy internal transfer revenue and expense accounts
+        if (code === '4900' || code === '5900' || name.toLowerCase().includes('internal transfer')) return;
+
+        // Tagged fund/dept on either the line, parent entry lines, or employee
         const entryFundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
-        const entryDeptId = line.department_id || entry.lines?.find(l => l.department_id)?.department_id;
+        const entryDeptId = resolveLineDepartment(line, entry);
         const entryChildId = line.child_id || entry.lines?.find(l => l.child_id)?.child_id;
         const entryDonorId = line.donor_id || entry.lines?.find(l => l.donor_id)?.donor_id;
 
         // Apply filters
-        if (selectedDept && entryDeptId !== selectedDept) return;
+        if (!isDeptMatch(entryDeptId)) return;
         if (selectedFund && entryFundId !== selectedFund) return;
         if (selectedChild && entryChildId !== selectedChild) return;
         if (selectedDonor && entryDonorId !== selectedDonor) return;
@@ -523,7 +593,7 @@ const FundReports: React.FC = () => {
               credit: cr,
               debit: dr,
               net: cr - dr,
-              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin',
+              dept: departments.find(d => d.id === entryDeptId || d.name.toLowerCase() === (entryDeptId || '').toLowerCase())?.name || 'General Admin',
               fund: funds.find(f => f.id === entryFundId)?.name || 'General Fund'
             });
           }
@@ -566,7 +636,7 @@ const FundReports: React.FC = () => {
               debit: dr,
               credit: cr,
               net: dr - cr,
-              dept: departments.find(d => d.id === entryDeptId)?.name || 'General Admin',
+              dept: departments.find(d => d.id === entryDeptId || d.name.toLowerCase() === (entryDeptId || '').toLowerCase())?.name || 'General Admin',
               fund: funds.find(f => f.id === entryFundId)?.name || 'General Fund'
             });
           }
@@ -659,7 +729,7 @@ const FundReports: React.FC = () => {
       transactionLines,
       selectedDeptName
     };
-  }, [journalEntries, accountMap, selectedDept, selectedFund, selectedChild, selectedDonor, departments, funds]);
+  }, [journalEntries, accountMap, selectedDept, selectedFund, selectedChild, selectedDonor, departments, funds, employees]);
 
   // Tab 2: School Fee Records Computed
   const schoolFeeRecords = useMemo(() => {
@@ -689,12 +759,12 @@ const FundReports: React.FC = () => {
         // Child tag from line or sibling lines
         const childId = line.child_id || entry.lines?.find(l => l.child_id)?.child_id;
         const fundId = line.fund_id || entry.lines?.find(l => l.fund_id)?.fund_id;
-        const deptId = line.department_id || entry.lines?.find(l => l.department_id)?.department_id;
+        const deptId = resolveLineDepartment(line, entry);
 
         // Apply filters
         if (selectedChild && childId !== selectedChild) return;
         if (selectedFund && fundId !== selectedFund) return;
-        if (selectedDept && deptId !== selectedDept) return;
+        if (!isDeptMatch(deptId)) return;
 
         // Deduplicate per journal entry line
         const uniqueKey = `${entry.id}-${line.id || lineAccountCode}`;
@@ -719,13 +789,13 @@ const FundReports: React.FC = () => {
           type: isInflow ? 'Inflow (Guardian Pay)' : 'Outflow (NGO Pay School)',
           amount,
           fund: funds.find(f => f.id === fundId)?.name || 'General Education',
-          dept: departments.find(d => d.id === deptId)?.name || 'Education'
+          dept: departments.find(d => d.id === deptId || d.name.toLowerCase() === (deptId || '').toLowerCase())?.name || 'Education'
         });
       });
     });
 
     return feeRecords;
-  }, [journalEntries, selectedChild, selectedFund, selectedDept, children, funds, departments]);
+  }, [journalEntries, selectedChild, selectedFund, selectedDept, children, funds, departments, employees]);
 
   // Tab 3: Donations Records Computed
   const filteredDonations = useMemo(() => {
@@ -733,9 +803,10 @@ const FundReports: React.FC = () => {
       if (selectedDonor && don.donor_id !== selectedDonor) return false;
       if (selectedFund && don.fund_id !== selectedFund) return false;
       if (selectedChild && don.restricted_to_child_id !== selectedChild) return false;
+      if (!isDeptMatch(don.department_id)) return false;
       return true;
     });
-  }, [donationsList, selectedDonor, selectedFund, selectedChild]);
+  }, [donationsList, selectedDonor, selectedFund, selectedChild, selectedDept, departments]);
 
   // Tab 4: Internal Transfers Computed
   const filteredTransfers = useMemo(() => {
@@ -2904,6 +2975,15 @@ const FundReports: React.FC = () => {
                 Reset Filters
               </button>
             )}
+            <button
+              onClick={handleCleanupTransfersAndFixPayroll}
+              disabled={cleaningUp}
+              title="Scraps legacy internal transfer (revenue/expense) accounts and synchronizes department tags on payroll GL records"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold border border-amber-200 ml-auto cursor-pointer transition-colors"
+            >
+              <Sparkles size={13} className={cleaningUp ? 'animate-spin text-amber-600' : 'text-amber-600'} />
+              <span>{cleaningUp ? 'Cleaning Data...' : 'Scrap Legacy Accounts & Sync Depts'}</span>
+            </button>
           </div>
         </div>
         
