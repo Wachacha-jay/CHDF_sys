@@ -22,13 +22,29 @@ import {
   HeartHandshake,
   Heart,
   Baby,
-  Activity
+  Activity,
+  Layers
 } from 'lucide-react';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 
 interface SidebarProps {
   onClose?: () => void;
+}
+
+interface NavChild {
+  name: string;
+  href: string;
+  icon: any;
+  permission?: string | string[];
+}
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: any;
+  permission?: string | string[];
+  children?: NavChild[];
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
@@ -48,41 +64,52 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     }
   };
 
-  const navigation = [
-    { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-    { name: 'Point of Sale', href: '/pos', icon: ShoppingCart },
-    { name: 'Inventory', href: '/inventory', icon: Package },
-    { name: 'Expenses', href: '/expenses', icon: DollarSign },
-    { name: 'Invoices', href: '/invoices', icon: Receipt },
-    { name: 'Sales Reports', href: '/reports/sales', icon: TrendingUp },
+  const hasPermission = (permission?: string | string[]): boolean => {
+    if (!permission) return true;
+    if (user?.role === 'Super Admin') return true;
+    const userPerms = user?.permissions || [];
+    if (Array.isArray(permission)) {
+      return permission.some(p => userPerms.includes(p));
+    }
+    return userPerms.includes(permission);
+  };
+
+  const navigation: NavItem[] = [
+    { name: 'Dashboard', href: '/', icon: LayoutDashboard, permission: 'dashboard_view' },
+    { name: 'Point of Sale', href: '/pos', icon: ShoppingCart, permission: 'pos_view' },
+    { name: 'Inventory', href: '/inventory', icon: Package, permission: 'inventory_view' },
+    { name: 'Expenses', href: '/expenses', icon: DollarSign, permission: 'expenses_view' },
+    { name: 'Invoices', href: '/invoices', icon: Receipt, permission: 'invoices_view' },
+    { name: 'Sales Reports', href: '/reports/sales', icon: TrendingUp, permission: 'reports_view' },
     {
       name: 'Accounting', href: '/accounting', icon: DollarSign, children: [
-        { name: 'Dashboard', href: '/accounting', icon: LayoutDashboard },
-        { name: 'General Ledger', href: '/accounting/general-ledger', icon: BookOpen },
-        { name: 'Balance Sheet', href: '/accounting/balance-sheet', icon: BarChart3 },
-        { name: 'Trial Balance', href: '/accounting/trial-balance', icon: Receipt },
-        { name: 'Income Statement', href: '/accounting/income-statement', icon: TrendingUp },
-        { name: 'Cash Flow', href: '/accounting/cash-flow', icon: ArrowRightLeft },
+        { name: 'Dashboard', href: '/accounting', icon: LayoutDashboard, permission: 'accounting_view' },
+        { name: 'General Ledger', href: '/accounting/general-ledger', icon: BookOpen, permission: 'accounting_view' },
+        { name: 'Balance Sheet', href: '/accounting/balance-sheet', icon: BarChart3, permission: 'accounting_view' },
+        { name: 'Trial Balance', href: '/accounting/trial-balance', icon: Receipt, permission: 'accounting_view' },
+        { name: 'Income Statement', href: '/accounting/income-statement', icon: TrendingUp, permission: 'accounting_view' },
+        { name: 'Cash Flow', href: '/accounting/cash-flow', icon: ArrowRightLeft, permission: 'accounting_view' },
+        { name: 'Bank Reconciliation', href: '/accounting/bank-reconciliation', icon: Layers, permission: 'bank_reconciliation_view' },
       ]
     },
     {
       name: 'Fund Accounting', href: '/funds', icon: HeartHandshake, children: [
-        { name: 'Fund Dashboard', href: '/funds', icon: LayoutDashboard },
-        { name: 'Child Support', href: '/funds/children', icon: Baby },
-        { name: 'Donations', href: '/funds/donations', icon: Heart },
-        { name: 'Internal Transfers', href: '/funds/transfers', icon: ArrowRightLeft },
-        { name: 'NGO Billing', href: '/funds/billing', icon: Receipt },
-        { name: 'Reports Workspace', href: '/funds/reports', icon: BookOpen },
-        { name: 'Dept. & Funds Setup', href: '/funds/setup', icon: Building2 },
+        { name: 'Fund Dashboard', href: '/funds', icon: LayoutDashboard, permission: 'fund_accounting_view' },
+        { name: 'Child Support', href: '/funds/children', icon: Baby, permission: ['child_support_view', 'school_fees_view'] },
+        { name: 'Donations', href: '/funds/donations', icon: Heart, permission: 'donations_view' },
+        { name: 'Internal Transfers', href: '/funds/transfers', icon: ArrowRightLeft, permission: 'fund_accounting_manage' },
+        { name: 'NGO Billing', href: '/funds/billing', icon: Receipt, permission: 'fund_accounting_manage' },
+        { name: 'Reports Workspace', href: '/funds/reports', icon: BookOpen, permission: 'fund_reports_view' },
+        { name: 'Dept. & Funds Setup', href: '/funds/setup', icon: Building2, permission: 'fund_accounting_manage' },
       ]
     },
 
-    { name: 'Customers', href: '/customers', icon: Users },
-    { name: 'Employees', href: '/employees', icon: UserCheck },
-    { name: 'Suppliers', href: '/suppliers', icon: Truck },
+    { name: 'Customers', href: '/customers', icon: Users, permission: 'customers_view' },
+    { name: 'Employees', href: '/employees', icon: UserCheck, permission: 'employees_view' },
+    { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'suppliers_view' },
     { name: 'User Management', href: '/users', icon: Shield, permission: 'user_management_manage' },
-    { name: 'Audit Log', href: '/audit-log', icon: Activity },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Audit Log', href: '/audit-log', icon: Activity, permission: 'audit_logs_view' },
+    { name: 'Settings', href: '/settings', icon: Settings, permission: 'settings_manage' },
   ];
 
   const handleLogout = async () => {
@@ -113,17 +140,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
       <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto custom-scrollbar">
         {navigation.map((item) => {
-          // Check for permission if item has one
-          if (item.permission && user?.role !== 'Super Admin') {
-            if (!user?.permissions?.includes(item.permission)) {
-              return null;
-            }
-          }
-
           const hasChildren = item.children && item.children.length > 0;
-          const isOpen = openMenus.includes(item.name);
 
           if (hasChildren) {
+            // Filter child links by user permissions
+            const visibleChildren = item.children!.filter(child => hasPermission(child.permission));
+            if (visibleChildren.length === 0) {
+              return null;
+            }
+
+            const isOpen = openMenus.includes(item.name);
+
             return (
               <div key={item.name} className="space-y-1">
                 <button
@@ -143,7 +170,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
                 
                 <div className={`overflow-hidden transition-all duration-300 ${isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
                   <div className="ml-6 border-l border-slate-700 pl-2 mt-1 space-y-1">
-                    {item.children!.map((child) => (
+                    {visibleChildren.map((child) => (
                       <NavLink
                         key={child.name}
                         to={child.href}
@@ -163,6 +190,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
                 </div>
               </div>
             );
+          }
+
+          // Single navigation item check
+          if (!hasPermission(item.permission)) {
+            return null;
           }
 
           return (

@@ -768,6 +768,49 @@ async function ensureInKindSchema() {
     } catch (cleanErr) {
       console.warn('Error running internal transfer cleanup / payroll backfill migration:', cleanErr);
     }
+
+    // 13. Ensure RBAC Permissions for School Fees, Fund Accounting, Audit Logs, Invoices, Bank Reconciliation
+    try {
+      const requiredPermissions = [
+        { name: 'audit_logs_view', module: 'Audit Log', action: 'view', description: 'View system audit trails and security activity logs' },
+        { name: 'fund_accounting_view', module: 'Fund Accounting', action: 'view', description: 'Access Fund Accounting module and dashboard' },
+        { name: 'fund_accounting_manage', module: 'Fund Accounting', action: 'manage', description: 'Manage departments, funds setup, billing and transfers' },
+        { name: 'school_fees_view', module: 'Fund Accounting', action: 'view', description: 'View child school fee payments, balances and fee structures' },
+        { name: 'school_fees_manage', module: 'Fund Accounting', action: 'manage', description: 'Record, process and manage child school fee payments' },
+        { name: 'child_support_view', module: 'Fund Accounting', action: 'view', description: 'View enrolled child support profiles and records' },
+        { name: 'child_support_manage', module: 'Fund Accounting', action: 'manage', description: 'Enroll, update and manage child support beneficiaries' },
+        { name: 'donations_view', module: 'Fund Accounting', action: 'view', description: 'View donations and donor contributions' },
+        { name: 'donations_manage', module: 'Fund Accounting', action: 'manage', description: 'Record, edit and manage donor contributions' },
+        { name: 'fund_reports_view', module: 'Fund Accounting', action: 'view', description: 'View fund accounting and project financial reports' },
+        { name: 'invoices_view', module: 'Invoices', action: 'view', description: 'View sales and purchase invoices' },
+        { name: 'invoices_manage', module: 'Invoices', action: 'manage', description: 'Create, edit and manage invoices and payments' },
+        { name: 'bank_reconciliation_view', module: 'Accounting', action: 'view', description: 'Access bank reconciliation workspaces' },
+        { name: 'bank_reconciliation_manage', module: 'Accounting', action: 'manage', description: 'Perform and approve bank reconciliations' }
+      ];
+
+      for (const p of requiredPermissions) {
+        await pool.query(
+          `INSERT INTO permissions (id, name, module, action, description) 
+           VALUES (UUID(), ?, ?, ?, ?) 
+           ON DUPLICATE KEY UPDATE module = VALUES(module), action = VALUES(action), description = VALUES(description)`,
+          [p.name, p.module, p.action, p.description]
+        );
+      }
+
+      // Ensure Super Admin has all permissions
+      await pool.query(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'Super Admin'
+      `);
+
+      // Ensure Admin has all permissions except user_management_manage
+      await pool.query(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'Admin' AND p.name != 'user_management_manage'
+      `);
+    } catch (rbacErr) {
+      console.warn('Could not auto-seed RBAC permissions:', rbacErr);
+    }
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
   } finally {
