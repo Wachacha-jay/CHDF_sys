@@ -82,6 +82,12 @@ async function ensureInKindSchema() {
     if (!saleColNames.has('child_id')) {
       await pool.query('ALTER TABLE sales ADD COLUMN child_id CHAR(36) NULL');
     }
+    if (!saleColNames.has('donor_id')) {
+      await pool.query('ALTER TABLE sales ADD COLUMN donor_id CHAR(36) NULL');
+    }
+    if (!saleColNames.has('fund_id')) {
+      await pool.query('ALTER TABLE sales ADD COLUMN fund_id CHAR(36) NULL');
+    }
     if (!saleColNames.has('sale_type')) {
       await pool.query("ALTER TABLE sales ADD COLUMN sale_type VARCHAR(50) DEFAULT 'standard'");
     } else {
