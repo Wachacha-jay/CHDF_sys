@@ -362,12 +362,32 @@ async function ensureInKindSchema() {
           fund_id CHAR(36) NULL,
           journal_entry_id CHAR(36) NULL,
           notes TEXT NULL,
+          payer_type VARCHAR(50) DEFAULT 'guardian',
+          payer_name VARCHAR(255) NULL,
+          donor_id CHAR(36) NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_sfp_child (child_id),
           INDEX idx_sfp_year_term (academic_year, term)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      // Ensure school_fee_payments has payer_type, payer_name, and donor_id columns
+      try {
+        const [sfpCols]: any = await pool.query('SHOW COLUMNS FROM school_fee_payments');
+        const sfpColNames = new Set(sfpCols.map((c: any) => c.Field));
+        if (!sfpColNames.has('payer_type')) {
+          await pool.query("ALTER TABLE school_fee_payments ADD COLUMN payer_type VARCHAR(50) DEFAULT 'guardian'");
+        }
+        if (!sfpColNames.has('payer_name')) {
+          await pool.query('ALTER TABLE school_fee_payments ADD COLUMN payer_name VARCHAR(255) NULL');
+        }
+        if (!sfpColNames.has('donor_id')) {
+          await pool.query('ALTER TABLE school_fee_payments ADD COLUMN donor_id CHAR(36) NULL');
+        }
+      } catch (sfpColErr) {
+        console.warn('Could not inspect or alter school_fee_payments columns:', sfpColErr);
+      }
 
       // h. RECOVERY & RESTORATION (Executed ONCE via _migrations):
       const [mig024]: any = await pool.query("SELECT id FROM _migrations WHERE name = '024_school_fee_restoration'");
@@ -1229,6 +1249,10 @@ router.get('/:table', authenticate, async (req, res): Promise<void> => {
                     const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [row.fund_id]);
                     row.fund = funds[0] || null;
                 }
+                if (row.donor_id) {
+                    const [donors]: any = await pool.query('SELECT id, name, donor_type, email, phone FROM donors WHERE id = ?', [row.donor_id]);
+                    row.donor = donors[0] || null;
+                }
             } catch (_) {}
         }
     } else if (table === 'children') {
@@ -1359,6 +1383,10 @@ router.get('/:table/:id', authenticate, async (req, res): Promise<void> => {
             if (result.fund_id) {
                 const [funds]: any = await pool.query('SELECT id, name, code FROM fund_accounts WHERE id = ?', [result.fund_id]);
                 result.fund = funds[0] || null;
+            }
+            if (result.donor_id) {
+                const [donors]: any = await pool.query('SELECT id, name, donor_type, email, phone FROM donors WHERE id = ?', [result.donor_id]);
+                result.donor = donors[0] || null;
             }
         } catch (_) {}
     } else if (table === 'children' && result) {
@@ -1699,6 +1727,49 @@ router.post('/:table', authenticate, async (req, res): Promise<void> => {
       }
     }
 
+    // Validate keys against actual table schema to prevent "Unknown column" errors
+    try {
+      const [tableCols]: any = await pool.query(`SHOW COLUMNS FROM \`${table}\``);
+      const validColNames = new Set(tableCols.map((c: any) => c.Field));
+
+      // Auto-heal school_fee_payments if columns are missing
+      if (table === 'school_fee_payments') {
+        if (!validColNames.has('payer_type')) {
+          try {
+            await pool.query("ALTER TABLE school_fee_payments ADD COLUMN payer_type VARCHAR(50) DEFAULT 'guardian'");
+            validColNames.add('payer_type');
+          } catch (_) {}
+        }
+        if (!validColNames.has('payer_name')) {
+          try {
+            await pool.query('ALTER TABLE school_fee_payments ADD COLUMN payer_name VARCHAR(255) NULL');
+            validColNames.add('payer_name');
+          } catch (_) {}
+        }
+        if (!validColNames.has('donor_id')) {
+          try {
+            await pool.query('ALTER TABLE school_fee_payments ADD COLUMN donor_id CHAR(36) NULL');
+            validColNames.add('donor_id');
+          } catch (_) {}
+        }
+      }
+
+      const filteredKeys: string[] = [];
+      const filteredValues: any[] = [];
+      for (let i = 0; i < keys.length; i++) {
+        if (validColNames.has(keys[i])) {
+          filteredKeys.push(keys[i]);
+          filteredValues.push(values[i]);
+        }
+      }
+      keys.length = 0;
+      values.length = 0;
+      keys.push(...filteredKeys);
+      values.push(...filteredValues);
+    } catch (colCheckErr) {
+      console.warn(`Could not verify columns for ${table}:`, colCheckErr);
+    }
+
     const placeholders = keys.map(() => '?').join(', ');
     const sanitizedValues = values.map(val => (val === '' ? null : val));
 
@@ -1831,7 +1902,43 @@ router.put('/:table/:id', authenticate, async (req, res): Promise<void> => {
         updateData.username = usernameVal;
       }
     }
-    
+
+    // Validate keys against actual table schema to prevent "Unknown column" errors
+    try {
+      const [tableCols]: any = await pool.query(`SHOW COLUMNS FROM \`${table}\``);
+      const validColNames = new Set(tableCols.map((c: any) => c.Field));
+
+      // Auto-heal school_fee_payments if columns are missing
+      if (table === 'school_fee_payments') {
+        if (!validColNames.has('payer_type')) {
+          try {
+            await pool.query("ALTER TABLE school_fee_payments ADD COLUMN payer_type VARCHAR(50) DEFAULT 'guardian'");
+            validColNames.add('payer_type');
+          } catch (_) {}
+        }
+        if (!validColNames.has('payer_name')) {
+          try {
+            await pool.query('ALTER TABLE school_fee_payments ADD COLUMN payer_name VARCHAR(255) NULL');
+            validColNames.add('payer_name');
+          } catch (_) {}
+        }
+        if (!validColNames.has('donor_id')) {
+          try {
+            await pool.query('ALTER TABLE school_fee_payments ADD COLUMN donor_id CHAR(36) NULL');
+            validColNames.add('donor_id');
+          } catch (_) {}
+        }
+      }
+
+      for (const k of Object.keys(updateData)) {
+        if (!validColNames.has(k)) {
+          delete updateData[k];
+        }
+      }
+    } catch (colCheckErr) {
+      console.warn(`Could not verify columns for ${table}:`, colCheckErr);
+    }
+
     const keys = Object.keys(updateData);
     const values = Object.values(updateData).map(val => (val === '' ? null : val));
     
