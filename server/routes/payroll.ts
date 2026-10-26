@@ -688,7 +688,64 @@ router.put('/runs/:id', authenticate, async (req, res): Promise<void> => {
     }
 
     const [updated]: any = await pool.query('SELECT * FROM payroll_runs WHERE id = ?', [id]);
-    res.json({ success: true, message: 'Payroll run updated', data: updated[0] });
+    const updatedRun = updated[0];
+
+    // If run was already posted to GL (has journal_entry_id), re-sync journal entry lines with current values
+    if (updatedRun && updatedRun.journal_entry_id) {
+      try {
+        const jId = updatedRun.journal_entry_id;
+        const [empRows]: any = await pool.query('SELECT first_name, last_name, code, department_id, department FROM employees WHERE id = ?', [updatedRun.employee_id]);
+        const emp = empRows[0];
+        const empLabel = emp ? `${emp.first_name || ''} ${emp.last_name || ''} (${emp.code || ''})`.trim() : '';
+        const deptId = emp?.department_id || null;
+        const [periodRows]: any = await pool.query('SELECT period_name FROM payroll_periods WHERE id = ?', [pId]);
+        const periodName = periodRows[0]?.period_name || 'Payroll';
+
+        const accountCodes = ['5210', '2125', '2121', '2122', '2123', '2124', '2126', '2120'];
+        const [accountRows]: any = await pool.query(
+          `SELECT id, code FROM accounts WHERE code IN (${accountCodes.map(() => '?').join(',')})`,
+          accountCodes
+        );
+        const accountMap: Record<string, string> = {};
+        for (const a of accountRows) accountMap[a.code] = a.id;
+
+        const salaryExpenseId = accountMap['5210'];
+        const netSalaryPayableId = accountMap['2125'];
+        const payeId = accountMap['2121'];
+        const nssfId = accountMap['2122'];
+        const nhifId = accountMap['2123'];
+        const housingLevyId = accountMap['2124'];
+        const saccoId = accountMap['2126'];
+
+        await pool.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [jId]);
+
+        const lines: Array<{ account_id: string; description: string; debit: number; credit: number }> = [];
+        if (salaryExpenseId) lines.push({ account_id: salaryExpenseId, description: `Gross Salary - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: grossPay, credit: 0 });
+        if (netSalaryPayableId) lines.push({ account_id: netSalaryPayableId, description: `Net Salary Payable - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: 0, credit: netPay });
+        if (taxDeduction > 0 && payeId) lines.push({ account_id: payeId, description: `PAYE Income Tax - ${periodName}`, debit: 0, credit: taxDeduction });
+        if (nssfDeduction > 0 && nssfId) lines.push({ account_id: nssfId, description: `NSSF Contribution - ${periodName}`, debit: 0, credit: nssfDeduction });
+        if (nhifDeduction > 0 && nhifId) lines.push({ account_id: nhifId, description: `NHIF/SHA Contribution - ${periodName}`, debit: 0, credit: nhifDeduction });
+        if (housingLevy > 0 && housingLevyId) lines.push({ account_id: housingLevyId, description: `Housing Levy - ${periodName}`, debit: 0, credit: housingLevy });
+        if (saccoDeduction > 0 && saccoId) lines.push({ account_id: saccoId, description: `Sacco & Welfare - ${periodName}`, debit: 0, credit: saccoDeduction });
+
+        for (const line of lines) {
+          await pool.query(
+            `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id)
+             VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+            [jId, line.account_id, line.description, line.debit, line.credit, deptId]
+          );
+        }
+
+        await pool.query(
+          'UPDATE journal_entries SET total_debit = ?, total_credit = ? WHERE id = ?',
+          [grossPay, grossPay, jId]
+        );
+      } catch (jErr) {
+        console.warn('Could not re-sync accrual journal entry on run update:', jErr);
+      }
+    }
+
+    res.json({ success: true, message: 'Payroll run updated', data: updatedRun });
   } catch (error: any) {
     console.error('Error updating payroll run:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -711,9 +768,18 @@ router.post('/clear-runs', authenticate, async (req, res): Promise<void> => {
     // 2. Delete all payroll runs
     const [runDeleteResult]: any = await connection.query('DELETE FROM payroll_runs');
 
-    // 3. Delete payroll journal entries linked to periods
+    // 3. Delete payroll journal entries and General Ledger entries
     try {
       await connection.query('DELETE FROM payroll_journal_entries');
+      await connection.query(`
+        DELETE jel FROM journal_entry_lines jel
+        JOIN journal_entries je ON jel.journal_entry_id = je.id
+        WHERE je.entry_number LIKE 'PAY-ACC-%' OR je.entry_number LIKE 'PAY-DISB-%' OR je.description LIKE 'Payroll Accrual%' OR je.description LIKE 'Salary payment to%'
+      `);
+      await connection.query(`
+        DELETE FROM journal_entries
+        WHERE entry_number LIKE 'PAY-ACC-%' OR entry_number LIKE 'PAY-DISB-%' OR description LIKE 'Payroll Accrual%' OR description LIKE 'Salary payment to%'
+      `);
     } catch (_) {}
 
     // 4. Reset payroll periods totals and status back to 'open'
@@ -1389,6 +1455,27 @@ router.delete('/periods/:id', authenticate, async (req, res): Promise<void> => {
         SELECT id FROM payroll_runs WHERE payroll_period_id = ?
       )
     `, [periodId]);
+
+    // Collect journal entries from runs of this period
+    const [periodRunJEs]: any = await connection.query(
+      `SELECT journal_entry_id, payment_journal_entry_id FROM payroll_runs WHERE payroll_period_id = ?`,
+      [periodId]
+    );
+    const jIdsToDelete: string[] = [];
+    for (const r of (periodRunJEs || [])) {
+      if (r.journal_entry_id) jIdsToDelete.push(r.journal_entry_id);
+      if (r.payment_journal_entry_id) jIdsToDelete.push(r.payment_journal_entry_id);
+    }
+    if (jIdsToDelete.length > 0) {
+      await connection.query(
+        `DELETE FROM journal_entry_lines WHERE journal_entry_id IN (${jIdsToDelete.map(() => '?').join(',')})`,
+        jIdsToDelete
+      );
+      await connection.query(
+        `DELETE FROM journal_entries WHERE id IN (${jIdsToDelete.map(() => '?').join(',')})`,
+        jIdsToDelete
+      );
+    }
 
     // 2. Delete payroll runs
     await connection.query('DELETE FROM payroll_runs WHERE payroll_period_id = ?', [periodId]);

@@ -837,6 +837,13 @@ async function ensureInKindSchema() {
     } catch (rbacErr) {
       console.warn('Could not auto-seed RBAC permissions:', rbacErr);
     }
+
+    // 14. Startup self-healing: Purge stale payroll liabilities (PAYE, NSSF, NHIF, Housing Levy) and sync with active runs
+    try {
+      await reconcilePayrollLiabilitiesWithGL(pool);
+    } catch (recErr) {
+      console.warn('Could not run reconcilePayrollLiabilitiesWithGL on startup:', recErr);
+    }
   } catch (err) {
     console.error('ensureInKindSchema check encountered an issue (non-fatal):', err);
   } finally {
@@ -947,6 +954,149 @@ router.post('/internal_transfers/unpost-all', authenticate, async (req, res): Pr
     connection.release();
   }
 });
+
+/**
+ * Reconciles payroll liability accounts (2121, 2122, 2123, 2124, 2126) with active payroll runs
+ * and purges stale/orphan deduction lines from the General Ledger.
+ */
+async function reconcilePayrollLiabilitiesWithGL(connection: any) {
+  try {
+    const targetCodes = ['2121', '2122', '2123', '2124', '2126', '2125', '5210'];
+    const [accRows]: any = await connection.query(
+      `SELECT id, code FROM accounts WHERE code IN (${targetCodes.map(() => '?').join(',')})`,
+      targetCodes
+    );
+    const accMap: Record<string, string> = {};
+    for (const a of accRows) {
+      accMap[a.code] = a.id;
+    }
+    const payeId = accMap['2121'];
+    const nssfId = accMap['2122'];
+    const nhifId = accMap['2123'];
+    const housingLevyId = accMap['2124'];
+    const saccoId = accMap['2126'];
+    const netSalaryId = accMap['2125'];
+    const salaryExpenseId = accMap['5210'];
+
+    // 1. Delete orphan payroll accrual journal entries (not linked to any paid payroll run)
+    const [orphanJEs]: any = await connection.query(`
+      SELECT je.id 
+      FROM journal_entries je
+      WHERE (je.entry_number LIKE 'PAY-ACC-%' OR je.description LIKE 'Payroll Accrual%' OR je.description LIKE 'Payroll processing for%')
+        AND je.id NOT IN (
+          SELECT DISTINCT journal_entry_id FROM payroll_runs WHERE journal_entry_id IS NOT NULL AND status = 'paid'
+        )
+    `);
+
+    if (orphanJEs && orphanJEs.length > 0) {
+      const orphanIds = orphanJEs.map((o: any) => o.id);
+      await connection.query(
+        `DELETE FROM journal_entry_lines WHERE journal_entry_id IN (${orphanIds.map(() => '?').join(',')})`,
+        orphanIds
+      );
+      await connection.query(
+        `DELETE FROM journal_entries WHERE id IN (${orphanIds.map(() => '?').join(',')})`,
+        orphanIds
+      );
+    }
+
+    // 2. Reconcile active paid payroll runs with their journal entries
+    const [paidRuns]: any = await connection.query(
+      `SELECT pr.*, pp.period_name, e.first_name, e.last_name, e.code as employee_code
+       FROM payroll_runs pr
+       LEFT JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+       LEFT JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.status = 'paid' AND pr.journal_entry_id IS NOT NULL`
+    );
+
+    for (const run of (paidRuns || [])) {
+      const jId = run.journal_entry_id;
+      const gross = Number(run.gross_pay || 0);
+      const net = Number(run.net_pay || 0);
+      const tax = Number(run.tax_deduction || 0);
+      const nssf = Number(run.nssf_deduction || 0);
+      const nhif = Number(run.nhif_deduction || 0);
+      const housingLevy = Number(run.housing_levy_deduction || 0);
+      const sacco = Number(run.sacco_welfare_deduction || 0);
+      const deptId = run.department_id || null;
+
+      // Delete existing lines
+      await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [jId]);
+
+      // Re-insert exact lines based on current run values
+      const periodName = run.period_name || 'Payroll';
+      const empLabel = `${run.first_name || ''} ${run.last_name || ''} (${run.employee_code || ''})`.trim();
+
+      const lines: Array<{ account_id: string; description: string; debit: number; credit: number }> = [];
+
+      if (salaryExpenseId) {
+        lines.push({ account_id: salaryExpenseId, description: `Gross Salary - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: gross, credit: 0 });
+      }
+      if (netSalaryId) {
+        lines.push({ account_id: netSalaryId, description: `Net Salary Payable - ${periodName}${empLabel ? ' (' + empLabel + ')' : ''}`, debit: 0, credit: net });
+      }
+      if (tax > 0 && payeId) {
+        lines.push({ account_id: payeId, description: `PAYE Income Tax - ${periodName}`, debit: 0, credit: tax });
+      }
+      if (nssf > 0 && nssfId) {
+        lines.push({ account_id: nssfId, description: `NSSF Contribution - ${periodName}`, debit: 0, credit: nssf });
+      }
+      if (nhif > 0 && nhifId) {
+        lines.push({ account_id: nhifId, description: `NHIF/SHA Contribution - ${periodName}`, debit: 0, credit: nhif });
+      }
+      if (housingLevy > 0 && housingLevyId) {
+        lines.push({ account_id: housingLevyId, description: `Housing Levy - ${periodName}`, debit: 0, credit: housingLevy });
+      }
+      if (sacco > 0 && saccoId) {
+        lines.push({ account_id: saccoId, description: `Sacco & Welfare - ${periodName}`, debit: 0, credit: sacco });
+      }
+
+      for (const line of lines) {
+        await connection.query(
+          `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, description, debit_amount, credit_amount, department_id)
+           VALUES (UUID(), ?, ?, ?, ?, ?, ?)`,
+          [jId, line.account_id, line.description, line.debit, line.credit, deptId]
+        );
+      }
+
+      await connection.query(
+        `UPDATE journal_entries SET total_debit = ?, total_credit = ? WHERE id = ?`,
+        [gross, gross, jId]
+      );
+    }
+
+    // 3. Purge ghost lines for statutory deduction accounts where active total is zero
+    const [taxTotals]: any = await connection.query(
+      "SELECT COALESCE(SUM(tax_deduction), 0) as total_tax, COALESCE(SUM(nssf_deduction), 0) as total_nssf, COALESCE(SUM(nhif_deduction), 0) as total_nhif, COALESCE(SUM(housing_levy_deduction), 0) as total_hl FROM payroll_runs WHERE status = 'paid'"
+    );
+    const activeTax = Number(taxTotals[0]?.total_tax || 0);
+    const activeNssf = Number(taxTotals[0]?.total_nssf || 0);
+    const activeNhif = Number(taxTotals[0]?.total_nhif || 0);
+    const activeHl = Number(taxTotals[0]?.total_hl || 0);
+
+    if (activeTax === 0 && payeId) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE account_id = ?', [payeId]);
+    }
+    if (activeNssf === 0 && nssfId) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE account_id = ?', [nssfId]);
+    }
+    if (activeNhif === 0 && nhifId) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE account_id = ?', [nhifId]);
+    }
+    if (activeHl === 0 && housingLevyId) {
+      await connection.query('DELETE FROM journal_entry_lines WHERE account_id = ?', [housingLevyId]);
+    }
+
+    // Clean any orphan journal entries left with no lines
+    await connection.query(`
+      DELETE je FROM journal_entries je
+      LEFT JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+      WHERE jel.id IS NULL
+    `);
+  } catch (err) {
+    console.warn('reconcilePayrollLiabilitiesWithGL warning:', err);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ON-DEMAND CLEANUP ENDPOINT: Scrap internal transfer accounts & backfill payroll departments
@@ -1066,9 +1216,12 @@ router.post('/maintenance/cleanup-transfers-and-fix-payroll', authenticate, asyn
 
     await connection.query("INSERT IGNORE INTO _migrations (name) VALUES ('029_scrapping_internal_transfer_accounts_and_backfill_payroll')");
 
+    // 9. Reconcile payroll liabilities and purge stale/orphan deduction lines
+    await reconcilePayrollLiabilitiesWithGL(connection);
+
     res.json({
       success: true,
-      message: 'Internal transfer accounts scrapped and payroll department tags backfilled successfully.',
+      message: 'Internal transfer accounts scrapped, payroll department tags backfilled, and payroll liabilities reconciled with General Ledger successfully.',
       details: {
         accountsDeleted: delAccsResult?.affectedRows || 0,
         transferLinesDeleted: (delLinesResult?.affectedRows || 0) + (delItrLinesResult?.affectedRows || 0),

@@ -1,7 +1,9 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Activity, Clock, Filter, RefreshCw } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
 import { useAuthContext } from '../contexts/useAuthContext';
+import { usePagination } from '../hooks/usePagination';
+import DataTablePagination from '../components/common/DataTablePagination';
 
 interface ActivityLog {
   id: string;
@@ -73,6 +75,22 @@ const AuditLog: React.FC = () => {
     if (!dt) return '-';
     return new Date(dt).toLocaleString('en-KE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    totalItems,
+    startIndex,
+    endIndex,
+    paginatedData: paginatedLogs,
+    goToPage,
+    setPageSize
+  } = usePagination<ActivityLog>({
+    data: logs,
+    initialPageSize: 25,
+    resetDependencies: [module, from, to, userFilter, logs]
+  });
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -150,7 +168,7 @@ const AuditLog: React.FC = () => {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Timestamp</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">User</th>
@@ -160,7 +178,7 @@ const AuditLog: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {logs.map(log => (
+                {paginatedLogs.map(log => (
                   <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -193,6 +211,20 @@ const AuditLog: React.FC = () => {
               </tbody>
             </table>
           </div>
+        )}
+
+        {!loading && logs.length > 0 && (
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            onPageChange={goToPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="activity logs"
+          />
         )}
       </div>
 

@@ -11,6 +11,8 @@ import { DoubleEntryService } from '../services/doubleEntryService';
 import { useAuthContext } from '../contexts/useAuthContext';
 import { useSettingsContext } from '../contexts/SettingsContext';
 import type { Expense, Account, Supplier, AccountCategory, Department, FundAccount, Child, Donor } from '../types';
+import { usePagination } from '../hooks/usePagination';
+import DataTablePagination from '../components/common/DataTablePagination';
 
 const Expenses: React.FC = () => {
   const { settings } = useSettingsContext();
@@ -256,6 +258,22 @@ const Expenses: React.FC = () => {
   const pendingExpenses = filteredExpenses.filter(expense => !expense.is_approved).length;
   const approvedExpenses = filteredExpenses.filter(expense => expense.is_approved).length;
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    totalItems,
+    startIndex,
+    endIndex,
+    paginatedData: paginatedExpenses,
+    goToPage,
+    setPageSize
+  } = usePagination<Expense>({
+    data: filteredExpenses,
+    initialPageSize: 25,
+    resetDependencies: [filters]
+  });
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
@@ -304,7 +322,7 @@ const Expenses: React.FC = () => {
         ) : (
           <div className="overflow-x-auto w-full">
             <table className="min-w-[900px] w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Expense
@@ -336,7 +354,7 @@ const Expenses: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredExpenses.map((expense) => {
+                {paginatedExpenses.map((expense) => {
                   const status = getExpenseStatus(expense.is_approved);
                   return (
                     <tr key={expense.id} className="hover:bg-gray-50">
@@ -433,6 +451,20 @@ const Expenses: React.FC = () => {
               </tbody>
             </table>
           </div>
+        )}
+
+        {!loading && filteredExpenses.length > 0 && (
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            onPageChange={goToPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="expenses"
+          />
         )}
         
         {!loading && filteredExpenses.length === 0 && (

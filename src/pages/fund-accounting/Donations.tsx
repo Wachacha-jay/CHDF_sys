@@ -14,6 +14,8 @@ import {
   Package, Wrench, HardHat, Layers, DollarSign
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { usePagination } from '../../hooks/usePagination';
+import DataTablePagination from '../../components/common/DataTablePagination';
 
 const Donations: React.FC = () => {
   const { settings } = useSettingsContext();
@@ -63,6 +65,22 @@ const Donations: React.FC = () => {
     child_id?: string;
     donor_id?: string;
   }>({});
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    totalItems,
+    startIndex,
+    endIndex,
+    paginatedData: paginatedDonations,
+    goToPage,
+    setPageSize
+  } = usePagination({
+    data: donations,
+    initialPageSize: 25,
+    resetDependencies: [donations]
+  });
 
   const loadData = async () => {
     setLoading(true);
@@ -486,7 +504,7 @@ const Donations: React.FC = () => {
         </div>
         <div className="overflow-x-auto w-full">
           <table className="w-full text-left min-w-[950px]">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+            <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-6 py-4 font-semibold">Ref # / Date</th>
                 <th className="px-6 py-4 font-semibold">Donor Name</th>
@@ -506,7 +524,7 @@ const Donations: React.FC = () => {
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-gray-500">No donations recorded yet</td>
                 </tr>
-              ) : donations.map((d) => {
+              ) : paginatedDonations.map((d) => {
                 const donorObj = donors.find(donor => donor.id === d.donor_id);
                 const fundObj = funds.find(f => f.id === d.fund_id);
                 const childObj = children.find(c => c.id === d.restricted_to_child_id);
@@ -628,6 +646,20 @@ const Donations: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {!loading && donations.length > 0 && (
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            onPageChange={goToPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="donations"
+          />
+        )}
       </div>
 
       {/* ── VIEW DONATION DETAILS MODAL ───────────────────────────────────── */}

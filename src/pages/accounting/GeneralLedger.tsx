@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BookOpen, 
   Search, 
@@ -21,6 +21,8 @@ import { useAuthContext } from '../../contexts/useAuthContext';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import JournalEntryModal from '../../components/accounting/JournalEntryModal';
+import { usePagination } from '../../hooks/usePagination';
+import DataTablePagination from '../../components/common/DataTablePagination';
 
 const GeneralLedger: React.FC = () => {
   const { settings } = useSettingsContext();
@@ -468,11 +470,76 @@ const GeneralLedger: React.FC = () => {
     }, 400);
   };
 
-  // Build sorted flat list of active lines with running balance for the UI table
-  let runningBalanceCounter = openingBalance;
-  const sortedEntries = [...filteredEntries].sort((a, b) => 
-    String(a.entry_date || '').localeCompare(String(b.entry_date || ''))
-  );
+  // Build sorted flat list of active lines with exact running balance for the UI table
+  const allLedgerRows = useMemo(() => {
+    const rows: {
+      key: string;
+      entry: JournalEntry;
+      line: JournalEntryLine;
+      entryDate: string;
+      deptName: string;
+      dr: number;
+      cr: number;
+      runningBalance: number;
+    }[] = [];
+
+    let runningBal = openingBalance;
+    const sorted = [...filteredEntries].sort((a, b) => 
+      String(a.entry_date || '').localeCompare(String(b.entry_date || ''))
+    );
+
+    sorted.forEach((entry) => {
+      const entryDate = String(entry.entry_date || '').slice(0, 10);
+      const validLines = (entry.lines || []).filter(line => {
+        if (selectedAccount && line.account_id !== selectedAccount) return false;
+        return isLineInSelectedDept(line, entry);
+      });
+
+      validLines.forEach((line) => {
+        const lineDeptId = getLineDeptId(line, entry);
+        const deptName = departments.find(d => d.id === lineDeptId)?.name || 'General';
+        const dr = Number(line.debit_amount || 0);
+        const cr = Number(line.credit_amount || 0);
+
+        if (selectedAccount) {
+          if (debitNormal) {
+            runningBal += (dr - cr);
+          } else {
+            runningBal += (cr - dr);
+          }
+        }
+
+        rows.push({
+          key: `${entry.id}-${line.id}`,
+          entry,
+          line,
+          entryDate,
+          deptName,
+          dr,
+          cr,
+          runningBalance: runningBal
+        });
+      });
+    });
+
+    return rows;
+  }, [filteredEntries, openingBalance, selectedAccount, debitNormal, departments, selectedDepartment, employees]);
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    totalItems,
+    startIndex,
+    endIndex,
+    paginatedData: paginatedLedgerRows,
+    goToPage,
+    setPageSize
+  } = usePagination({
+    data: allLedgerRows,
+    initialPageSize: 25,
+    resetDependencies: [selectedAccount, selectedDepartment, dateFrom, dateTo, searchTerm]
+  });
 
   return (
     <div className="space-y-6">
@@ -670,7 +737,7 @@ const GeneralLedger: React.FC = () => {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                   Entry / Date
@@ -701,8 +768,8 @@ const GeneralLedger: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {/* If account selected, render Opening Balance row */}
-              {selectedAccount && (
+              {/* If account selected, render Opening Balance row on Page 1 */}
+              {selectedAccount && currentPage === 1 && (
                 <tr className="bg-indigo-50/50 font-semibold border-b border-indigo-100">
                   <td className="px-5 py-3 text-sm text-indigo-900" colSpan={4}>
                     Opening Balance (As of {dateFrom || 'Start'})
@@ -718,76 +785,67 @@ const GeneralLedger: React.FC = () => {
                 </tr>
               )}
 
-              {sortedEntries.map((entry) => {
-                const entryDate = String(entry.entry_date || '').slice(0, 10);
-                const validLines = (entry.lines || []).filter(line => {
-                  if (selectedAccount && line.account_id !== selectedAccount) return false;
-                  return isLineInSelectedDept(line, entry);
-                });
+              {/* If account selected and past Page 1, render carry-forward context */}
+              {selectedAccount && currentPage > 1 && startIndex > 0 && (
+                <tr className="bg-amber-50/60 font-medium border-b border-amber-200">
+                  <td className="px-5 py-2.5 text-xs text-amber-900" colSpan={4}>
+                    <span className="font-bold">Carried Forward from Page {currentPage - 1}:</span> Preceding balance
+                  </td>
+                  <td className="px-5 py-2.5 text-right text-xs text-gray-400">—</td>
+                  <td className="px-5 py-2.5 text-right text-xs text-gray-400">—</td>
+                  <td className="px-5 py-2.5 text-right text-xs text-amber-900 font-bold">
+                    {currency} {allLedgerRows[startIndex - 1]?.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-2.5 text-center text-[10px] text-amber-800 uppercase font-bold">
+                    {debitNormal ? ((allLedgerRows[startIndex - 1]?.runningBalance || 0) >= 0 ? 'DR' : 'CR') : ((allLedgerRows[startIndex - 1]?.runningBalance || 0) >= 0 ? 'CR' : 'DR')}
+                  </td>
+                </tr>
+              )}
 
-                if (validLines.length === 0) return null;
-
+              {paginatedLedgerRows.map((row) => {
+                const { key, entry, line, entryDate, deptName, dr, cr, runningBalance } = row;
                 return (
-                  <React.Fragment key={entry.id}>
-                    {validLines.map((line) => {
-                      const lineDeptId = getLineDeptId(line, entry);
-                      const deptName = departments.find(d => d.id === lineDeptId)?.name || 'General';
-                      const dr = Number(line.debit_amount || 0);
-                      const cr = Number(line.credit_amount || 0);
-
-                      if (selectedAccount) {
-                        if (debitNormal) {
-                          runningBalanceCounter += (dr - cr);
-                        } else {
-                          runningBalanceCounter += (cr - dr);
-                        }
-                      }
-
-                      return (
-                        <tr key={line.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-5 py-3 whitespace-nowrap text-sm">
-                            <span className="font-semibold text-blue-600">{entry.entry_number}</span>
-                            <div className="text-xs text-gray-500">{entryDate}</div>
-                          </td>
-                          <td className="px-5 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">
-                            {entry.reference || '—'}
-                          </td>
-                          <td className="px-5 py-3 text-sm text-gray-900">
-                            <div className="font-semibold text-gray-900">
-                              <span className="text-gray-500 font-mono mr-1.5">{line.account?.code}</span>
-                              {line.account?.name}
-                            </div>
-                            <div className="text-xs text-gray-500 mt-0.5">
-                              {line.description || entry.description}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-xs">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
-                              {deptName}
-                            </span>
-                          </td>
-                          <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-green-700">
-                            {dr > 0 ? `${currency} ${dr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
-                          </td>
-                          <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-red-700">
-                            {cr > 0 ? `${currency} ${cr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
-                          </td>
-                          {selectedAccount && (
-                            <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-bold text-indigo-700">
-                              {currency} {runningBalanceCounter.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                          )}
-                          <td className="px-4 py-3 whitespace-nowrap text-center">
-                            <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
-                              entry.is_posted ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                            }`}>
-                              {entry.is_posted ? 'Posted' : 'Draft'}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
+                  <tr key={key} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-5 py-3 whitespace-nowrap text-sm">
+                      <span className="font-semibold text-blue-600">{entry.entry_number}</span>
+                      <div className="text-xs text-gray-500">{entryDate}</div>
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">
+                      {entry.reference || '—'}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-900">
+                      <div className="font-semibold text-gray-900">
+                        <span className="text-gray-500 font-mono mr-1.5">{line.account?.code}</span>
+                        {line.account?.name}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {line.description || entry.description}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-xs">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
+                        {deptName}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-green-700">
+                      {dr > 0 ? `${currency} ${dr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-medium text-red-700">
+                      {cr > 0 ? `${currency} ${cr.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
+                    </td>
+                    {selectedAccount && (
+                      <td className="px-5 py-3 whitespace-nowrap text-sm text-right font-bold text-indigo-700">
+                        {currency} {runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                    )}
+                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                        entry.is_posted ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {entry.is_posted ? 'Posted' : 'Draft'}
+                      </span>
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
@@ -813,6 +871,20 @@ const GeneralLedger: React.FC = () => {
             </tfoot>
           </table>
         </div>
+
+        {allLedgerRows.length > 0 && (
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            onPageChange={goToPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="transactions"
+          />
+        )}
 
         {filteredEntries.length === 0 && (
           <div className="text-center py-12">

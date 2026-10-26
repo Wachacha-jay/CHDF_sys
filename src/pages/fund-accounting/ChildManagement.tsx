@@ -12,6 +12,8 @@ import {
   TrendingUp, CreditCard, ChevronRight, Layers, FileText, Heart
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { usePagination } from '../../hooks/usePagination';
+import DataTablePagination from '../../components/common/DataTablePagination';
 
 const formatDateForInput = (d?: string | Date | null): string => {
   if (!d) return '';
@@ -559,6 +561,24 @@ const ChildManagement: React.FC = () => {
     return matchesSearch && matchesClass;
   });
 
+  const childrenPagination = usePagination({
+    data: filteredChildren,
+    initialPageSize: 25,
+    resetDependencies: [searchTerm]
+  });
+
+  const feePaymentsPagination = usePagination({
+    data: filteredFeePayments,
+    initialPageSize: 25,
+    resetDependencies: [paymentSearchTerm, selectedTermFilter, selectedAcademicYear]
+  });
+
+  const studentSummariesPagination = usePagination({
+    data: filteredStudentSummaries,
+    initialPageSize: 25,
+    resetDependencies: [balanceSearchTerm, balanceClassFilter, selectedAcademicYear]
+  });
+
   const uniqueClasses = useMemo(() => {
     const set = new Set<string>();
     children.forEach(c => { if (c.class_name) set.add(c.class_name); });
@@ -750,7 +770,7 @@ const ChildManagement: React.FC = () => {
 
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left min-w-[950px]">
-                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+                <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="px-6 py-4 font-semibold">Student Particulars</th>
                     <th className="px-6 py-4 font-semibold">Code</th>
@@ -768,7 +788,7 @@ const ChildManagement: React.FC = () => {
                         <td colSpan={7} className="px-6 py-8 h-16 bg-gray-50/50"></td>
                       </tr>
                     ))
-                  ) : filteredChildren.map((child) => (
+                  ) : childrenPagination.paginatedData.map((child) => (
                     <tr key={child.id} className="hover:bg-gray-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -848,6 +868,20 @@ const ChildManagement: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {!loading && filteredChildren.length > 0 && (
+              <DataTablePagination
+                currentPage={childrenPagination.currentPage}
+                totalPages={childrenPagination.totalPages}
+                pageSize={childrenPagination.pageSize}
+                totalItems={childrenPagination.totalItems}
+                startIndex={childrenPagination.startIndex}
+                endIndex={childrenPagination.endIndex}
+                onPageChange={childrenPagination.goToPage}
+                onPageSizeChange={childrenPagination.setPageSize}
+                itemLabel="students"
+              />
+            )}
           </div>
         </div>
       )}
@@ -887,7 +921,7 @@ const ChildManagement: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left min-w-[1050px]">
-                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+                <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="px-6 py-4 font-semibold">Student & Code</th>
                     <th className="px-6 py-4 font-semibold">Class</th>
@@ -901,7 +935,7 @@ const ChildManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-sm">
-                  {filteredStudentSummaries.map((summary) => (
+                  {studentSummariesPagination.paginatedData.map((summary) => (
                     <tr key={summary.child_id} className="hover:bg-gray-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-bold text-gray-900">{summary.child.first_name} {summary.child.last_name}</div>
@@ -984,6 +1018,20 @@ const ChildManagement: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {filteredStudentSummaries.length > 0 && (
+              <DataTablePagination
+                currentPage={studentSummariesPagination.currentPage}
+                totalPages={studentSummariesPagination.totalPages}
+                pageSize={studentSummariesPagination.pageSize}
+                totalItems={studentSummariesPagination.totalItems}
+                startIndex={studentSummariesPagination.startIndex}
+                endIndex={studentSummariesPagination.endIndex}
+                onPageChange={studentSummariesPagination.goToPage}
+                onPageSizeChange={studentSummariesPagination.setPageSize}
+                itemLabel="students"
+              />
+            )}
           </div>
         </div>
       )}
@@ -1021,7 +1069,7 @@ const ChildManagement: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left min-w-[1050px]">
-                <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+                <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="px-6 py-4 font-semibold">Date</th>
                     <th className="px-6 py-4 font-semibold">Receipt No.</th>
@@ -1041,7 +1089,7 @@ const ChildManagement: React.FC = () => {
                         <td colSpan={9} className="px-6 py-8 h-16 bg-gray-50/50"></td>
                       </tr>
                     ))
-                  ) : filteredFeePayments.map((payment) => (
+                  ) : feePaymentsPagination.paginatedData.map((payment) => (
                     <tr key={payment.id} className="hover:bg-gray-50/50 transition-colors">
                       <td className="px-6 py-4 text-gray-600">
                         {new Date(payment.payment_date).toLocaleDateString()}
@@ -1128,6 +1176,20 @@ const ChildManagement: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {!loadingPayments && filteredFeePayments.length > 0 && (
+              <DataTablePagination
+                currentPage={feePaymentsPagination.currentPage}
+                totalPages={feePaymentsPagination.totalPages}
+                pageSize={feePaymentsPagination.pageSize}
+                totalItems={feePaymentsPagination.totalItems}
+                startIndex={feePaymentsPagination.startIndex}
+                endIndex={feePaymentsPagination.endIndex}
+                onPageChange={feePaymentsPagination.goToPage}
+                onPageSizeChange={feePaymentsPagination.setPageSize}
+                itemLabel="fee payments"
+              />
+            )}
           </div>
         </div>
       )}

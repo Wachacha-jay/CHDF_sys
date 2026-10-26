@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { SalesService } from '../services/salesService';
 import { SupplierService } from '../services/supplierService';
 import { useSettingsContext } from '../contexts/SettingsContext';
@@ -7,12 +7,15 @@ import type { Sale, Purchase } from '../types';
 import CreatePurchaseInvoiceModal from '../components/invoices/CreatePurchaseInvoiceModal';
 import { Plus, Trash2, Eye, AlertTriangle } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { usePagination } from '../hooks/usePagination';
+import DataTablePagination from '../components/common/DataTablePagination';
 
 const InvoiceList: React.FC = () => {
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unpaid'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'sale' | 'purchase'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [personSearch, setPersonSearch] = useState('');
@@ -87,6 +90,64 @@ const InvoiceList: React.FC = () => {
   const filteredSales = applyFilters(sales, 'sale');
   const filteredPurchases = applyFilters(purchases, 'purchase');
 
+  const unifiedInvoices = useMemo(() => {
+    const list: Array<{
+      id: string;
+      type: 'sale' | 'purchase';
+      number: string;
+      partyName: string;
+      date: string;
+      total: number;
+      payment_status: string;
+    }> = [];
+
+    if (typeFilter === 'all' || typeFilter === 'sale') {
+      filteredSales.forEach(inv => {
+        list.push({
+          id: inv.id,
+          type: 'sale',
+          number: inv.sale_number,
+          partyName: inv.customer?.name || 'Walk-in',
+          date: inv.sale_date,
+          total: Number(inv.total_amount) || 0,
+          payment_status: inv.payment_status
+        });
+      });
+    }
+
+    if (typeFilter === 'all' || typeFilter === 'purchase') {
+      filteredPurchases.forEach(inv => {
+        list.push({
+          id: inv.id,
+          type: 'purchase',
+          number: inv.purchase_number,
+          partyName: inv.supplier?.name || 'N/A',
+          date: inv.purchase_date,
+          total: Number(inv.total_amount) || 0,
+          payment_status: inv.payment_status
+        });
+      });
+    }
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [filteredSales, filteredPurchases, typeFilter]);
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    totalItems,
+    startIndex,
+    endIndex,
+    paginatedData: paginatedInvoices,
+    goToPage,
+    setPageSize
+  } = usePagination({
+    data: unifiedInvoices,
+    initialPageSize: 25,
+    resetDependencies: [filter, typeFilter, startDate, endDate, personSearch]
+  });
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'paid':
@@ -135,6 +196,30 @@ const InvoiceList: React.FC = () => {
         </div>
 
         <div>
+          <label className="block text-sm text-gray-600 mb-1">Type</label>
+          <div className="flex gap-2">
+            <button
+              className={`px-3 py-2 rounded-lg border text-sm ${typeFilter === 'all' ? 'bg-blue-50 border-blue-200 text-blue-700 font-medium' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'}`}
+              onClick={() => setTypeFilter('all')}
+            >
+              All
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg border text-sm ${typeFilter === 'sale' ? 'bg-purple-50 border-purple-200 text-purple-700 font-medium' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'}`}
+              onClick={() => setTypeFilter('sale')}
+            >
+              Sales
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg border text-sm ${typeFilter === 'purchase' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-medium' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'}`}
+              onClick={() => setTypeFilter('purchase')}
+            >
+              Purchases
+            </button>
+          </div>
+        </div>
+
+        <div>
           <label className="block text-sm text-gray-600 mb-1">From Date</label>
           <input
             type="date"
@@ -165,10 +250,10 @@ const InvoiceList: React.FC = () => {
           />
         </div>
         
-        {(startDate || endDate || personSearch || filter !== 'all') && (
+        {(startDate || endDate || personSearch || filter !== 'all' || typeFilter !== 'all') && (
           <div>
             <button
-              onClick={() => { setStartDate(''); setEndDate(''); setPersonSearch(''); setFilter('all'); }}
+              onClick={() => { setStartDate(''); setEndDate(''); setPersonSearch(''); setFilter('all'); setTypeFilter('all'); }}
               className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 underline"
             >
               Clear Filters
@@ -184,7 +269,7 @@ const InvoiceList: React.FC = () => {
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+            <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoice #</th>
@@ -196,19 +281,32 @@ const InvoiceList: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredSales.map(inv => (
-                <tr key={`sale-${inv.id}`} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3"><span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-medium border border-purple-200">Sale</span></td>
-                  <td className="px-4 py-3 font-medium text-blue-600">{inv.sale_number}</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{inv.customer?.name || 'Walk-in'}</td>
-                  <td className="px-4 py-3 text-gray-500">{new Date(inv.sale_date).toLocaleDateString()}</td>
-                  <td className="px-4 py-3 font-bold">{settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {inv.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+              {paginatedInvoices.map(inv => (
+                <tr key={`${inv.type}-${inv.id}`} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded text-xs font-medium border ${
+                      inv.type === 'sale' 
+                        ? 'bg-purple-100 text-purple-800 border-purple-200' 
+                        : 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                    }`}>
+                      {inv.type === 'sale' ? 'Sale' : 'Purchase'}
+                    </span>
+                  </td>
+                  <td className={`px-4 py-3 font-medium ${inv.type === 'sale' ? 'text-blue-600' : 'text-indigo-600'}`}>
+                    {inv.number}
+                  </td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{inv.partyName}</td>
+                  <td className="px-4 py-3 text-gray-500">{new Date(inv.date).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 font-bold">
+                    {settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'}{' '}
+                    {inv.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
                   <td className="px-4 py-3">{getStatusBadge(inv.payment_status)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button 
                         className="text-blue-600 hover:text-blue-900 font-medium text-xs border border-blue-200 bg-blue-50 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-xs" 
-                        onClick={() => navigate(`/invoice/${inv.id}`)}
+                        onClick={() => navigate(inv.type === 'sale' ? `/invoice/${inv.id}` : `/purchase-invoice/${inv.id}`)}
                         title="View Invoice"
                       >
                         <Eye size={13} />
@@ -216,7 +314,7 @@ const InvoiceList: React.FC = () => {
                       </button>
                       <button 
                         className="text-rose-600 hover:text-rose-900 font-medium text-xs border border-rose-200 bg-rose-50 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition-colors flex items-center gap-1 shadow-xs" 
-                        onClick={() => setDeleteTarget({ id: inv.id, number: inv.sale_number, type: 'sale' })}
+                        onClick={() => setDeleteTarget({ id: inv.id, number: inv.number, type: inv.type })}
                         title="Delete Invoice"
                       >
                         <Trash2 size={13} />
@@ -226,37 +324,7 @@ const InvoiceList: React.FC = () => {
                   </td>
                 </tr>
               ))}
-              {filteredPurchases.map(inv => (
-                <tr key={`purchase-${inv.id}`} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3"><span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-xs font-medium border border-indigo-200">Purchase</span></td>
-                  <td className="px-4 py-3 font-medium text-indigo-600">{inv.purchase_number}</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{inv.supplier?.name || 'N/A'}</td>
-                  <td className="px-4 py-3 text-gray-500">{new Date(inv.purchase_date).toLocaleDateString()}</td>
-                  <td className="px-4 py-3 font-bold">{settings?.default_currency && settings.default_currency !== 'USD' ? settings.default_currency : 'KES'} {inv.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                  <td className="px-4 py-3">{getStatusBadge(inv.payment_status)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button 
-                        className="text-blue-600 hover:text-blue-900 font-medium text-xs border border-blue-200 bg-blue-50 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-xs" 
-                        onClick={() => navigate(`/purchase-invoice/${inv.id}`)}
-                        title="View Invoice"
-                      >
-                        <Eye size={13} />
-                        View
-                      </button>
-                      <button 
-                        className="text-rose-600 hover:text-rose-900 font-medium text-xs border border-rose-200 bg-rose-50 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition-colors flex items-center gap-1 shadow-xs" 
-                        onClick={() => setDeleteTarget({ id: inv.id, number: inv.purchase_number, type: 'purchase' })}
-                        title="Delete Invoice"
-                      >
-                        <Trash2 size={13} />
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredSales.length === 0 && filteredPurchases.length === 0 && (
+              {unifiedInvoices.length === 0 && (
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-gray-500">
                     <p className="text-lg font-medium text-gray-900 mb-1">No invoices found</p>
@@ -266,6 +334,22 @@ const InvoiceList: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && unifiedInvoices.length > 0 && (
+        <div className="bg-white rounded-b-lg border-x border-b border-gray-200 overflow-hidden shadow-sm">
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            startIndex={startIndex}
+            endIndex={endIndex}
+            onPageChange={goToPage}
+            onPageSizeChange={setPageSize}
+            itemLabel="invoices"
+          />
         </div>
       )}
       

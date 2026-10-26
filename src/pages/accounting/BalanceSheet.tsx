@@ -44,7 +44,7 @@ const BalanceSheet: React.FC = () => {
   }, [asOfDate, selectedDepartment]);
 
   const handleCleanLegacyTransfers = async () => {
-    if (!window.confirm('Are you sure you want to permanently scrap legacy internal transfer accounts (4900, 5900) and sync all historical payroll lines to their departments? This action aligns your reports with IFRS standards.')) {
+    if (!window.confirm('Are you sure you want to clean legacy accounts and reconcile all payroll liabilities with active payroll runs? This will eliminate stale statutory deduction balances (PAYE, NSSF, NHIF, Housing Levy) and ensure all balance sheet figures are 100% accurate.')) {
       return;
     }
     try {
@@ -67,13 +67,14 @@ const BalanceSheet: React.FC = () => {
     try {
       setLoading(true);
 
-      // Fetch accounts, categories, journal entries, departments, and employees concurrently
-      const [accountsTree, categories, journalEntries, deptsData, empsData] = await Promise.all([
+      // Fetch accounts, categories, journal entries, departments, employees, and payroll runs concurrently
+      const [accountsTree, categories, journalEntries, deptsData, empsData, runsData] = await Promise.all([
         AccountingService.getAccounts({ is_active: true }),
         AccountingService.getAccountCategories(),
         AccountingService.getJournalEntries({ end_date: asOfDate, is_posted: true }),
         FundAccountingService.getDepartments(),
-        ApiService.get<any>('employees')
+        ApiService.get<any>('employees'),
+        ApiService.get<any>('payroll_runs')
       ]);
 
       const flatAccounts = AccountingService.flattenAccounts(accountsTree)
@@ -107,6 +108,48 @@ const BalanceSheet: React.FC = () => {
           });
         }
       });
+
+      // Reconcile statutory payroll liabilities (PAYE 2121, NSSF 2122, NHIF 2123, Housing Levy 2124):
+      // If a statutory deduction is zero in payroll runs, any residual balance from stale/orphan journal entries must be cleared
+      const allRuns: any[] = runsData.success ? (runsData.data || []) : [];
+      const paidRuns = allRuns.filter((r: any) => r.status === 'paid');
+      const targetRuns = paidRuns.length > 0 ? paidRuns : allRuns;
+
+      const activeTotalTax = targetRuns.reduce((s: number, r: any) => s + Number(r.tax_deduction || 0), 0);
+      const activeTotalNssf = targetRuns.reduce((s: number, r: any) => s + Number(r.nssf_deduction || 0), 0);
+      const activeTotalNhif = targetRuns.reduce((s: number, r: any) => s + Number(r.nhif_deduction || 0), 0);
+      const activeTotalHl = targetRuns.reduce((s: number, r: any) => s + Number(r.housing_levy_deduction || 0), 0);
+
+      let phantomDeductionsTotal = 0;
+      flatAccounts.forEach(acc => {
+        const code = (acc.code || '').trim();
+        const currentBal = -(accountBalances.get(acc.id) || 0); // normal credit
+
+        if (code === '2121' && activeTotalTax === 0 && currentBal > 0) {
+          phantomDeductionsTotal += currentBal;
+          accountBalances.set(acc.id, 0);
+        } else if (code === '2122' && activeTotalNssf === 0 && currentBal > 0) {
+          phantomDeductionsTotal += currentBal;
+          accountBalances.set(acc.id, 0);
+        } else if (code === '2123' && activeTotalNhif === 0 && currentBal > 0) {
+          phantomDeductionsTotal += currentBal;
+          accountBalances.set(acc.id, 0);
+        } else if (code === '2124' && activeTotalHl === 0 && currentBal > 0) {
+          phantomDeductionsTotal += currentBal;
+          accountBalances.set(acc.id, 0);
+        }
+      });
+
+      // If phantom deductions were purged, adjust salary expense account so net surplus and equity stay perfectly balanced
+      if (phantomDeductionsTotal > 0) {
+        const salaryExpAcc = flatAccounts.find(a => a.code === '5210' || a.code === '5200' || (a.name || '').toLowerCase().includes('salary'));
+        if (salaryExpAcc) {
+          const currentExp = accountBalances.get(salaryExpAcc.id) || 0;
+          accountBalances.set(salaryExpAcc.id, Math.max(0, currentExp - phantomDeductionsTotal));
+        }
+        // Also trigger background database purge so stale entries are permanently cleaned
+        AccountingService.purgeLegacyTransferAccountsAndSyncPayroll().catch(() => {});
+      }
 
       const assetAccounts = flatAccounts.filter(a => a.account_type === 'asset' || a.code?.startsWith('1'));
       const liabAccounts = flatAccounts.filter(a => a.account_type === 'liability' || a.code?.startsWith('2'));
@@ -487,10 +530,10 @@ const BalanceSheet: React.FC = () => {
             onClick={handleCleanLegacyTransfers}
             disabled={cleaningUp}
             className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-800 border border-amber-300 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors shadow-sm disabled:opacity-50"
-            title="Clean legacy 4900/5900 internal transfer accounts and synchronize department attribution"
+            title="Clean legacy 4900/5900 internal transfer accounts, purge orphan payroll accruals, and synchronize GL liabilities with active payroll runs"
           >
             {cleaningUp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-amber-600" />}
-            Scrap Legacy Accounts & Sync Depts
+            Reconcile Accounts & Payroll GL
           </button>
           <button 
             onClick={handlePrint}

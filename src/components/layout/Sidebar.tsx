@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -23,7 +23,8 @@ import {
   Heart,
   Baby,
   Activity,
-  Layers
+  Layers,
+  FileCheck
 } from 'lucide-react';
 import { useAuthContext } from '../../contexts/useAuthContext';
 import { useSettingsContext } from '../../contexts/SettingsContext';
@@ -50,6 +51,7 @@ interface NavItem {
 const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const { user, logout } = useAuthContext();
   const { settings } = useSettingsContext();
+  const location = useLocation();
   const [openMenus, setOpenMenus] = React.useState<string[]>([]);
 
   const toggleMenu = (name: string) => {
@@ -104,13 +106,30 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       ]
     },
 
-    { name: 'Customers', href: '/customers', icon: Users, permission: 'customers_view' },
-    { name: 'Employees', href: '/employees', icon: UserCheck, permission: 'employees_view' },
-    { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'suppliers_view' },
-    { name: 'User Management', href: '/users', icon: Shield, permission: 'user_management_manage' },
-    { name: 'Audit Log', href: '/audit-log', icon: Activity, permission: 'audit_logs_view' },
+    {
+      name: 'CRM & Vendors', href: '/customers', icon: Users, children: [
+        { name: 'Customers (AR)', href: '/customers', icon: Users, permission: 'customers_view' },
+        { name: 'Suppliers & Vendors (AP)', href: '/suppliers', icon: Truck, permission: 'suppliers_view' },
+      ]
+    },
+    { name: 'HR & Payroll', href: '/employees', icon: UserCheck, permission: 'employees_view' },
+    {
+      name: 'Security & Logs', href: '/users', icon: Shield, children: [
+        { name: 'User Management (RBAC)', href: '/users', icon: Shield, permission: 'user_management_manage' },
+        { name: 'Audit Trail / Logs', href: '/audit-log', icon: Activity, permission: 'audit_logs_view' },
+      ]
+    },
     { name: 'Settings', href: '/settings', icon: Settings, permission: 'settings_manage' },
   ];
+
+  // Auto-expand parent accordion when navigating to a child page
+  useEffect(() => {
+    navigation.forEach(item => {
+      if (item.children?.some(child => location.pathname === child.href || (child.href !== '/' && location.pathname.startsWith(child.href)))) {
+        setOpenMenus(prev => prev.includes(item.name) ? prev : [...prev, item.name]);
+      }
+    });
+  }, [location.pathname]);
 
   const handleLogout = async () => {
     await logout();

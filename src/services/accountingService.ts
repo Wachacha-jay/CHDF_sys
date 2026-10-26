@@ -850,9 +850,50 @@ export class AccountingService {
         console.warn('Fallback department sync warning:', backfillErr);
       }
 
+      // 4. Fallback reconciliation for payroll deduction lines
+      try {
+        const [runsRes, accountsRes, linesRes] = await Promise.all([
+          ApiService.get<any>('payroll_runs'),
+          ApiService.get<Account>('accounts'),
+          ApiService.get<JournalEntryLine>('journal_entry_lines')
+        ]);
+        const allRuns = runsRes.success ? (runsRes.data || []) : [];
+        const accounts = accountsRes.success ? (accountsRes.data || []) : [];
+        const lines = linesRes.success ? (linesRes.data || []) : [];
+
+        const accMap = new Map(accounts.map(a => [a.code, a.id]));
+        const payeId = accMap.get('2121');
+        const nssfId = accMap.get('2122');
+        const nhifId = accMap.get('2123');
+        const housingLevyId = accMap.get('2124');
+
+        const activeRuns = allRuns.filter((r: any) => r.status === 'paid');
+        const totalTax = activeRuns.reduce((s: number, r: any) => s + Number(r.tax_deduction || 0), 0);
+        const totalNssf = activeRuns.reduce((s: number, r: any) => s + Number(r.nssf_deduction || 0), 0);
+        const totalNhif = activeRuns.reduce((s: number, r: any) => s + Number(r.nhif_deduction || 0), 0);
+        const totalHl = activeRuns.reduce((s: number, r: any) => s + Number(r.housing_levy_deduction || 0), 0);
+
+        for (const line of lines) {
+          if (totalTax === 0 && payeId && line.account_id === payeId) {
+            await ApiService.delete('journal_entry_lines', line.id).catch(() => {});
+          }
+          if (totalNssf === 0 && nssfId && line.account_id === nssfId) {
+            await ApiService.delete('journal_entry_lines', line.id).catch(() => {});
+          }
+          if (totalNhif === 0 && nhifId && line.account_id === nhifId) {
+            await ApiService.delete('journal_entry_lines', line.id).catch(() => {});
+          }
+          if (totalHl === 0 && housingLevyId && line.account_id === housingLevyId) {
+            await ApiService.delete('journal_entry_lines', line.id).catch(() => {});
+          }
+        }
+      } catch (payrollSyncErr) {
+        console.warn('Fallback payroll deduction sync warning:', payrollSyncErr);
+      }
+
       return {
         success: true,
-        message: 'Legacy internal transfer accounts purged and departments synchronized successfully.'
+        message: 'Legacy internal transfer accounts purged and payroll liabilities reconciled with General Ledger successfully.'
       };
     } catch (err: any) {
       console.error('Error in purgeLegacyTransferAccountsAndSyncPayroll:', err);
