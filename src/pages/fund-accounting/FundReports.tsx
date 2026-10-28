@@ -1166,7 +1166,7 @@ const FundReports: React.FC = () => {
               : schoolFeeRecords.map(r => `
                 <tr>
                   <td>${r.payment_date || r.date}</td>
-                  <td><span class="font-mono" style="font-weight: bold; color: #4338ca;">${r.receipt_number || r.entryNumber}</span><br><small style="color: #64748b">${r.term} ${r.academic_year}</small></td>
+                  <td><span class="font-mono" style="font-weight: bold; color: #4338ca;">${r.receipt_number || r.entryNumber}</span>${r.reference_number ? `<br><small class="font-mono" style="color: #047857; font-weight: bold;">Ref: ${r.reference_number}</small>` : ''}<br><small style="color: #64748b">${r.term} ${r.academic_year}</small></td>
                   <td><strong>${r.child_name || r.childName}</strong><br><small style="color: #64748b">${r.child_code || r.childCode}</small></td>
                   <td><span class="badge ${r.payer_type === 'donor' ? 'badge-blue' : (r.is_inflow ? 'badge-green' : 'badge-amber')}">${r.payer_label || r.type}</span></td>
                   <td><strong>${r.department_name || r.dept}</strong><br><small style="color: #64748b">${r.fund_name || r.fund}</small></td>
@@ -2558,6 +2558,11 @@ const FundReports: React.FC = () => {
                       <td className="py-3 px-6 font-mono text-xs">{row.payment_date || row.date}</td>
                       <td className="py-3 px-6 font-mono font-bold text-indigo-600 text-xs">
                         {row.receipt_number || row.entryNumber}
+                        {row.reference_number && (
+                          <div className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded mt-0.5 inline-block">
+                            Ref: {row.reference_number}
+                          </div>
+                        )}
                         <div className="text-[10px] text-gray-400 font-normal font-sans">{row.term} {row.academic_year}</div>
                       </td>
                       <td className="py-3 px-6">

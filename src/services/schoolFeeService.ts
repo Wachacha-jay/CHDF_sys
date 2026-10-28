@@ -567,11 +567,30 @@ export class SchoolFeeService {
 
     // TERM 1
     const t1Expected = getExpectedForTerm('Term 1');
-    const t1Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 1', p.payment_date));
-    const t1Paid = t1Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t1Opening = 0;
     const t1TotalBilled = t1Opening + t1Expected;
-    const t1Closing = t1TotalBilled - t1Paid;
+    let runningT1Bal = t1TotalBilled;
+
+    const t1Payments = childPayments
+      .filter(p => isTermMatch(p.term, 'Term 1', p.payment_date))
+      .sort((a, b) => new Date(a.payment_date || '').getTime() - new Date(b.payment_date || '').getTime())
+      .map(p => {
+        const amt = Number(p.amount || 0);
+        const before = runningT1Bal;
+        if (p.is_inflow !== false) {
+          runningT1Bal -= amt;
+        }
+        return {
+          ...p,
+          term_expected_fee: t1Expected,
+          term_total_billed: t1TotalBilled,
+          balance_before_payment: before,
+          balance_after_payment: runningT1Bal
+        };
+      });
+
+    const t1Paid = t1Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t1Closing = runningT1Bal;
 
     const getTermStatus = (expected: number, paid: number, closing: number): 'paid' | 'partial' | 'unpaid' | 'overpaid' => {
       if (closing < 0) return 'overpaid';
@@ -594,10 +613,29 @@ export class SchoolFeeService {
     // TERM 2 (Carries Forward Closing of Term 1)
     const t2Opening = t1Closing;
     const t2Expected = getExpectedForTerm('Term 2');
-    const t2Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 2', p.payment_date));
-    const t2Paid = t2Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t2TotalBilled = t2Opening + t2Expected;
-    const t2Closing = t2TotalBilled - t2Paid;
+    let runningT2Bal = t2TotalBilled;
+
+    const t2Payments = childPayments
+      .filter(p => isTermMatch(p.term, 'Term 2', p.payment_date))
+      .sort((a, b) => new Date(a.payment_date || '').getTime() - new Date(b.payment_date || '').getTime())
+      .map(p => {
+        const amt = Number(p.amount || 0);
+        const before = runningT2Bal;
+        if (p.is_inflow !== false) {
+          runningT2Bal -= amt;
+        }
+        return {
+          ...p,
+          term_expected_fee: t2Expected,
+          term_total_billed: t2TotalBilled,
+          balance_before_payment: before,
+          balance_after_payment: runningT2Bal
+        };
+      });
+
+    const t2Paid = t2Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t2Closing = runningT2Bal;
 
     const term2: StudentFeeTermSummary = {
       term: 'Term 2',
@@ -613,10 +651,29 @@ export class SchoolFeeService {
     // TERM 3 (Carries Forward Closing of Term 2)
     const t3Opening = t2Closing;
     const t3Expected = getExpectedForTerm('Term 3');
-    const t3Payments = childPayments.filter(p => isTermMatch(p.term, 'Term 3', p.payment_date));
-    const t3Paid = t3Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const t3TotalBilled = t3Opening + t3Expected;
-    const t3Closing = t3TotalBilled - t3Paid;
+    let runningT3Bal = t3TotalBilled;
+
+    const t3Payments = childPayments
+      .filter(p => isTermMatch(p.term, 'Term 3', p.payment_date))
+      .sort((a, b) => new Date(a.payment_date || '').getTime() - new Date(b.payment_date || '').getTime())
+      .map(p => {
+        const amt = Number(p.amount || 0);
+        const before = runningT3Bal;
+        if (p.is_inflow !== false) {
+          runningT3Bal -= amt;
+        }
+        return {
+          ...p,
+          term_expected_fee: t3Expected,
+          term_total_billed: t3TotalBilled,
+          balance_before_payment: before,
+          balance_after_payment: runningT3Bal
+        };
+      });
+
+    const t3Paid = t3Payments.filter(p => p.is_inflow !== false).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const t3Closing = runningT3Bal;
 
     const term3: StudentFeeTermSummary = {
       term: 'Term 3',
@@ -671,6 +728,108 @@ export class SchoolFeeService {
   }
 
   /**
+   * Export individual student fee statement as CSV
+   */
+  static exportStudentFeeStatementCsv(summary: StudentFeeYearSummary, currency: string = 'KSh') {
+    const child = summary.child;
+    const guardian = child.guardian;
+    const rows: string[][] = [
+      [`OFFICIAL STUDENT FEE STATEMENT & PAYMENT LEDGER`],
+      [`Academic Year: ${summary.academic_year}`],
+      [`Student Name: ${child.first_name} ${child.last_name}`],
+      [`Student Code: ${child.code || 'N/A'}`],
+      [`Class / Grade: ${child.class_name || 'N/A'}`],
+      [`Guardian: ${guardian?.name || 'N/A'} (${guardian?.phone || 'No phone'})`],
+      [`Statement Generated: ${new Date().toLocaleString()}`],
+      [],
+      [`3-TERM FEE ACCOUNTING SUMMARY`],
+      [`Term`, `Opening Balance (BF)`, `Expected Fee`, `Total Billed`, `Paid to Date`, `Closing Balance (CF)`, `Term Status`],
+      [
+        `Term 1`,
+        summary.terms.term1.opening_balance.toFixed(2),
+        summary.terms.term1.expected_fee.toFixed(2),
+        summary.terms.term1.total_billed.toFixed(2),
+        summary.terms.term1.paid_amount.toFixed(2),
+        summary.terms.term1.closing_balance.toFixed(2),
+        summary.terms.term1.status.toUpperCase()
+      ],
+      [
+        `Term 2`,
+        summary.terms.term2.opening_balance.toFixed(2),
+        summary.terms.term2.expected_fee.toFixed(2),
+        summary.terms.term2.total_billed.toFixed(2),
+        summary.terms.term2.paid_amount.toFixed(2),
+        summary.terms.term2.closing_balance.toFixed(2),
+        summary.terms.term2.status.toUpperCase()
+      ],
+      [
+        `Term 3`,
+        summary.terms.term3.opening_balance.toFixed(2),
+        summary.terms.term3.expected_fee.toFixed(2),
+        summary.terms.term3.total_billed.toFixed(2),
+        summary.terms.term3.paid_amount.toFixed(2),
+        summary.terms.term3.closing_balance.toFixed(2),
+        summary.terms.term3.status.toUpperCase()
+      ],
+      [
+        `ANNUAL TOTAL`,
+        `-`,
+        summary.total_expected.toFixed(2),
+        `-`,
+        summary.total_paid.toFixed(2),
+        summary.net_balance.toFixed(2),
+        summary.status.toUpperCase()
+      ],
+      [],
+      [`ITEMIZED PAYMENT TRANSACTIONS & BALANCE REDUCTION LEDGER`],
+      [`Term`, `Date Paid`, `Payment Ref No`, `Receipt No`, `Method`, `Payer`, `Starting Balance (${currency})`, `Amount Paid (${currency})`, `Balance Remaining (${currency})`, `Notes`]
+    ];
+
+    const terms = [summary.terms.term1, summary.terms.term2, summary.terms.term3];
+    terms.forEach(t => {
+      if (t.payments.length === 0) {
+        rows.push([
+          t.term,
+          `-`,
+          `-`,
+          `-`,
+          `-`,
+          `-`,
+          t.total_billed.toFixed(2),
+          `0.00`,
+          t.closing_balance.toFixed(2),
+          `No payments received. Balance outstanding: ${currency} ${t.closing_balance.toFixed(2)}`
+        ]);
+      } else {
+        t.payments.forEach(p => {
+          rows.push([
+            t.term,
+            p.payment_date ? String(p.payment_date).slice(0, 10) : '',
+            p.reference_number || 'N/A',
+            p.receipt_number,
+            (p.payment_method || '').toUpperCase(),
+            p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian')),
+            (p.balance_before_payment ?? t.total_billed).toFixed(2),
+            Number(p.amount || 0).toFixed(2),
+            (p.balance_after_payment ?? (t.total_billed - Number(p.amount || 0))).toFixed(2),
+            `"${(p.notes || '').replace(/"/g, '""')}"`
+          ]);
+        });
+      }
+    });
+
+    const csvContent = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Fee_Statement_${child.code || child.id}_${summary.academic_year}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /**
    * Format and print official printable student fee statement
    */
   static printStudentFeeStatement(summary: StudentFeeYearSummary, businessSettings: any) {
@@ -692,6 +851,70 @@ export class SchoolFeeService {
       ...summary.terms.term3.payments
     ].sort((a, b) => new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime());
 
+    const renderTermLedgerHtml = (t: StudentFeeTermSummary) => {
+      if (t.payments.length === 0) {
+        return `
+          <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center; color: #64748b; font-size: 12px;">
+            No payments recorded for ${t.term}. Full term fee of <strong>${currency} ${t.total_billed.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> remains outstanding.
+          </div>
+        `;
+      }
+
+      return `
+        <table style="margin-bottom: 16px;">
+          <thead>
+            <tr>
+              <th style="width: 14%;">Date Paid</th>
+              <th style="width: 18%;">Payment Ref No.</th>
+              <th style="width: 14%;">Receipt No.</th>
+              <th style="width: 10%;">Method</th>
+              <th style="width: 16%;">Payer / Source</th>
+              <th style="width: 14%; text-align: right;">Amount Paid</th>
+              <th style="width: 14%; text-align: right;">Remaining Fee</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${t.payments.map(p => {
+              const beforeBal = p.balance_before_payment ?? t.total_billed;
+              const afterBal = p.balance_after_payment ?? (beforeBal - Number(p.amount || 0));
+              const refNo = p.reference_number || '-';
+              return `
+                <tr>
+                  <td>${new Date(p.payment_date).toLocaleDateString()}</td>
+                  <td>
+                    <span class="font-mono" style="font-weight: 700; color: #4338ca; background: #eef2ff; padding: 2px 6px; border-radius: 4px; font-size: 11px;">
+                      ${refNo}
+                    </span>
+                  </td>
+                  <td class="font-mono">${p.receipt_number}</td>
+                  <td style="text-transform: uppercase; font-size: 11px;">${p.payment_method}</td>
+                  <td>${p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian'))}</td>
+                  <td class="text-right font-mono" style="font-weight: 700; color: #059669;">
+                    ${currency} ${Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </td>
+                  <td class="text-right font-mono" style="font-weight: 800; color: ${afterBal > 0 ? '#b91c1c' : (afterBal < 0 ? '#4338ca' : '#059669')};">
+                    ${afterBal < 0 
+                      ? `(${currency} ${Math.abs(afterBal).toLocaleString(undefined, { minimumFractionDigits: 2 })}) Cr`
+                      : (afterBal === 0 ? '✓ Cleared' : `${currency} ${afterBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`)
+                    }
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background: #f8fafc; font-weight: 700; font-size: 11px;">
+              <td colspan="5">Total Paid for ${t.term} (Billed: ${currency} ${t.total_billed.toLocaleString(undefined, { minimumFractionDigits: 2 })})</td>
+              <td class="text-right font-mono" style="color: #059669;">${currency} ${t.paid_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td class="text-right font-mono" style="font-weight: 800; color: ${t.closing_balance > 0 ? '#b91c1c' : (t.closing_balance < 0 ? '#4338ca' : '#059669')};">
+                ${t.closing_balance < 0 ? `(${currency} ${Math.abs(t.closing_balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}) Cr` : (t.closing_balance === 0 ? 'Cleared' : `${currency} ${t.closing_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })} Due`)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      `;
+    };
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
@@ -699,23 +922,23 @@ export class SchoolFeeService {
         <title>Student Fee Statement - ${child.first_name} ${child.last_name} (${summary.academic_year})</title>
         <style>
           body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; color: #1e293b; line-height: 1.5; font-size: 13px; }
-          .header { text-align: center; border-bottom: 2px solid #4f46e5; padding-bottom: 16px; margin-bottom: 24px; }
+          .header { text-align: center; border-bottom: 2px solid #4f46e5; padding-bottom: 16px; margin-bottom: 20px; }
           .logo { max-height: 70px; margin-bottom: 8px; }
           .school-name { font-size: 22px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; letter-spacing: 0.5px; }
           .school-dept { font-size: 14px; font-weight: 600; color: #4f46e5; margin-bottom: 4px; }
           .school-info { font-size: 12px; color: #64748b; }
           .title-badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 6px 18px; border-radius: 20px; font-weight: 700; font-size: 14px; margin-top: 12px; }
           
-          .grid-info { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+          .grid-info { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
           .card-info { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
           .card-info h4 { margin: 0 0 10px 0; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
           .info-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
           .info-label { color: #64748b; font-weight: 500; }
           .info-value { font-weight: 700; color: #0f172a; }
 
-          table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-          th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
-          th { background: #f1f5f9; color: #475569; font-weight: 700; font-size: 12px; text-transform: uppercase; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+          th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+          th { background: #f1f5f9; color: #475569; font-weight: 700; font-size: 11px; text-transform: uppercase; }
           .text-right { text-align: right; }
           .text-center { text-align: center; }
           .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -723,13 +946,15 @@ export class SchoolFeeService {
           .term-table th { background: #eef2ff; color: #3730a3; }
           .total-row { background: #f8fafc; font-weight: 800; border-top: 2px solid #cbd5e1; }
 
-          .standing-box { padding: 16px; border-radius: 12px; margin: 24px 0; display: flex; justify-content: space-between; align-items: center; }
+          .term-section-header { background: #f1f5f9; border-left: 4px solid #4f46e5; padding: 8px 12px; margin: 18px 0 8px 0; border-radius: 0 6px 6px 0; font-size: 13px; font-weight: 700; color: #1e1b4b; display: flex; justify-content: space-between; align-items: center; }
+
+          .standing-box { padding: 16px; border-radius: 12px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; }
           .standing-box.arrears { background: #fef2f2; border: 1px solid #fecaca; }
           .standing-box.credit { background: #f0fdf4; border: 1px solid #bbf7d0; }
           .standing-box.cleared { background: #f0fdfa; border: 1px solid #99f6e4; }
           
-          .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; display: grid; grid-template-columns: 1fr 1fr; font-size: 11px; color: #64748b; }
-          .signature-line { margin-top: 50px; border-top: 1px dashed #94a3b8; width: 80%; }
+          .footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: grid; grid-template-columns: 1fr 1fr; font-size: 11px; color: #64748b; }
+          .signature-line { margin-top: 45px; border-top: 1px dashed #94a3b8; width: 80%; }
 
           @media print {
             body { margin: 10px; }
@@ -743,38 +968,38 @@ export class SchoolFeeService {
           <div class="school-name">${bName}</div>
           <div class="school-dept">Empower School • Department of Education & Child Support</div>
           <div class="school-info">${bAddress} • Tel: ${bPhone} • Email: ${bEmail}</div>
-          <div class="title-badge">OFFICIAL STUDENT FEE STATEMENT — ${summary.academic_year}</div>
+          <div class="title-badge">OFFICIAL STUDENT FEE STATEMENT & PAYMENT LEDGER — ${summary.academic_year}</div>
         </div>
 
         <div class="grid-info">
           <div class="card-info">
-            <h4>Student Particulars</h4>
+            <h4>Student Beneficiary Details</h4>
             <div class="info-row"><span class="info-label">Full Name:</span><span class="info-value">${child.first_name} ${child.last_name}</span></div>
             <div class="info-row"><span class="info-label">Student / Child Code:</span><span class="info-value font-mono">${child.code}</span></div>
             <div class="info-row"><span class="info-label">Grade / Class:</span><span class="info-value">${child.class_name || 'N/A'}</span></div>
-            <div class="info-row"><span class="info-label">Status:</span><span class="info-value" style="text-transform: uppercase;">${child.status}</span></div>
+            <div class="info-row"><span class="info-label">Enrollment Status:</span><span class="info-value" style="text-transform: uppercase;">${child.status}</span></div>
           </div>
 
           <div class="card-info">
-            <h4>Guardian & Account Details</h4>
+            <h4>Guardian & Statement Metadata</h4>
             <div class="info-row"><span class="info-label">Guardian Name:</span><span class="info-value">${guardian?.name || 'N/A'}</span></div>
             <div class="info-row"><span class="info-label">Relationship:</span><span class="info-value">${guardian?.relationship || 'Parent'}</span></div>
             <div class="info-row"><span class="info-label">Phone:</span><span class="info-value">${guardian?.phone || 'N/A'}</span></div>
-            <div class="info-row"><span class="info-label">Statement Date:</span><span class="info-value">${new Date().toLocaleDateString()}</span></div>
+            <div class="info-row"><span class="info-label">Issue Date:</span><span class="info-value">${new Date().toLocaleDateString()}</span></div>
           </div>
         </div>
 
-        <h3 style="font-size: 14px; color: #1e1b4b; margin-bottom: 8px;">1. 3-Term Fee Accounting Schedule (${summary.academic_year})</h3>
+        <h3 style="font-size: 13px; color: #1e1b4b; margin: 16px 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px;">1. 3-Term Fee Accounting Schedule (${summary.academic_year})</h3>
         <table class="term-table">
           <thead>
             <tr>
               <th>Term</th>
-              <th class="text-right">Opening Balance (BF)</th>
-              <th class="text-right">Term Expected Fee</th>
+              <th class="text-right">Opening BF</th>
+              <th class="text-right">Expected Fee</th>
               <th class="text-right">Total Billed</th>
               <th class="text-right">Paid to Date</th>
-              <th class="text-right">Closing Balance (CF)</th>
-              <th class="text-center">Term Standing</th>
+              <th class="text-right">Closing CF</th>
+              <th class="text-center">Term Status</th>
             </tr>
           </thead>
           <tbody>
@@ -783,7 +1008,7 @@ export class SchoolFeeService {
               <td class="text-right font-mono">${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term1.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669;">${currency} ${summary.terms.term1.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term1.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term1.closing_balance > 0 ? '#b91c1c' : (summary.terms.term1.closing_balance < 0 ? '#4338ca' : '#059669')};">
                 ${summary.terms.term1.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term1.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term1.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
               </td>
@@ -794,7 +1019,7 @@ export class SchoolFeeService {
               <td class="text-right font-mono">${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term2.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669;">${currency} ${summary.terms.term2.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term2.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term2.closing_balance > 0 ? '#b91c1c' : (summary.terms.term2.closing_balance < 0 ? '#4338ca' : '#059669')};">
                 ${summary.terms.term2.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term2.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term2.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
               </td>
@@ -805,7 +1030,7 @@ export class SchoolFeeService {
               <td class="text-right font-mono">${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono">${currency} ${summary.terms.term3.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669;">${currency} ${summary.terms.term3.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term3.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term3.closing_balance > 0 ? '#b91c1c' : (summary.terms.term3.closing_balance < 0 ? '#4338ca' : '#059669')};">
                 ${summary.terms.term3.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term3.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term3.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
               </td>
@@ -820,7 +1045,7 @@ export class SchoolFeeService {
               <td class="text-right font-mono" style="font-size: 14px; color: ${summary.net_balance > 0 ? '#b91c1c' : (summary.net_balance < 0 ? '#4338ca' : '#059669')};">
                 <strong>${summary.net_balance < 0 ? `(${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}</strong>
               </td>
-              <td class="text-center"><strong style="text-transform: uppercase; font-size: 12px;">${summary.status}</strong></td>
+              <td class="text-center"><strong style="text-transform: uppercase; font-size: 11px;">${summary.status}</strong></td>
             </tr>
           </tbody>
         </table>
@@ -828,9 +1053,11 @@ export class SchoolFeeService {
         <!-- Standing summary box -->
         <div class="standing-box ${summary.net_balance > 0 ? 'arrears' : (summary.net_balance < 0 ? 'credit' : 'cleared')}">
           <div>
-            <div style="font-size: 12px; text-transform: uppercase; font-weight: 700; color: #64748b;">Current Fee Standing</div>
-            <div style="font-size: 18px; font-weight: 800; color: ${summary.net_balance > 0 ? '#991b1b' : (summary.net_balance < 0 ? '#3730a3' : '#065f46')};">
-              ${summary.net_balance > 0 ? `OUTSTANDING FEE ARREARS: ${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}` : (summary.net_balance < 0 ? `ADVANCE OVERPAYMENT CREDIT: ${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})} CARRIED FORWARD` : 'FEES FULLY PAID FOR THE YEAR')}
+            <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b;">Annual Outstanding Standing</div>
+            <div style="font-size: 16px; font-weight: 800; color: ${summary.net_balance > 0 ? '#991b1b' : (summary.net_balance < 0 ? '#3730a3' : '#065f46')};">
+              ${summary.net_balance > 0 
+                ? `OUTSTANDING ARREARS: ${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}` 
+                : (summary.net_balance < 0 ? `ADVANCE OVERPAYMENT CREDIT: ${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})} CARRIED FORWARD` : 'FEES FULLY SETTLED FOR THE ACADEMIC YEAR')}
             </div>
           </div>
           <div style="text-align: right; font-size: 11px; color: #64748b;">
@@ -838,28 +1065,62 @@ export class SchoolFeeService {
           </div>
         </div>
 
-        <h3 style="font-size: 14px; color: #1e1b4b; margin-bottom: 8px;">2. Payment Receipts History</h3>
+        <h3 style="font-size: 13px; color: #1e1b4b; margin: 20px 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px;">
+          2. Term-by-Term Payments & Balance Reduction Ledger
+        </h3>
+        <p style="font-size: 11px; color: #64748b; margin-bottom: 12px;">
+          Chronological breakdown of payments showing date received, payment reference number, and sequential reduction against the expected term fee.
+        </p>
+
+        <!-- Term 1 Ledger -->
+        <div class="term-section-header">
+          <span>TERM 1 LEDGER — Expected Fee: ${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Opening BF: ${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+          <span>Status: ${summary.terms.term1.status.toUpperCase()}</span>
+        </div>
+        ${renderTermLedgerHtml(summary.terms.term1)}
+
+        <!-- Term 2 Ledger -->
+        <div class="term-section-header">
+          <span>TERM 2 LEDGER — Expected Fee: ${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+          <span>Status: ${summary.terms.term2.status.toUpperCase()}</span>
+        </div>
+        ${renderTermLedgerHtml(summary.terms.term2)}
+
+        <!-- Term 3 Ledger -->
+        <div class="term-section-header">
+          <span>TERM 3 LEDGER — Expected Fee: ${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+          <span>Status: ${summary.terms.term3.status.toUpperCase()}</span>
+        </div>
+        ${renderTermLedgerHtml(summary.terms.term3)}
+
+        <h3 style="font-size: 13px; color: #1e1b4b; margin: 20px 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px;">3. Annual Payment Receipts & Reference Register</h3>
         <table>
           <thead>
             <tr>
-              <th>Date</th>
+              <th>Date Paid</th>
               <th>Receipt No.</th>
               <th>Term</th>
-              <th>Method</th>
-              <th>Reference / Code</th>
+              <th>Payment Ref No.</th>
+              <th>Channel</th>
+              <th>Payer</th>
               <th class="text-right">Amount Paid</th>
             </tr>
           </thead>
           <tbody>
             ${allStudentPayments.length === 0 ? `
-              <tr><td colspan="6" class="text-center" style="color: #94a3b8; padding: 20px;">No payments recorded for this academic year yet.</td></tr>
+              <tr><td colspan="7" class="text-center" style="color: #94a3b8; padding: 18px;">No payments recorded for this academic year yet.</td></tr>
             ` : allStudentPayments.map(p => `
               <tr>
                 <td>${new Date(p.payment_date).toLocaleDateString()}</td>
                 <td class="font-mono" style="font-weight: 600; color: #4338ca;">${p.receipt_number}</td>
                 <td>${p.term}</td>
-                <td style="text-transform: uppercase;">${p.payment_method}</td>
-                <td class="font-mono text-xs">${p.reference_number || '-'}</td>
+                <td>
+                  <span class="font-mono" style="font-weight: 700; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; font-size: 11px;">
+                    ${p.reference_number || '-'}
+                  </span>
+                </td>
+                <td style="text-transform: uppercase; font-size: 11px;">${p.payment_method}</td>
+                <td>${p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian'))}</td>
                 <td class="text-right font-mono" style="font-weight: 700; color: #059669;">${currency} ${Number(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
               </tr>
             `).join('')}

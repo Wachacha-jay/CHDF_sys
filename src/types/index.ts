@@ -796,6 +796,10 @@ export interface SchoolFeePayment {
   bank_account?: Account;
   department?: Department;
   fund?: FundAccount;
+  term_expected_fee?: number;
+  term_total_billed?: number;
+  balance_before_payment?: number;
+  balance_after_payment?: number;
 }
 
 export interface StudentFeeTermSummary {

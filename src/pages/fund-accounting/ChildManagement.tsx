@@ -9,7 +9,8 @@ import {
   UserPlus, Search, Filter, GraduationCap, Plus,
   Calendar, ArrowDownLeft, Receipt, DollarSign, AlertCircle,
   Printer, Trash2, Eye, Edit2, X, School, CheckCircle2, AlertTriangle, ArrowRight,
-  TrendingUp, CreditCard, ChevronRight, Layers, FileText, Heart
+  TrendingUp, CreditCard, ChevronRight, Layers, FileText, Heart,
+  ChevronDown, Download, Hash
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { usePagination } from '../../hooks/usePagination';
@@ -119,6 +120,8 @@ const ChildManagement: React.FC = () => {
 
   // Statement View Modal State
   const [viewingStatementSummary, setViewingStatementSummary] = useState<StudentFeeYearSummary | null>(null);
+  const [statementModalTerm, setStatementModalTerm] = useState<'all' | 'term1' | 'term2' | 'term3'>('all');
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
 
   // Fee Structure Modal State
   const [showStructureModal, setShowStructureModal] = useState(false);
@@ -585,6 +588,46 @@ const ChildManagement: React.FC = () => {
     return Array.from(set);
   }, [children]);
 
+  const handleExportAllSummariesCsv = () => {
+    const rows: string[][] = [
+      [`ALL STUDENTS FEE STATEMENTS & 3-TERM BALANCES - ${selectedAcademicYear || currentYear}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      [`Student Name`, `Student Code`, `Class`, `Annual Expected (KSh)`, `Term 1 Expected`, `Term 1 Paid`, `Term 1 Closing`, `Term 2 Expected`, `Term 2 Paid`, `Term 2 Closing`, `Term 3 Expected`, `Term 3 Paid`, `Term 3 Closing`, `Total Paid (KSh)`, `Net Balance (KSh)`, `Standing`]
+    ];
+
+    filteredStudentSummaries.forEach(s => {
+      rows.push([
+        `"${s.child.first_name} ${s.child.last_name}"`,
+        s.child.code || 'N/A',
+        s.child.class_name || 'N/A',
+        s.total_expected.toFixed(2),
+        s.terms.term1.expected_fee.toFixed(2),
+        s.terms.term1.paid_amount.toFixed(2),
+        s.terms.term1.closing_balance.toFixed(2),
+        s.terms.term2.expected_fee.toFixed(2),
+        s.terms.term2.paid_amount.toFixed(2),
+        s.terms.term2.closing_balance.toFixed(2),
+        s.terms.term3.expected_fee.toFixed(2),
+        s.terms.term3.paid_amount.toFixed(2),
+        s.terms.term3.closing_balance.toFixed(2),
+        s.total_paid.toFixed(2),
+        s.net_balance.toFixed(2),
+        s.status.toUpperCase()
+      ]);
+    });
+
+    const csvContent = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Students_Fee_Balances_${selectedAcademicYear || currentYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* HEADER SECTION */}
@@ -915,14 +958,24 @@ const ChildManagement: React.FC = () => {
                   ))}
                 </select>
               </div>
+
+              <button
+                onClick={handleExportAllSummariesCsv}
+                className="px-3.5 py-1.5 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+                title="Export all student statements summary to CSV"
+              >
+                <Download size={14} className="text-gray-500" />
+                Export CSV
+              </button>
             </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto w-full">
-              <table className="w-full text-left min-w-[1050px]">
+              <table className="w-full text-left min-w-[1100px]">
                 <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
                   <tr>
+                    <th className="w-10 px-3 py-4 text-center"></th>
                     <th className="px-6 py-4 font-semibold">Student & Code</th>
                     <th className="px-6 py-4 font-semibold">Class</th>
                     <th className="px-6 py-4 font-semibold text-right">Annual Expected</th>
@@ -935,86 +988,269 @@ const ChildManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-sm">
-                  {studentSummariesPagination.paginatedData.map((summary) => (
-                    <tr key={summary.child_id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="font-bold text-gray-900">{summary.child.first_name} {summary.child.last_name}</div>
-                        <div className="text-xs font-mono text-gray-400">{summary.child.code}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                          {summary.child.class_name || 'N/A'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right font-mono font-bold text-gray-800">
-                        KSh {summary.total_expected.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term1.paid_amount.toLocaleString()}</div>
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
-                          summary.terms.term1.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {summary.terms.term1.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term1.closing_balance).toLocaleString()}` : (summary.terms.term1.closing_balance > 0 ? `Due ${summary.terms.term1.closing_balance.toLocaleString()}` : 'Cleared')}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term2.paid_amount.toLocaleString()}</div>
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
-                          summary.terms.term2.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {summary.terms.term2.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term2.closing_balance).toLocaleString()}` : (summary.terms.term2.closing_balance > 0 ? `Due ${summary.terms.term2.closing_balance.toLocaleString()}` : 'Cleared')}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term3.paid_amount.toLocaleString()}</div>
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
-                          summary.terms.term3.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {summary.terms.term3.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term3.closing_balance).toLocaleString()}` : (summary.terms.term3.closing_balance > 0 ? `Due ${summary.terms.term3.closing_balance.toLocaleString()}` : 'Cleared')}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right font-mono font-bold text-emerald-600">
-                        KSh {summary.total_paid.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        {summary.net_balance > 0 ? (
-                          <div className="text-right">
-                            <span className="font-mono font-bold text-rose-600">KSh {summary.net_balance.toLocaleString()}</span>
-                            <div className="text-[10px] font-bold uppercase text-rose-500">Balance Arrears</div>
-                          </div>
-                        ) : summary.net_balance < 0 ? (
-                          <div className="text-right">
-                            <span className="font-mono font-bold text-indigo-600">(KSh {Math.abs(summary.net_balance).toLocaleString()})</span>
-                            <div className="text-[10px] font-bold uppercase text-indigo-500">Overpaid Credit</div>
-                          </div>
-                        ) : (
-                          <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold">
-                            Fully Cleared
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-1.5">
-                          <button
-                            onClick={() => setViewingStatementSummary(summary)}
-                            className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors"
-                          >
-                            <FileText size={14} />
-                            View
-                          </button>
-                          {canManageFees && (
+                  {studentSummariesPagination.paginatedData.map((summary) => {
+                    const isExpanded = expandedStudentId === summary.child_id;
+                    return (
+                      <React.Fragment key={summary.child_id}>
+                        <tr className={`hover:bg-gray-50/50 transition-colors ${isExpanded ? 'bg-indigo-50/30' : ''}`}>
+                          <td className="px-3 py-4 text-center">
                             <button
-                              onClick={() => openPaymentModal(summary.child.id)}
-                              className="px-2.5 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors"
-                              title="Record Payment"
+                              onClick={() => setExpandedStudentId(isExpanded ? null : summary.child_id)}
+                              className={`p-1.5 rounded-lg transition-colors ${
+                                isExpanded ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                              }`}
+                              title={isExpanded ? 'Collapse payments drawer' : 'Expand payments tracking & balance reduction'}
                             >
-                              <Plus size={14} />
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-gray-900">{summary.child.first_name} {summary.child.last_name}</div>
+                            <div className="text-xs font-mono text-gray-400">{summary.child.code}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs font-medium">
+                              {summary.child.class_name || 'N/A'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-gray-800">
+                            KSh {summary.total_expected.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term1.paid_amount.toLocaleString()}</div>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
+                              summary.terms.term1.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {summary.terms.term1.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term1.closing_balance).toLocaleString()}` : (summary.terms.term1.closing_balance > 0 ? `Due ${summary.terms.term1.closing_balance.toLocaleString()}` : 'Cleared')}
+                            </span>
+                            {summary.terms.term1.payments.length > 0 ? (
+                              <div className="text-[10px] text-gray-500 font-mono mt-0.5 flex items-center justify-center gap-1">
+                                <span className="font-semibold text-indigo-700">{summary.terms.term1.payments.length} pay</span>
+                                {summary.terms.term1.payments[summary.terms.term1.payments.length - 1]?.reference_number && (
+                                  <span className="bg-gray-100 px-1 py-0.2 rounded text-[9px] text-gray-600 truncate inline-block max-w-[80px]" title={`Latest Ref: ${summary.terms.term1.payments[summary.terms.term1.payments.length - 1].reference_number}`}>
+                                    Ref: {summary.terms.term1.payments[summary.terms.term1.payments.length - 1].reference_number}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-gray-400 mt-0.5">No payments</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term2.paid_amount.toLocaleString()}</div>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
+                              summary.terms.term2.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {summary.terms.term2.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term2.closing_balance).toLocaleString()}` : (summary.terms.term2.closing_balance > 0 ? `Due ${summary.terms.term2.closing_balance.toLocaleString()}` : 'Cleared')}
+                            </span>
+                            {summary.terms.term2.payments.length > 0 ? (
+                              <div className="text-[10px] text-gray-500 font-mono mt-0.5 flex items-center justify-center gap-1">
+                                <span className="font-semibold text-indigo-700">{summary.terms.term2.payments.length} pay</span>
+                                {summary.terms.term2.payments[summary.terms.term2.payments.length - 1]?.reference_number && (
+                                  <span className="bg-gray-100 px-1 py-0.2 rounded text-[9px] text-gray-600 truncate inline-block max-w-[80px]" title={`Latest Ref: ${summary.terms.term2.payments[summary.terms.term2.payments.length - 1].reference_number}`}>
+                                    Ref: {summary.terms.term2.payments[summary.terms.term2.payments.length - 1].reference_number}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-gray-400 mt-0.5">No payments</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <div className="font-mono text-xs font-semibold text-gray-700">KSh {summary.terms.term3.paid_amount.toLocaleString()}</div>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold mt-0.5 ${
+                              summary.terms.term3.closing_balance <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {summary.terms.term3.closing_balance < 0 ? `Credit -${Math.abs(summary.terms.term3.closing_balance).toLocaleString()}` : (summary.terms.term3.closing_balance > 0 ? `Due ${summary.terms.term3.closing_balance.toLocaleString()}` : 'Cleared')}
+                            </span>
+                            {summary.terms.term3.payments.length > 0 ? (
+                              <div className="text-[10px] text-gray-500 font-mono mt-0.5 flex items-center justify-center gap-1">
+                                <span className="font-semibold text-indigo-700">{summary.terms.term3.payments.length} pay</span>
+                                {summary.terms.term3.payments[summary.terms.term3.payments.length - 1]?.reference_number && (
+                                  <span className="bg-gray-100 px-1 py-0.2 rounded text-[9px] text-gray-600 truncate inline-block max-w-[80px]" title={`Latest Ref: ${summary.terms.term3.payments[summary.terms.term3.payments.length - 1].reference_number}`}>
+                                    Ref: {summary.terms.term3.payments[summary.terms.term3.payments.length - 1].reference_number}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-gray-400 mt-0.5">No payments</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-emerald-600">
+                            KSh {summary.total_paid.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            {summary.net_balance > 0 ? (
+                              <div className="text-right">
+                                <span className="font-mono font-bold text-rose-600">KSh {summary.net_balance.toLocaleString()}</span>
+                                <div className="text-[10px] font-bold uppercase text-rose-500">Balance Arrears</div>
+                              </div>
+                            ) : summary.net_balance < 0 ? (
+                              <div className="text-right">
+                                <span className="font-mono font-bold text-indigo-600">(KSh {Math.abs(summary.net_balance).toLocaleString()})</span>
+                                <div className="text-[10px] font-bold uppercase text-indigo-500">Overpaid Credit</div>
+                              </div>
+                            ) : (
+                              <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold">
+                                Fully Cleared
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => setViewingStatementSummary(summary)}
+                                className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors"
+                              >
+                                <FileText size={14} />
+                                Statement
+                              </button>
+                              {canManageFees && (
+                                <button
+                                  onClick={() => openPaymentModal(summary.child.id)}
+                                  className="px-2.5 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors"
+                                  title="Record Payment"
+                                >
+                                  <Plus size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* EXPANDED ROW: INLINE PAYMENT LEDGER & BALANCE REDUCTION TRACKING */}
+                        {isExpanded && (
+                          <tr className="bg-slate-50/80 border-b border-indigo-100">
+                            <td colSpan={10} className="px-6 py-5">
+                              <div className="bg-white rounded-2xl p-5 border border-indigo-100 shadow-sm space-y-4">
+                                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
+                                  <div>
+                                    <h4 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                                      <Receipt size={16} className="text-indigo-600" />
+                                      Detailed Payment Tracking & Fee Reduction — {summary.child.first_name} {summary.child.last_name} ({summary.child.code})
+                                    </h4>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                      Guardian: <strong>{summary.child.guardian?.name || 'N/A'}</strong> ({summary.child.guardian?.phone || 'No phone'}) • Academic Year {summary.academic_year}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => setViewingStatementSummary(summary)}
+                                      className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                                    >
+                                      <FileText size={14} />
+                                      Full Statement Modal
+                                    </button>
+                                    <button
+                                      onClick={() => SchoolFeeService.printStudentFeeStatement(summary, businessSettings)}
+                                      className="px-3 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+                                    >
+                                      <Printer size={14} />
+                                      Print Official Statement
+                                    </button>
+                                    <button
+                                      onClick={() => SchoolFeeService.exportStudentFeeStatementCsv(summary, businessSettings?.default_currency || 'KSh')}
+                                      className="px-3 py-1.5 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                                      title="Export CSV Statement"
+                                    >
+                                      <Download size={14} />
+                                      Export CSV
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* 3-Term Side-by-Side Breakdown Cards */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                  {[summary.terms.term1, summary.terms.term2, summary.terms.term3].map((t) => (
+                                    <div key={t.term} className="bg-gray-50/70 border border-gray-200 rounded-xl p-4 flex flex-col justify-between">
+                                      <div>
+                                        <div className="flex items-center justify-between border-b border-gray-200 pb-2 mb-3">
+                                          <div>
+                                            <span className="font-extrabold text-gray-900 text-sm">{t.term}</span>
+                                            <div className="text-[11px] text-gray-500">
+                                              Expected Fee: <strong className="text-gray-800">KSh {t.expected_fee.toLocaleString()}</strong>
+                                              {t.opening_balance !== 0 && (
+                                                <span> • BF: <strong>KSh {t.opening_balance.toLocaleString()}</strong></span>
+                                              )}
+                                            </div>
+                                          </div>
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                            t.status === 'paid' ? 'bg-emerald-100 text-emerald-800' :
+                                            t.status === 'overpaid' ? 'bg-indigo-100 text-indigo-800' :
+                                            t.status === 'partial' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                                          }`}>
+                                            {t.status}
+                                          </span>
+                                        </div>
+
+                                        {t.payments.length === 0 ? (
+                                          <div className="text-center py-6 text-gray-400 text-xs">
+                                            <AlertCircle size={20} className="mx-auto text-gray-300 mb-1" />
+                                            No payments recorded yet.
+                                            <div className="font-mono font-bold text-gray-600 mt-1">Due: KSh {t.closing_balance.toLocaleString()}</div>
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-2.5">
+                                            <div className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">
+                                              Payments & Balance Reduction ({t.payments.length})
+                                            </div>
+                                            {t.payments.map((p, idx) => {
+                                              const beforeBal = p.balance_before_payment ?? t.total_billed;
+                                              const afterBal = p.balance_after_payment ?? (beforeBal - Number(p.amount || 0));
+                                              return (
+                                                <div key={p.id || idx} className="bg-white p-2.5 rounded-xl border border-gray-200 shadow-2xs text-xs space-y-1.5">
+                                                  <div className="flex items-center justify-between font-mono">
+                                                    <span className="text-gray-500 flex items-center gap-1 text-[11px]">
+                                                      <Calendar size={11} className="text-gray-400" />
+                                                      {p.payment_date ? String(p.payment_date).slice(0, 10) : 'N/A'}
+                                                    </span>
+                                                    <span className="font-bold text-emerald-600">
+                                                      +KSh {Number(p.amount).toLocaleString()}
+                                                    </span>
+                                                  </div>
+
+                                                  <div className="flex items-center justify-between text-[11px]">
+                                                    <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                                      Ref: {p.reference_number || p.receipt_number}
+                                                    </span>
+                                                    <span className="text-[10px] uppercase font-bold text-gray-500">
+                                                      {p.payment_method}
+                                                    </span>
+                                                  </div>
+
+                                                  <div className="pt-1 border-t border-dashed border-gray-100 flex items-center justify-between text-[11px]">
+                                                    <span className="text-gray-400">Term Balance Reduction:</span>
+                                                    <span className="font-mono font-bold">
+                                                      <span className="text-gray-400 line-through mr-1">KSh {beforeBal.toLocaleString()}</span>
+                                                      <span className={afterBal <= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                                                        {afterBal < 0 ? `(${Math.abs(afterBal).toLocaleString()}) Credit` : `KSh ${afterBal.toLocaleString()}`}
+                                                      </span>
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      <div className="mt-4 pt-3 border-t border-gray-200 flex items-center justify-between text-xs">
+                                        <span className="text-gray-500 font-medium">Closing Standing:</span>
+                                        <span className={`font-mono font-black ${t.closing_balance > 0 ? 'text-rose-600' : (t.closing_balance < 0 ? 'text-indigo-600' : 'text-emerald-600')}`}>
+                                          {t.closing_balance < 0 ? `(${Math.abs(t.closing_balance).toLocaleString()}) Credit` : (t.closing_balance === 0 ? '✓ Fully Cleared' : `KSh ${t.closing_balance.toLocaleString()} Due`)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1130,8 +1366,12 @@ const ChildManagement: React.FC = () => {
                       </td>
                       <td className="px-6 py-4">
                         <span className="uppercase text-xs font-bold text-gray-700">{payment.payment_method}</span>
-                        {payment.reference_number && (
-                          <div className="text-xs font-mono text-gray-500">{payment.reference_number}</div>
+                        {payment.reference_number ? (
+                          <div className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded mt-1 inline-block">
+                            Ref: {payment.reference_number}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 mt-0.5">No ref</div>
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -1700,27 +1940,232 @@ const ChildManagement: React.FC = () => {
                 </div>
               </div>
 
+              {/* ITEMIZED PAYMENTS & BALANCE REDUCTION LEDGER */}
+              <div className="space-y-4 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider flex items-center gap-2">
+                      <Receipt size={16} className="text-indigo-600" />
+                      Itemized Payment Ledger & Balance Reduction
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Tracking payment date, payment reference number, and sequential reduction against expected term fee.
+                    </p>
+                  </div>
+
+                  {/* Term Filter Pills */}
+                  <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-bold self-start">
+                    <button
+                      type="button"
+                      onClick={() => setStatementModalTerm('all')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                        statementModalTerm === 'all' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      All Terms (Yearly)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatementModalTerm('term1')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                        statementModalTerm === 'term1' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Term 1 ({viewingStatementSummary.terms.term1.payments.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatementModalTerm('term2')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                        statementModalTerm === 'term2' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Term 2 ({viewingStatementSummary.terms.term2.payments.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatementModalTerm('term3')}
+                      className={`px-3 py-1.5 rounded-lg transition-colors ${
+                        statementModalTerm === 'term3' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Term 3 ({viewingStatementSummary.terms.term3.payments.length})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Displayed Term Ledgers */}
+                <div className="space-y-4">
+                  {[
+                    statementModalTerm === 'all' || statementModalTerm === 'term1' ? viewingStatementSummary.terms.term1 : null,
+                    statementModalTerm === 'all' || statementModalTerm === 'term2' ? viewingStatementSummary.terms.term2 : null,
+                    statementModalTerm === 'all' || statementModalTerm === 'term3' ? viewingStatementSummary.terms.term3 : null
+                  ].filter(Boolean).map((t) => {
+                    const termSummary = t as StudentFeeTermSummary;
+                    return (
+                      <div key={termSummary.term} className="bg-gray-50/60 border border-gray-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200/80 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-gray-900 text-sm">{termSummary.term}</span>
+                            <span className="text-xs text-gray-500 font-mono">
+                              • Expected Fee: <strong className="text-gray-800">KSh {termSummary.expected_fee.toLocaleString()}</strong>
+                              {termSummary.opening_balance !== 0 && (
+                                <span> (Opening BF: <strong>KSh {termSummary.opening_balance.toLocaleString()}</strong>)</span>
+                              )}
+                              <span> • Total Billed: <strong className="text-gray-900">KSh {termSummary.total_billed.toLocaleString()}</strong></span>
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-600">
+                              Paid: <strong className="text-emerald-600 font-mono font-bold">KSh {termSummary.paid_amount.toLocaleString()}</strong>
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              termSummary.status === 'paid' ? 'bg-emerald-100 text-emerald-800' :
+                              termSummary.status === 'overpaid' ? 'bg-indigo-100 text-indigo-800' :
+                              termSummary.status === 'partial' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {termSummary.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        {termSummary.payments.length === 0 ? (
+                          <div className="bg-white rounded-xl p-4 text-center border border-dashed border-gray-200 text-xs text-gray-500">
+                            <AlertCircle size={18} className="mx-auto text-gray-300 mb-1" />
+                            No payments recorded for {termSummary.term} yet.
+                            <div className="font-mono font-bold text-gray-800 mt-0.5">
+                              Full expected payment remaining: KSh {termSummary.closing_balance.toLocaleString()}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-2xs">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-50 border-b border-gray-200 text-gray-500 uppercase tracking-wider font-bold">
+                                <tr>
+                                  <th className="px-3.5 py-2.5">Date Paid</th>
+                                  <th className="px-3.5 py-2.5">Payment Ref No.</th>
+                                  <th className="px-3.5 py-2.5">Receipt #</th>
+                                  <th className="px-3.5 py-2.5">Method</th>
+                                  <th className="px-3.5 py-2.5">Payer / Source</th>
+                                  <th className="px-3.5 py-2.5 text-right">Amount Paid</th>
+                                  <th className="px-3.5 py-2.5 text-right">Balance Reduction Progress</th>
+                                  <th className="px-3.5 py-2.5 text-center">Receipt</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {termSummary.payments.map((p, pIdx) => {
+                                  const beforeBal = p.balance_before_payment ?? termSummary.total_billed;
+                                  const afterBal = p.balance_after_payment ?? (beforeBal - Number(p.amount || 0));
+                                  return (
+                                    <tr key={p.id || pIdx} className="hover:bg-gray-50/50">
+                                      <td className="px-3.5 py-2.5 font-mono text-gray-700 whitespace-nowrap">
+                                        <div className="flex items-center gap-1">
+                                          <Calendar size={12} className="text-gray-400" />
+                                          {p.payment_date ? String(p.payment_date).slice(0, 10) : 'N/A'}
+                                        </div>
+                                      </td>
+                                      <td className="px-3.5 py-2.5 font-mono">
+                                        <span className="font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[11px] inline-block">
+                                          {p.reference_number || 'N/A'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3.5 py-2.5 font-mono text-gray-500 font-semibold whitespace-nowrap">
+                                        {p.receipt_number}
+                                      </td>
+                                      <td className="px-3.5 py-2.5 uppercase font-bold text-gray-600">
+                                        {p.payment_method}
+                                      </td>
+                                      <td className="px-3.5 py-2.5 text-gray-800">
+                                        <span className="truncate max-w-[130px] inline-block">
+                                          {p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (viewingStatementSummary.child.guardian?.name || 'Guardian'))}
+                                        </span>
+                                      </td>
+                                      <td className="px-3.5 py-2.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
+                                        +KSh {Number(p.amount).toLocaleString()}
+                                      </td>
+                                      <td className="px-3.5 py-2.5 text-right font-mono whitespace-nowrap">
+                                        <div className="flex items-center justify-end gap-1.5">
+                                          <span className="text-gray-400 line-through text-[11px]">
+                                            KSh {beforeBal.toLocaleString()}
+                                          </span>
+                                          <ArrowRight size={11} className="text-gray-400" />
+                                          <span className={`font-bold ${afterBal <= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                            {afterBal < 0 ? `(${Math.abs(afterBal).toLocaleString()}) Cr` : `KSh ${afterBal.toLocaleString()}`}
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td className="px-3.5 py-2.5 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => SchoolFeeService.printSchoolFeeReceipt(p, termSummary, businessSettings)}
+                                          className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                          title="Print Individual Payment Receipt"
+                                        >
+                                          <Printer size={13} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                              <tfoot className="bg-gray-50/80 border-t border-gray-200 font-bold text-xs">
+                                <tr>
+                                  <td colSpan={5} className="px-3.5 py-2 text-gray-600">
+                                    {termSummary.term} Closing Standing (Billed: KSh {termSummary.total_billed.toLocaleString()} - Paid: KSh {termSummary.paid_amount.toLocaleString()})
+                                  </td>
+                                  <td className="px-3.5 py-2 text-right font-mono text-emerald-600">
+                                    KSh {termSummary.paid_amount.toLocaleString()}
+                                  </td>
+                                  <td className={`px-3.5 py-2 text-right font-mono font-black ${termSummary.closing_balance > 0 ? 'text-rose-600' : (termSummary.closing_balance < 0 ? 'text-indigo-600' : 'text-emerald-600')}`}>
+                                    {termSummary.closing_balance < 0 
+                                      ? `(${Math.abs(termSummary.closing_balance).toLocaleString()}) Credit CF` 
+                                      : (termSummary.closing_balance === 0 ? '✓ Cleared' : `KSh ${termSummary.closing_balance.toLocaleString()} Due`)}
+                                  </td>
+                                  <td></td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Actions */}
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-100">
                 <button
+                  type="button"
                   onClick={() => SchoolFeeService.printStudentFeeStatement(viewingStatementSummary, businessSettings)}
-                  className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-100 text-sm flex items-center justify-center gap-2"
+                  className="flex-1 min-w-[200px] bg-indigo-600 text-white py-2.5 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-100 text-sm flex items-center justify-center gap-2"
                 >
                   <Printer size={16} />
                   Print Official Statement
                 </button>
                 <button
+                  type="button"
+                  onClick={() => SchoolFeeService.exportStudentFeeStatementCsv(viewingStatementSummary, businessSettings?.default_currency || 'KSh')}
+                  className="flex-1 min-w-[170px] bg-white text-gray-700 border border-gray-200 py-2.5 rounded-xl font-bold hover:bg-gray-50 transition-colors shadow-xs text-sm flex items-center justify-center gap-2"
+                >
+                  <Download size={16} className="text-gray-500" />
+                  Export CSV Statement
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     const childId = viewingStatementSummary.child.id;
                     setViewingStatementSummary(null);
                     openPaymentModal(childId);
                   }}
-                  className="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-md shadow-emerald-100 text-sm flex items-center justify-center gap-2"
+                  className="flex-1 min-w-[150px] bg-emerald-600 text-white py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-md shadow-emerald-100 text-sm flex items-center justify-center gap-2"
                 >
                   <CreditCard size={16} />
                   Record Payment
                 </button>
                 <button
+                  type="button"
                   onClick={() => setViewingStatementSummary(null)}
                   className="px-6 py-2.5 bg-gray-100 text-gray-700 font-bold hover:bg-gray-200 rounded-xl text-sm"
                 >
