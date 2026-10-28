@@ -1667,11 +1667,12 @@ router.get('/summary', authenticate, async (req, res): Promise<void> => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// P9 FORM - Annual tax deduction summary for an employee
+// P9 FORM & WORKER PAYMENT SCHEDULE - Annual statement & tax deduction summary
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/employees/:id/p9', authenticate, async (req, res): Promise<void> => {
   const { id: employee_id } = req.params;
-  const year = req.query.year ? Number(req.query.year) : new Date().getFullYear() - 1;
+  const currentYear = new Date().getFullYear();
+  const year = req.query.year ? Number(req.query.year) : currentYear;
   try {
     const [empRows]: any = await pool.query('SELECT * FROM employees WHERE id = ?', [employee_id]);
     if (empRows.length === 0) {
@@ -1685,25 +1686,104 @@ router.get('/employees/:id/p9', authenticate, async (req, res): Promise<void> =>
 
     const [runs]: any = await pool.query(`
       SELECT
-        pr.gross_pay, pr.tax_deduction, pr.nhif_deduction, pr.nssf_deduction,
-        pr.housing_levy_deduction, pr.sacco_welfare_deduction, pr.other_deductions, pr.net_pay,
-        pp.period_name, pp.start_date
+        pr.id,
+        pr.payroll_period_id,
+        pr.basic_salary,
+        pr.overtime_hours,
+        pr.overtime_pay,
+        pr.holiday_hours,
+        pr.holiday_pay,
+        pr.allowances,
+        pr.bonuses,
+        pr.gross_pay,
+        pr.tax_deduction,
+        pr.nhif_deduction,
+        pr.nssf_deduction,
+        pr.housing_levy_deduction,
+        pr.sacco_welfare_deduction,
+        pr.other_deductions,
+        pr.net_pay,
+        pr.notes,
+        pr.status,
+        pr.paid_date,
+        pr.payment_reference,
+        pr.payment_account_id,
+        pa.name as payment_account_name,
+        pa.code as payment_account_code,
+        pp.period_name,
+        pp.start_date,
+        pp.end_date,
+        pp.pay_date
       FROM payroll_runs pr
       JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+      LEFT JOIN accounts pa ON pr.payment_account_id = pa.id
       WHERE pr.employee_id = ?
-        AND pp.start_date >= ?
-        AND pp.end_date <= ?
+        AND (
+          YEAR(pp.start_date) = ?
+          OR YEAR(pp.end_date) = ?
+          OR (pr.paid_date IS NOT NULL AND YEAR(pr.paid_date) = ?)
+          OR pp.period_name LIKE CONCAT('%', ?, '%')
+        )
       ORDER BY pp.start_date ASC
-    `, [employee_id, year + '-01-01', year + '-12-31']);
+    `, [employee_id, year, year, year, String(year)]);
+
+    // Fetch any disbursement lines for these runs
+    const runIds = runs.map((r: any) => r.id);
+    const disbMap: Record<string, any[]> = {};
+    if (runIds.length > 0) {
+      try {
+        const [disbRows]: any = await pool.query(`
+          SELECT pd.*, pa.name as account_name
+          FROM payroll_disbursements pd
+          LEFT JOIN accounts pa ON pd.payment_account_id = pa.id
+          WHERE pd.payroll_run_id IN (?)
+          ORDER BY pd.payment_date ASC, pd.created_at ASC
+        `, [runIds]);
+        for (const d of (disbRows || [])) {
+          if (!disbMap[d.payroll_run_id]) disbMap[d.payroll_run_id] = [];
+          disbMap[d.payroll_run_id].push(d);
+        }
+      } catch (_) {}
+    }
 
     const MONTHS = ['January','February','March','April','May','June',
                     'July','August','September','October','November','December'];
 
-    const monthly_data = runs.map((r: any) => {
-      const d = new Date(r.start_date);
+    const payment_schedule = runs.map((r: any) => {
+      const d = new Date(r.start_date || r.paid_date);
+      const runDisbursements = disbMap[r.id] || [];
+      const refNumbers = [
+        r.payment_reference,
+        ...runDisbursements.map((d: any) => d.payment_reference)
+      ].filter(Boolean);
+      const uniqueRefs = Array.from(new Set(refNumbers)).join(', ');
+
+      const paidDate = r.paid_date
+        ? String(r.paid_date).slice(0, 10)
+        : (runDisbursements[0]?.payment_date ? String(runDisbursements[0].payment_date).slice(0, 10) : (r.pay_date ? String(r.pay_date).slice(0, 10) : String(r.end_date).slice(0, 10)));
+
+      const totalDeductions = (Number(r.tax_deduction) || 0) +
+        (Number(r.nhif_deduction) || 0) +
+        (Number(r.nssf_deduction) || 0) +
+        (Number(r.housing_levy_deduction) || 0) +
+        (Number(r.sacco_welfare_deduction) || 0) +
+        (Number(r.other_deductions) || 0);
+
+      const mIdx = d.getMonth();
+
       return {
-        month: d.getMonth() + 1,
-        month_name: MONTHS[d.getMonth()],
+        id: r.id,
+        payroll_period_id: r.payroll_period_id,
+        period_name: r.period_name,
+        month: mIdx + 1,
+        month_name: MONTHS[mIdx] || 'Month',
+        period_start: r.start_date ? String(r.start_date).slice(0, 10) : '',
+        period_end: r.end_date ? String(r.end_date).slice(0, 10) : '',
+        paid_date: paidDate,
+        payment_reference: uniqueRefs || r.payment_reference || 'N/A',
+        payment_account_name: r.payment_account_name || runDisbursements[0]?.account_name || 'Operating Bank / Cash',
+        basic_salary: Number(r.basic_salary) || 0,
+        allowances: (Number(r.allowances) || 0) + (Number(r.bonuses) || 0) + (Number(r.overtime_pay) || 0),
         gross_pay: Number(r.gross_pay) || 0,
         tax_deduction: Number(r.tax_deduction) || 0,
         nhif_deduction: Number(r.nhif_deduction) || 0,
@@ -1711,42 +1791,104 @@ router.get('/employees/:id/p9', authenticate, async (req, res): Promise<void> =>
         housing_levy_deduction: Number(r.housing_levy_deduction) || 0,
         sacco_welfare_deduction: Number(r.sacco_welfare_deduction) || 0,
         other_deductions: Number(r.other_deductions) || 0,
+        total_deductions: totalDeductions,
         net_pay: Number(r.net_pay) || 0,
-        period_name: r.period_name,
+        status: r.status || 'paid',
+        notes: r.notes || '',
+        disbursements: runDisbursements
       };
     });
 
-    const totals = monthly_data.reduce((acc: any, m: any) => {
+    const monthly_data = payment_schedule.map((p: any) => ({
+      month: p.month,
+      month_name: p.month_name,
+      gross_pay: p.gross_pay,
+      tax_deduction: p.tax_deduction,
+      nhif_deduction: p.nhif_deduction,
+      nssf_deduction: p.nssf_deduction,
+      housing_levy_deduction: p.housing_levy_deduction,
+      sacco_welfare_deduction: p.sacco_welfare_deduction,
+      other_deductions: p.other_deductions,
+      total_deductions: p.total_deductions,
+      net_pay: p.net_pay,
+      period_name: p.period_name,
+      paid_date: p.paid_date,
+      payment_reference: p.payment_reference,
+    }));
+
+    const totals = payment_schedule.reduce((acc: any, m: any) => {
+      acc.total_basic += m.basic_salary;
+      acc.total_allowances += m.allowances;
       acc.total_gross += m.gross_pay;
       acc.total_tax += m.tax_deduction;
       acc.total_nhif += m.nhif_deduction;
       acc.total_nssf += m.nssf_deduction;
       acc.total_housing_levy += m.housing_levy_deduction;
       acc.total_sacco_welfare += m.sacco_welfare_deduction;
+      acc.total_other_deductions += m.other_deductions;
+      acc.total_deductions += m.total_deductions;
       acc.total_net += m.net_pay;
       return acc;
-    }, { total_gross: 0, total_tax: 0, total_nhif: 0, total_nssf: 0, total_housing_levy: 0, total_sacco_welfare: 0, total_net: 0 });
+    }, {
+      total_basic: 0,
+      total_allowances: 0,
+      total_gross: 0,
+      total_tax: 0,
+      total_nhif: 0,
+      total_nssf: 0,
+      total_housing_levy: 0,
+      total_sacco_welfare: 0,
+      total_other_deductions: 0,
+      total_deductions: 0,
+      total_net: 0
+    });
+
+    const employeeObj = {
+      id: emp.id,
+      first_name: emp.first_name || '',
+      last_name: emp.last_name || '',
+      name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
+      tax_pin: emp.tax_pin || emp.kra_pin || '',
+      nssf_number: emp.nssf_number || '',
+      nhif_number: emp.nhif_number || emp.sha_number || '',
+      department: emp.department || '',
+      position: emp.position || '',
+      code: emp.code || emp.employee_code || '',
+      email: emp.email || '',
+      phone: emp.phone || '',
+      bank_name: emp.bank_name || '',
+      bank_account_no: emp.bank_account_no || '',
+    };
+
+    const businessObj = {
+      business_name: biz.business_name || 'EMPOWER SCHOOL / CHDF',
+      kra_pin: biz.kra_pin || '',
+      business_address: biz.business_address || '',
+      business_phone: biz.business_phone || '',
+      business_email: biz.business_email || '',
+      logo_url: biz.logo_url || '',
+    };
+
+    const payload = {
+      year,
+      employee_id,
+      employee: employeeObj,
+      business: businessObj,
+      monthly_data,
+      payment_schedule,
+      totals,
+    };
 
     res.json({
       success: true,
-      year,
-      employee_id,
-      employee: {
-        name: (emp.first_name + ' ' + emp.last_name).trim(),
-        tax_pin: emp.tax_pin || '',
-        nssf_number: emp.nssf_number || '',
-        nhif_number: emp.nhif_number || '',
-        department: emp.department || '',
-        position: emp.position || '',
-        code: emp.code || emp.employee_code || '',
-      },
-      business: {
-        business_name: biz.business_name || '',
-        kra_pin: biz.kra_pin || '',
-      },
-      monthly_data,
-      totals,
+      data: payload,
+      ...payload
     });
+  } catch (error: any) {
+    console.error('Error fetching P9 data:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
   } catch (error: any) {
     console.error('Error fetching P9 data:', error);
     res.status(500).json({ success: false, error: error.message });

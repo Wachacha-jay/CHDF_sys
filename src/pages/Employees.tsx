@@ -235,12 +235,17 @@ const Employees: React.FC = () => {
   const handleGenerateP9 = async (employee: Employee, year: number) => {
     setP9Loading(true);
     try {
-      const data = await apiClient.get<any>(`/payroll/employees/${employee.id}/p9?year=${year}`);
+      const res = await apiClient.get<any>(`/payroll/employees/${employee.id}/p9?year=${year}`);
+      const data = res?.data || res;
+      if (!data) {
+        throw new Error('No payroll statement data received');
+      }
       setP9Data(data);
       setShowP9Modal(true);
       setShowP9YearPicker(false);
-    } catch (error) {
-      toast.error('Failed to generate P9 form. Ensure payroll has been processed for this employee.');
+    } catch (error: any) {
+      console.error('Error generating P9/Payment statement:', error);
+      toast.error(error?.response?.data?.error || error.message || 'Failed to generate P9 form / payment statement. Ensure payroll has been processed for this employee.');
     } finally {
       setP9Loading(false);
     }
@@ -603,11 +608,11 @@ const Employees: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setP9Employee(employee);
-                                  setP9Year(new Date().getFullYear() - 1);
+                                  setP9Year(new Date().getFullYear());
                                   setShowP9YearPicker(true);
                                 }}
-                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg"
-                                title="Generate P9 Tax Form"
+                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="Generate Payment Statement & P9 Tax Form"
                               >
                                 <FileSpreadsheet className="h-4 w-4" />
                               </button>
@@ -1197,12 +1202,12 @@ const Employees: React.FC = () => {
       {showP9YearPicker && p9Employee && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-1">Generate P9 Form</h3>
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Generate Payment Statement &amp; P9</h3>
             <p className="text-sm text-slate-500 mb-4">
               {p9Employee.first_name} {p9Employee.last_name} ({p9Employee.code || 'No code'})
             </p>
             <div className="mb-4">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Tax Year</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Payroll / Tax Year</label>
               <select
                 value={p9Year}
                 onChange={e => setP9Year(Number(e.target.value))}
@@ -1225,9 +1230,19 @@ const Employees: React.FC = () => {
                 type="button"
                 onClick={() => handleGenerateP9(p9Employee, p9Year)}
                 disabled={p9Loading}
-                className="px-4 py-2 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium"
+                className="px-4 py-2 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium flex items-center gap-1.5"
               >
-                {p9Loading ? 'Generating...' : 'Generate P9'}
+                {p9Loading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Generate Statement &amp; P9
+                  </>
+                )}
               </button>
             </div>
           </div>

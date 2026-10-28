@@ -58,32 +58,32 @@ class ApiClient {
    * GET request
    */
   async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    const response = await axiosInstance.get<{ success: boolean; data: T }>(url, config);
-    return response.data.data;
+    const response = await axiosInstance.get<any>(url, config);
+    return response.data?.data !== undefined ? response.data.data : response.data;
   }
 
   /**
    * POST request
    */
   async post<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-    const response = await axiosInstance.post<{ success: boolean; data: T }>(url, data, config);
-    return response.data.data;
+    const response = await axiosInstance.post<any>(url, data, config);
+    return response.data?.data !== undefined ? response.data.data : response.data;
   }
 
   /**
    * PUT request
    */
   async put<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
-    const response = await axiosInstance.put<{ success: boolean; data: T }>(url, data, config);
-    return response.data.data;
+    const response = await axiosInstance.put<any>(url, data, config);
+    return response.data?.data !== undefined ? response.data.data : response.data;
   }
 
   /**
    * DELETE request
    */
   async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    const response = await axiosInstance.delete<{ success: boolean; data: T }>(url, config);
-    return response.data.data;
+    const response = await axiosInstance.delete<any>(url, config);
+    return response.data?.data !== undefined ? response.data.data : response.data;
   }
 
   /**
