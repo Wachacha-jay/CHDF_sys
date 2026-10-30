@@ -45,3 +45,67 @@
     @apply bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-xl transition-all active:scale-95 shadow-md shadow-indigo-200 dark:shadow-none;
   }
 }
+
+
+/* Global Multi-Page Print Continuity & Orphan Prevention */
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Repeat table column headers across all printed pages */
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  /* Prevent table rows and blocks from splitting awkwardly */
+  tr, .table-row {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Headings must never be orphaned at the bottom of a page */
+  h1, h2, h3, h4, h5, h6,
+  .section-title,
+  .term-section-header,
+  .category-header,
+  .table-header,
+  .header-row,
+  .card-header {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Keep summaries and cards unified */
+  .card,
+  .summary-grid,
+  .standing-box,
+  .profile-box,
+  .signature-block,
+  .report-footer,
+  .payment-info {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Prevent single-line orphans and widows */
+  p, div, td, th {
+    orphans: 3;
+    widows: 3;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

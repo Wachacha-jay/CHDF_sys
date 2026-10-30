@@ -7,6 +7,7 @@ import type { Purchase, BusinessSettings } from '../types';
 import RecordPaymentModal from '../components/inventory/RecordPaymentModal';
 import { ArrowLeft, Printer, CreditCard, Trash2, FileText } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../utils/reportPrintUtils';
 
 const PurchaseInvoiceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -51,112 +52,140 @@ const PurchaseInvoiceDetail: React.FC = () => {
         <html>
         <head>
           <title>Purchase Invoice - ${invoice.purchase_number}</title>
+          <meta charset="UTF-8" />
           <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; color: #333; line-height: 1.6; }
-            .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 30px; }
-            .logo { max-width: 120px; height: auto; margin-bottom: 10px; }
-            .business-name { font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px 0; }
-            .business-info { font-size: 14px; color: #6b7280; margin-bottom: 5px; }
-            .invoice-title { font-size: 20px; font-weight: bold; color: #2563eb; margin: 15px 0; }
-            .invoice-details { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
-            .supplier-info, .invoice-info { background: #f9fafb; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; }
-            .supplier-info h3, .invoice-info h3 { margin: 0 0 15px 0; font-size: 16px; font-weight: bold; color: #374151; }
-            .info-item { margin: 8px 0; }
-            .info-label { font-weight: 600; color: #6b7280; }
-            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-            .items-table th, .items-table td { padding: 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-            .items-table th { background: #f9fafb; font-weight: bold; color: #374151; }
-            .items-table .total-row { background: #f0f9ff; border-top: 2px solid #0ea5e9; }
-            .items-table .total-row td { font-weight: bold; color: #0f172a; }
-            .totals { text-align: right; margin-bottom: 30px; }
-            .totals table { margin-left: auto; border-collapse: collapse; }
-            .totals td { padding: 8px 20px; border-bottom: 1px solid #e5e7eb; }
-            .totals .total-row { border-bottom: 2px solid #0ea5e9; font-weight: bold; font-size: 16px; color: #0f172a; }
-            .payment-info { background: #f0f9ff; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #0ea5e9; }
-            .payment-info h3 { margin: 0 0 15px 0; color: #0f172a; }
-            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 20px; }
-            .highlight { color: #059669; font-weight: 600; }
-            .warning { color: #dc2626; font-weight: 600; }
-            @media print { body { margin: 0; } .no-print { display: none; } }
+            ${getReportPrintStyles('portrait')}
+
+            .invoice-brand-block {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2.5px solid #0f766e;
+              padding-bottom: 14px;
+              margin-bottom: 20px;
+            }
+            .invoice-logo { max-width: 170px; max-height: 70px; object-fit: contain; }
+            .business-name { font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+            .business-info { font-size: 11px; color: #475569; margin-bottom: 2px; }
+            .invoice-badge-title { font-size: 22px; font-weight: 800; color: #0f766e; text-align: right; text-transform: uppercase; letter-spacing: 0.5px; }
+
+            .invoice-details { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 22px; page-break-inside: avoid; break-inside: avoid; }
+            .supplier-info, .invoice-info { background: #f8fafc; padding: 14px 16px; border-radius: 8px; border: 1px solid #cbd5e1; }
+            .supplier-info h3, .invoice-info h3 { margin: 0 0 10px 0; font-size: 12px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+            .info-item { margin: 6px 0; font-size: 11px; display: flex; justify-content: space-between; }
+            .info-label { font-weight: 600; color: #64748b; }
+
+            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; page-break-inside: auto; }
+            .items-table th { background: #f1f5f9; padding: 9px 12px; font-weight: 700; color: #334155; border-top: 1px solid #cbd5e1; border-bottom: 1.5px solid #94a3b8; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; }
+            .items-table td { padding: 9px 12px; border-bottom: 1px solid #e2e8f0; font-size: 11px; }
+            .items-table tbody tr:nth-child(even) { background-color: #fafbfc; }
+
+            .totals-section { display: flex; justify-content: flex-end; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
+            .totals-table { width: 320px; border-collapse: collapse; }
+            .totals-table td { padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 11.5px; }
+            .totals-table .total-row { border-top: 2px solid #0f766e; border-bottom: 2px solid #0f766e; background: #f0fdfa; font-weight: 700; font-size: 12.5px; color: #115e59; }
+
+            .payment-info { background: #f8fafc; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #cbd5e1; page-break-inside: avoid; break-inside: avoid; }
+            .payment-info h3 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+
+            .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 14px; page-break-inside: avoid; break-inside: avoid; }
+            .highlight { color: #059669; font-weight: 700; }
+            .warning { color: #dc2626; font-weight: 700; }
           </style>
         </head>
         <body>
-          <div class="header">
-            ${logoUrl ? `<img src="${logoUrl}" alt="${bName}" class="logo" />` : ''}
-            <div class="business-name">${bName}</div>
-            <div class="business-info"><strong>Address:</strong> ${business?.business_address || settings?.business_address || 'N/A'}</div>
-            <div class="business-info"><strong>Phone:</strong> ${business?.business_phone || settings?.business_phone || 'N/A'}</div>
-            <div class="business-info"><strong>Email:</strong> ${business?.business_email || settings?.business_email || 'N/A'}</div>
-            <div class="invoice-title">Purchase Invoice</div>
-          </div>
-
-          <div class="invoice-details">
-            <div class="supplier-info">
-              <h3>Supplier Information</h3>
-              <div class="info-item"><span class="info-label">Supplier:</span> ${invoice.supplier?.name || (invoice as any).supplier_name || 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Code:</span> ${invoice.supplier?.code || (invoice as any).supplier_code || 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Email:</span> ${invoice.supplier?.email || (invoice as any).supplier_email || 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Phone:</span> ${invoice.supplier?.phone || (invoice as any).supplier_phone || 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Address:</span> ${invoice.supplier?.address || (invoice as any).supplier_address || 'N/A'}</div>
+          ${getReportWatermarkHtml(logoUrl, bName)}
+          <div class="report-document-body">
+            <div class="invoice-brand-block">
+              <div>
+                ${logoUrl ? `<img src="${logoUrl}" alt="${bName}" class="invoice-logo" />` : ''}
+                <div class="business-name">${bName}</div>
+                <div class="business-info"><strong>Address:</strong> ${business?.business_address || settings?.business_address || 'N/A'}</div>
+                <div class="business-info"><strong>Phone:</strong> ${business?.business_phone || settings?.business_phone || 'N/A'} &bull; <strong>Email:</strong> ${business?.business_email || settings?.business_email || 'N/A'}</div>
+              </div>
+              <div>
+                <div class="invoice-badge-title">PURCHASE BILL</div>
+                <div style="font-size: 13px; font-weight: 700; color: #475569; text-align: right; margin-top: 4px;">#${invoice.purchase_number}</div>
+                <div style="text-align: right; margin-top: 6px;">
+                  <span class="report-badge" style="background: ${invoice.payment_status === 'paid' ? '#dcfce7' : '#fee2e2'}; color: ${invoice.payment_status === 'paid' ? '#166534' : '#991b1b'}; border-color: ${invoice.payment_status === 'paid' ? '#bbf7d0' : '#fecaca'};">
+                    ${String(invoice.payment_status || 'pending').toUpperCase()}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div class="invoice-info">
-              <h3>Purchase Details</h3>
-              <div class="info-item"><span class="info-label">Invoice #:</span> ${invoice.purchase_number}</div>
-              <div class="info-item"><span class="info-label">Date:</span> ${new Date(invoice.purchase_date).toLocaleDateString()}</div>
-              <div class="info-item"><span class="info-label">Status:</span> <span class="${invoice.payment_status === 'paid' ? 'highlight' : 'warning'}">${String(invoice.payment_status || 'pending').toUpperCase()}</span></div>
-            </div>
-          </div>
 
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Cost</th>
-                <th style="text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${invoice.items?.map(item => `
+            <div class="invoice-details">
+              <div class="supplier-info">
+                <h3>Vendor / Supplier Information:</h3>
+                <div class="info-item"><span class="info-label">Vendor Name:</span> <strong>${invoice.supplier?.name || (invoice as any).supplier_name || 'N/A'}</strong></div>
+                <div class="info-item"><span class="info-label">Vendor Code:</span> ${invoice.supplier?.code || (invoice as any).supplier_code || 'N/A'}</div>
+                <div class="info-item"><span class="info-label">Email:</span> ${invoice.supplier?.email || (invoice as any).supplier_email || 'N/A'}</div>
+                <div class="info-item"><span class="info-label">Phone:</span> ${invoice.supplier?.phone || (invoice as any).supplier_phone || 'N/A'}</div>
+                <div class="info-item"><span class="info-label">Address:</span> ${invoice.supplier?.address || (invoice as any).supplier_address || 'N/A'}</div>
+              </div>
+              <div class="invoice-info">
+                <h3>Order &amp; Purchase Details:</h3>
+                <div class="info-item"><span class="info-label">Bill Reference #:</span> <strong>${invoice.purchase_number}</strong></div>
+                <div class="info-item"><span class="info-label">Order Date:</span> ${new Date(invoice.purchase_date).toLocaleDateString()}</div>
+                <div class="info-item"><span class="info-label">Payment Status:</span> <span class="${invoice.payment_status === 'paid' ? 'highlight' : 'warning'}">${String(invoice.payment_status || 'pending').toUpperCase()}</span></div>
+              </div>
+            </div>
+
+            <table class="items-table">
+              <thead>
                 <tr>
-                  <td>${item.product?.name || (item as any).product_name || 'Item'}</td>
-                  <td style="text-align: center;">${item.quantity}</td>
-                  <td style="text-align: right;">${currency} ${Number(item.unit_cost || 0).toFixed(2)}</td>
-                  <td style="text-align: right;">${currency} ${Number(item.total_amount || 0).toFixed(2)}</td>
+                  <th style="width: 50%;">Product / Description</th>
+                  <th style="width: 15%; text-align: center;">Qty</th>
+                  <th style="width: 17%; text-align: right;">Unit Cost</th>
+                  <th style="width: 18%; text-align: right;">Total Amount</th>
                 </tr>
-              `).join('') || ''}
-            </tbody>
-          </table>
-
-          <div class="totals">
-            <table>
-              <tr><td>Subtotal:</td><td style="text-align: right;">${currency} ${Number(invoice.subtotal || 0).toFixed(2)}</td></tr>
-              ${Number(invoice.tax_amount || 0) > 0 ? `<tr><td>VAT (${invoice.vat_rate || 0}%):</td><td style="text-align: right;">+${currency} ${Number(invoice.tax_amount || 0).toFixed(2)}</td></tr>` : ''}
-              ${Number(invoice.discount_amount || 0) > 0 ? `<tr><td>Discount:</td><td style="text-align: right;">-${currency} ${Number(invoice.discount_amount || 0).toFixed(2)}</td></tr>` : ''}
-              <tr class="total-row"><td><strong>Gross Total Billed:</strong></td><td style="text-align: right;"><strong>${currency} ${Number(invoice.total_amount || 0).toFixed(2)}</strong></td></tr>
-              ${Number(invoice.wht_amount || 0) > 0 ? `<tr><td style="color: #92400e;">WHT Withheld (${invoice.wht_rate || 0}%):</td><td style="text-align: right; color: #92400e;">-${currency} ${Number(invoice.wht_amount || 0).toFixed(2)}</td></tr>` : ''}
-              <tr><td>Paid Amount:</td><td style="text-align: right;" class="highlight">${currency} ${Number(invoice.paid_amount || 0).toFixed(2)}</td></tr>
-              <tr class="total-row"><td><strong>Balance Due:</strong></td><td style="text-align: right;"><strong class="warning">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</strong></td></tr>
+              </thead>
+              <tbody>
+                ${invoice.items?.map(item => `
+                  <tr>
+                    <td style="font-weight: 600; color: #0f172a;">${item.product?.name || (item as any).product_name || 'Item'}</td>
+                    <td style="text-align: center;">${item.quantity}</td>
+                    <td style="text-align: right;">${currency} ${Number(item.unit_cost || 0).toFixed(2)}</td>
+                    <td style="text-align: right; font-weight: 600; color: #0f172a;">${currency} ${Number(item.total_amount || 0).toFixed(2)}</td>
+                  </tr>
+                `).join('') || ''}
+              </tbody>
             </table>
-          </div>
 
-          <div class="payment-info">
-            <h3>Payment Information</h3>
-            <div class="info-item"><span class="info-label">Payment Status:</span> <span class="${invoice.payment_status === 'paid' ? 'highlight' : 'warning'}">${String(invoice.payment_status || 'pending').toUpperCase()}</span></div>
-            ${invoice.payment_status !== 'paid' ? `
-              <div class="info-item"><strong>Outstanding Balance:</strong> <span class="warning">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</span></div>
-            ` : ''}
-          </div>
+            <div class="totals-section">
+              <table class="totals-table">
+                <tr><td>Subtotal:</td><td style="text-align: right;">${currency} ${Number(invoice.subtotal || 0).toFixed(2)}</td></tr>
+                ${Number(invoice.tax_amount || 0) > 0 ? `<tr><td>VAT (${invoice.vat_rate || 0}%):</td><td style="text-align: right;">+${currency} ${Number(invoice.tax_amount || 0).toFixed(2)}</td></tr>` : ''}
+                ${Number(invoice.discount_amount || 0) > 0 ? `<tr><td>Discount:</td><td style="text-align: right; color: #166534;">-${currency} ${Number(invoice.discount_amount || 0).toFixed(2)}</td></tr>` : ''}
+                <tr class="total-row"><td><strong>Gross Total Billed:</strong></td><td style="text-align: right;"><strong>${currency} ${Number(invoice.total_amount || 0).toFixed(2)}</strong></td></tr>
+                ${Number(invoice.wht_amount || 0) > 0 ? `<tr><td style="color: #92400e;">WHT Withheld (${invoice.wht_rate || 0}%):</td><td style="text-align: right; color: #92400e;">-${currency} ${Number(invoice.wht_amount || 0).toFixed(2)}</td></tr>` : ''}
+                <tr><td>Paid Amount:</td><td style="text-align: right; color: #059669;">${currency} ${Number(invoice.paid_amount || 0).toFixed(2)}</td></tr>
+                <tr class="total-row" style="background: ${(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)) > 0 ? '#fff1f2' : '#f0fdf4'}; border-color: ${(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)) > 0 ? '#e11d48' : '#16a34a'}; color: ${(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)) > 0 ? '#9f1239' : '#14532d'};">
+                  <td><strong>Balance Due:</strong></td>
+                  <td style="text-align: right;"><strong class="${(Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)) > 0 ? 'warning' : 'highlight'}">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</strong></td>
+                </tr>
+              </table>
+            </div>
 
-          <div class="footer">
-            <p>Thank you for your business!</p>
-            <p>Generated by ${bName} - ${new Date().toLocaleDateString()}</p>
+            <div class="payment-info">
+              <h3>Payment &amp; Settlement Status</h3>
+              <div class="info-item"><span class="info-label">Payment Status:</span> <strong class="${invoice.payment_status === 'paid' ? 'highlight' : 'warning'}">${String(invoice.payment_status || 'pending').toUpperCase()}</strong></div>
+              ${invoice.payment_status !== 'paid' ? `
+                <div class="info-item" style="margin-top: 6px;"><span class="info-label">Remaining Balance Due:</span> <strong class="warning">${currency} ${Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)).toFixed(2)}</strong></div>
+              ` : ''}
+            </div>
+
+            <div class="footer">
+              <p style="font-weight: 600; color: #475569; margin-bottom: 4px;">Thank you for your business!</p>
+              <p>Generated by ${bName} Enterprise ERP &bull; Printed on ${new Date().toLocaleString()}</p>
+            </div>
           </div>
         </body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.print();
+      printWindow.focus();
+      setTimeout(() => printWindow.print(), 350);
     }
   };
 

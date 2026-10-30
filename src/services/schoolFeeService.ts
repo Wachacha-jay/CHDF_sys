@@ -1,3 +1,4 @@
+import { getReportWatermarkHtml, getReportPrintStyles } from '../utils/reportPrintUtils';
 import { ApiService } from './api';
 import { AccountingService } from './accountingService';
 import type { 
@@ -840,7 +841,7 @@ export class SchoolFeeService {
     const bAddress = businessSettings?.business_address || 'P.O. Box Nairobi, Kenya';
     const bPhone = businessSettings?.business_phone || '+254 700 000000';
     const bEmail = businessSettings?.business_email || 'finance@empowerschool.org';
-    const logoUrl = businessSettings?.logo_url || '';
+    const logoUrl = businessSettings?.logo_url || businessSettings?.logo || '';
     const currency = businessSettings?.default_currency || 'KSh';
 
     const child = summary.child;
@@ -854,7 +855,7 @@ export class SchoolFeeService {
     const renderTermLedgerHtml = (t: StudentFeeTermSummary) => {
       if (t.payments.length === 0) {
         return `
-          <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center; color: #64748b; font-size: 12px;">
+          <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center; color: #64748b; font-size: 11px; page-break-inside: avoid; break-inside: avoid;">
             No payments recorded for ${t.term}. Full term fee of <strong>${currency} ${t.total_billed.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> remains outstanding.
           </div>
         `;
@@ -882,12 +883,12 @@ export class SchoolFeeService {
                 <tr>
                   <td>${new Date(p.payment_date).toLocaleDateString()}</td>
                   <td>
-                    <span class="font-mono" style="font-weight: 700; color: #4338ca; background: #eef2ff; padding: 2px 6px; border-radius: 4px; font-size: 11px;">
+                    <span class="font-mono" style="font-weight: 700; color: #4338ca; background: #eef2ff; padding: 2px 6px; border-radius: 4px; font-size: 10.5px;">
                       ${refNo}
                     </span>
                   </td>
                   <td class="font-mono">${p.receipt_number}</td>
-                  <td style="text-transform: uppercase; font-size: 11px;">${p.payment_method}</td>
+                  <td style="text-transform: uppercase; font-size: 10px;">${p.payment_method}</td>
                   <td>${p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian'))}</td>
                   <td class="text-right font-mono" style="font-weight: 700; color: #059669;">
                     ${currency} ${Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -903,7 +904,7 @@ export class SchoolFeeService {
             }).join('')}
           </tbody>
           <tfoot>
-            <tr style="background: #f8fafc; font-weight: 700; font-size: 11px;">
+            <tr style="background: #f8fafc; font-weight: 700; font-size: 10.5px;">
               <td colspan="5">Total Paid for ${t.term} (Billed: ${currency} ${t.total_billed.toLocaleString(undefined, { minimumFractionDigits: 2 })})</td>
               <td class="text-right font-mono" style="color: #059669;">${currency} ${t.paid_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
               <td class="text-right font-mono" style="font-weight: 800; color: ${t.closing_balance > 0 ? '#b91c1c' : (t.closing_balance < 0 ? '#4338ca' : '#059669')};">
@@ -920,222 +921,248 @@ export class SchoolFeeService {
       <html>
       <head>
         <title>Student Fee Statement - ${child.first_name} ${child.last_name} (${summary.academic_year})</title>
+        <meta charset="utf-8" />
         <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; color: #1e293b; line-height: 1.5; font-size: 13px; }
-          .header { text-align: center; border-bottom: 2px solid #4f46e5; padding-bottom: 16px; margin-bottom: 20px; }
-          .logo { max-height: 70px; margin-bottom: 8px; }
-          .school-name { font-size: 22px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; letter-spacing: 0.5px; }
-          .school-dept { font-size: 14px; font-weight: 600; color: #4f46e5; margin-bottom: 4px; }
-          .school-info { font-size: 12px; color: #64748b; }
-          .title-badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 6px 18px; border-radius: 20px; font-weight: 700; font-size: 14px; margin-top: 12px; }
-          
-          .grid-info { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-          .card-info { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
-          .card-info h4 { margin: 0 0 10px 0; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-          .info-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+          ${getReportPrintStyles('portrait')}
+
+          .grid-info { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
+          .card-info { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; page-break-inside: avoid; break-inside: avoid; }
+          .card-info h4 { margin: 0 0 8px 0; font-size: 10.5px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 800; }
+          .info-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 11px; }
           .info-label { color: #64748b; font-weight: 500; }
           .info-value { font-weight: 700; color: #0f172a; }
 
-          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-          th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
-          th { background: #f1f5f9; color: #475569; font-weight: 700; font-size: 11px; text-transform: uppercase; }
-          .text-right { text-align: right; }
-          .text-center { text-align: center; }
-          .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-
           .term-table th { background: #eef2ff; color: #3730a3; }
-          .total-row { background: #f8fafc; font-weight: 800; border-top: 2px solid #cbd5e1; }
+          .term-section-header { 
+            background: #f1f5f9; 
+            border-left: 4px solid #4f46e5; 
+            padding: 8px 12px; 
+            margin: 18px 0 8px 0; 
+            border-radius: 0 6px 6px 0; 
+            font-size: 11.5px; 
+            font-weight: 700; 
+            color: #1e1b4b; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
 
-          .term-section-header { background: #f1f5f9; border-left: 4px solid #4f46e5; padding: 8px 12px; margin: 18px 0 8px 0; border-radius: 0 6px 6px 0; font-size: 13px; font-weight: 700; color: #1e1b4b; display: flex; justify-content: space-between; align-items: center; }
-
-          .standing-box { padding: 16px; border-radius: 12px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; }
+          .standing-box { 
+            padding: 14px 18px; 
+            border-radius: 12px; 
+            margin: 18px 0; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
           .standing-box.arrears { background: #fef2f2; border: 1px solid #fecaca; }
           .standing-box.credit { background: #f0fdf4; border: 1px solid #bbf7d0; }
           .standing-box.cleared { background: #f0fdfa; border: 1px solid #99f6e4; }
-          
-          .footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: grid; grid-template-columns: 1fr 1fr; font-size: 11px; color: #64748b; }
-          .signature-line { margin-top: 45px; border-top: 1px dashed #94a3b8; width: 80%; }
 
-          @media print {
-            body { margin: 10px; }
-            .no-print { display: none; }
+          .footer-section { 
+            margin-top: 30px; 
+            padding-top: 16px; 
+            border-top: 1px solid #e2e8f0; 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            font-size: 10px; 
+            color: #64748b; 
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
+          .signature-line { margin-top: 45px; border-top: 1px dashed #94a3b8; width: 80%; }
         </style>
       </head>
       <body>
-        <div class="header">
-          ${logoUrl ? `<img src="${logoUrl}" class="logo" alt="Logo" />` : ''}
-          <div class="school-name">${bName}</div>
-          <div class="school-dept">Empower School • Department of Education & Child Support</div>
-          <div class="school-info">${bAddress} • Tel: ${bPhone} • Email: ${bEmail}</div>
-          <div class="title-badge">OFFICIAL STUDENT FEE STATEMENT & PAYMENT LEDGER — ${summary.academic_year}</div>
-        </div>
+        ${getReportWatermarkHtml(logoUrl, bName)}
 
-        <div class="grid-info">
-          <div class="card-info">
-            <h4>Student Beneficiary Details</h4>
-            <div class="info-row"><span class="info-label">Full Name:</span><span class="info-value">${child.first_name} ${child.last_name}</span></div>
-            <div class="info-row"><span class="info-label">Student / Child Code:</span><span class="info-value font-mono">${child.code}</span></div>
-            <div class="info-row"><span class="info-label">Grade / Class:</span><span class="info-value">${child.class_name || 'N/A'}</span></div>
-            <div class="info-row"><span class="info-label">Enrollment Status:</span><span class="info-value" style="text-transform: uppercase;">${child.status}</span></div>
-          </div>
-
-          <div class="card-info">
-            <h4>Guardian & Statement Metadata</h4>
-            <div class="info-row"><span class="info-label">Guardian Name:</span><span class="info-value">${guardian?.name || 'N/A'}</span></div>
-            <div class="info-row"><span class="info-label">Relationship:</span><span class="info-value">${guardian?.relationship || 'Parent'}</span></div>
-            <div class="info-row"><span class="info-label">Phone:</span><span class="info-value">${guardian?.phone || 'N/A'}</span></div>
-            <div class="info-row"><span class="info-label">Issue Date:</span><span class="info-value">${new Date().toLocaleDateString()}</span></div>
-          </div>
-        </div>
-
-        <h3 style="font-size: 13px; color: #1e1b4b; margin: 16px 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px;">1. 3-Term Fee Accounting Schedule (${summary.academic_year})</h3>
-        <table class="term-table">
-          <thead>
-            <tr>
-              <th>Term</th>
-              <th class="text-right">Opening BF</th>
-              <th class="text-right">Expected Fee</th>
-              <th class="text-right">Total Billed</th>
-              <th class="text-right">Paid to Date</th>
-              <th class="text-right">Closing CF</th>
-              <th class="text-center">Term Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Term 1</strong></td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term1.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term1.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term1.closing_balance > 0 ? '#b91c1c' : (summary.terms.term1.closing_balance < 0 ? '#4338ca' : '#059669')};">
-                ${summary.terms.term1.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term1.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term1.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
-              </td>
-              <td class="text-center"><span style="text-transform: uppercase; font-size: 11px; font-weight: 700;">${summary.terms.term1.status}</span></td>
-            </tr>
-            <tr>
-              <td><strong>Term 2</strong></td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term2.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term2.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term2.closing_balance > 0 ? '#b91c1c' : (summary.terms.term2.closing_balance < 0 ? '#4338ca' : '#059669')};">
-                ${summary.terms.term2.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term2.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term2.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
-              </td>
-              <td class="text-center"><span style="text-transform: uppercase; font-size: 11px; font-weight: 700;">${summary.terms.term2.status}</span></td>
-            </tr>
-            <tr>
-              <td><strong>Term 3</strong></td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono">${currency} ${summary.terms.term3.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term3.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-              <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term3.closing_balance > 0 ? '#b91c1c' : (summary.terms.term3.closing_balance < 0 ? '#4338ca' : '#059669')};">
-                ${summary.terms.term3.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term3.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term3.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
-              </td>
-              <td class="text-center"><span style="text-transform: uppercase; font-size: 11px; font-weight: 700;">${summary.terms.term3.status}</span></td>
-            </tr>
-            <tr class="total-row">
-              <td><strong>ANNUAL TOTALS</strong></td>
-              <td class="text-right font-mono">-</td>
-              <td class="text-right font-mono"><strong>${currency} ${summary.total_expected.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong></td>
-              <td class="text-right font-mono">-</td>
-              <td class="text-right font-mono" style="color: #059669;"><strong>${currency} ${summary.total_paid.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong></td>
-              <td class="text-right font-mono" style="font-size: 14px; color: ${summary.net_balance > 0 ? '#b91c1c' : (summary.net_balance < 0 ? '#4338ca' : '#059669')};">
-                <strong>${summary.net_balance < 0 ? `(${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}</strong>
-              </td>
-              <td class="text-center"><strong style="text-transform: uppercase; font-size: 11px;">${summary.status}</strong></td>
-            </tr>
-          </tbody>
-        </table>
-
-        <!-- Standing summary box -->
-        <div class="standing-box ${summary.net_balance > 0 ? 'arrears' : (summary.net_balance < 0 ? 'credit' : 'cleared')}">
-          <div>
-            <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b;">Annual Outstanding Standing</div>
-            <div style="font-size: 16px; font-weight: 800; color: ${summary.net_balance > 0 ? '#991b1b' : (summary.net_balance < 0 ? '#3730a3' : '#065f46')};">
-              ${summary.net_balance > 0 
-                ? `OUTSTANDING ARREARS: ${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}` 
-                : (summary.net_balance < 0 ? `ADVANCE OVERPAYMENT CREDIT: ${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})} CARRIED FORWARD` : 'FEES FULLY SETTLED FOR THE ACADEMIC YEAR')}
+        <div class="report-document-body">
+          <div class="report-header">
+            <div class="org-brand">
+              ${logoUrl ? `<img src="${logoUrl}" class="org-logo" alt="${bName}" />` : ''}
+              <div>
+                <div class="org-name">${bName}</div>
+                <div class="org-contact">Department of Education & Child Support &bull; ${bAddress} &bull; Tel: ${bPhone}</div>
+                <div class="org-contact">${bEmail}</div>
+              </div>
+            </div>
+            <div class="report-meta">
+              <div class="report-title">Student Fee Statement</div>
+              <div class="report-cycle">Academic Year: ${summary.academic_year}</div>
+              <div class="report-badge font-mono">${child.code}</div>
             </div>
           </div>
-          <div style="text-align: right; font-size: 11px; color: #64748b;">
-            All payments credited directly to<br/><strong>Equity Bank • Empower School Dept.</strong>
+
+          <div class="grid-info">
+            <div class="card-info">
+              <h4>Student Beneficiary Details</h4>
+              <div class="info-row"><span class="info-label">Full Name:</span><span class="info-value">${child.first_name} ${child.last_name}</span></div>
+              <div class="info-row"><span class="info-label">Student Code:</span><span class="info-value font-mono">${child.code}</span></div>
+              <div class="info-row"><span class="info-label">Class / Grade:</span><span class="info-value">${child.class_name || 'N/A'}</span></div>
+              <div class="info-row"><span class="info-label">Enrollment Status:</span><span class="info-value" style="text-transform: uppercase;">${child.status}</span></div>
+            </div>
+
+            <div class="card-info">
+              <h4>Guardian & Statement Metadata</h4>
+              <div class="info-row"><span class="info-label">Guardian Name:</span><span class="info-value">${guardian?.name || 'N/A'}</span></div>
+              <div class="info-row"><span class="info-label">Relationship:</span><span class="info-value">${guardian?.relationship || 'Parent'}</span></div>
+              <div class="info-row"><span class="info-label">Phone:</span><span class="info-value">${guardian?.phone || 'N/A'}</span></div>
+              <div class="info-row"><span class="info-label">Statement Date:</span><span class="info-value">${new Date().toLocaleDateString('en-KE', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>
+            </div>
           </div>
-        </div>
 
-        <h3 style="font-size: 13px; color: #1e1b4b; margin: 20px 0 6px 0; text-transform: uppercase; letter-spacing: 0.5px;">
-          2. Term-by-Term Payments & Balance Reduction Ledger
-        </h3>
-        <p style="font-size: 11px; color: #64748b; margin-bottom: 12px;">
-          Chronological breakdown of payments showing date received, payment reference number, and sequential reduction against the expected term fee.
-        </p>
-
-        <!-- Term 1 Ledger -->
-        <div class="term-section-header">
-          <span>TERM 1 LEDGER — Expected Fee: ${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Opening BF: ${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
-          <span>Status: ${summary.terms.term1.status.toUpperCase()}</span>
-        </div>
-        ${renderTermLedgerHtml(summary.terms.term1)}
-
-        <!-- Term 2 Ledger -->
-        <div class="term-section-header">
-          <span>TERM 2 LEDGER — Expected Fee: ${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
-          <span>Status: ${summary.terms.term2.status.toUpperCase()}</span>
-        </div>
-        ${renderTermLedgerHtml(summary.terms.term2)}
-
-        <!-- Term 3 Ledger -->
-        <div class="term-section-header">
-          <span>TERM 3 LEDGER — Expected Fee: ${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
-          <span>Status: ${summary.terms.term3.status.toUpperCase()}</span>
-        </div>
-        ${renderTermLedgerHtml(summary.terms.term3)}
-
-        <h3 style="font-size: 13px; color: #1e1b4b; margin: 20px 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px;">3. Annual Payment Receipts & Reference Register</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Date Paid</th>
-              <th>Receipt No.</th>
-              <th>Term</th>
-              <th>Payment Ref No.</th>
-              <th>Channel</th>
-              <th>Payer</th>
-              <th class="text-right">Amount Paid</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${allStudentPayments.length === 0 ? `
-              <tr><td colspan="7" class="text-center" style="color: #94a3b8; padding: 18px;">No payments recorded for this academic year yet.</td></tr>
-            ` : allStudentPayments.map(p => `
+          <h3 class="section-title">1. 3-Term Fee Accounting Schedule (${summary.academic_year})</h3>
+          <table class="term-table">
+            <thead>
               <tr>
-                <td>${new Date(p.payment_date).toLocaleDateString()}</td>
-                <td class="font-mono" style="font-weight: 600; color: #4338ca;">${p.receipt_number}</td>
-                <td>${p.term}</td>
-                <td>
-                  <span class="font-mono" style="font-weight: 700; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; font-size: 11px;">
-                    ${p.reference_number || '-'}
-                  </span>
-                </td>
-                <td style="text-transform: uppercase; font-size: 11px;">${p.payment_method}</td>
-                <td>${p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian'))}</td>
-                <td class="text-right font-mono" style="font-weight: 700; color: #059669;">${currency} ${Number(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <th>Term</th>
+                <th class="text-right">Opening BF</th>
+                <th class="text-right">Expected Fee</th>
+                <th class="text-right">Total Billed</th>
+                <th class="text-right">Paid to Date</th>
+                <th class="text-right">Closing CF</th>
+                <th class="text-center">Term Status</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Term 1</strong></td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term1.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term1.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term1.closing_balance > 0 ? '#b91c1c' : (summary.terms.term1.closing_balance < 0 ? '#4338ca' : '#059669')};">
+                  ${summary.terms.term1.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term1.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term1.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
+                </td>
+                <td class="text-center"><span style="text-transform: uppercase; font-size: 10px; font-weight: 700;">${summary.terms.term1.status}</span></td>
+              </tr>
+              <tr>
+                <td><strong>Term 2</strong></td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term2.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term2.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term2.closing_balance > 0 ? '#b91c1c' : (summary.terms.term2.closing_balance < 0 ? '#4338ca' : '#059669')};">
+                  ${summary.terms.term2.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term2.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term2.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
+                </td>
+                <td class="text-center"><span style="text-transform: uppercase; font-size: 10px; font-weight: 700;">${summary.terms.term2.status}</span></td>
+              </tr>
+              <tr>
+                <td><strong>Term 3</strong></td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono">${currency} ${summary.terms.term3.total_billed.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="color: #059669; font-weight: 700;">${currency} ${summary.terms.term3.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="text-right font-mono" style="font-weight: 700; color: ${summary.terms.term3.closing_balance > 0 ? '#b91c1c' : (summary.terms.term3.closing_balance < 0 ? '#4338ca' : '#059669')};">
+                  ${summary.terms.term3.closing_balance < 0 ? `(${currency} ${Math.abs(summary.terms.term3.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.terms.term3.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
+                </td>
+                <td class="text-center"><span style="text-transform: uppercase; font-size: 10px; font-weight: 700;">${summary.terms.term3.status}</span></td>
+              </tr>
+              <tr class="total-row">
+                <td><strong>ANNUAL TOTALS</strong></td>
+                <td class="text-right font-mono">-</td>
+                <td class="text-right font-mono"><strong>${currency} ${summary.total_expected.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong></td>
+                <td class="text-right font-mono">-</td>
+                <td class="text-right font-mono" style="color: #059669;"><strong>${currency} ${summary.total_paid.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong></td>
+                <td class="text-right font-mono" style="font-size: 12px; color: ${summary.net_balance > 0 ? '#b91c1c' : (summary.net_balance < 0 ? '#4338ca' : '#059669')};">
+                  <strong>${summary.net_balance < 0 ? `(${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Credit` : `${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}`}</strong>
+                </td>
+                <td class="text-center"><strong style="text-transform: uppercase; font-size: 10.5px;">${summary.status}</strong></td>
+              </tr>
+            </tbody>
+          </table>
 
-        <div class="footer">
-          <div>
-            <div>Prepared by: <strong>School Finance Office</strong></div>
-            <div class="signature-line"></div>
-            <div style="margin-top: 6px;">Finance Officer Signature & Stamp</div>
+          <!-- Standing summary box -->
+          <div class="standing-box ${summary.net_balance > 0 ? 'arrears' : (summary.net_balance < 0 ? 'credit' : 'cleared')}">
+            <div>
+              <div style="font-size: 10px; text-transform: uppercase; font-weight: 700; color: #64748b;">Annual Outstanding Standing</div>
+              <div style="font-size: 15px; font-weight: 800; color: ${summary.net_balance > 0 ? '#991b1b' : (summary.net_balance < 0 ? '#3730a3' : '#065f46')};">
+                ${summary.net_balance > 0 
+                  ? `OUTSTANDING ARREARS: ${currency} ${summary.net_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}` 
+                  : (summary.net_balance < 0 ? `ADVANCE OVERPAYMENT CREDIT: ${currency} ${Math.abs(summary.net_balance).toLocaleString(undefined, {minimumFractionDigits: 2})} CARRIED FORWARD` : 'FEES FULLY SETTLED FOR THE ACADEMIC YEAR')}
+              </div>
+            </div>
+            <div style="text-align: right; font-size: 10.5px; color: #64748b;">
+              Financial Audit Ledger &bull; <strong>${bName}</strong>
+            </div>
           </div>
-          <div style="text-align: right;">
-            <div>Empower School — Empowering Every Child</div>
-            <div>Generated on: ${new Date().toLocaleString()}</div>
+
+          <h3 class="section-title">2. Term-by-Term Payments &amp; Balance Reduction Ledger</h3>
+          <p style="font-size: 10.5px; color: #64748b; margin-bottom: 12px;">
+            Chronological breakdown of payments showing date received, payment reference number, and sequential reduction against the expected term fee.
+          </p>
+
+          <!-- Term 1 Ledger -->
+          <div class="term-section-header">
+            <span>TERM 1 LEDGER &bull; Expected Fee: ${currency} ${summary.terms.term1.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Opening BF: ${currency} ${summary.terms.term1.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+            <span>Status: ${summary.terms.term1.status.toUpperCase()}</span>
+          </div>
+          ${renderTermLedgerHtml(summary.terms.term1)}
+
+          <!-- Term 2 Ledger -->
+          <div class="term-section-header">
+            <span>TERM 2 LEDGER &bull; Expected Fee: ${currency} ${summary.terms.term2.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term2.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+            <span>Status: ${summary.terms.term2.status.toUpperCase()}</span>
+          </div>
+          ${renderTermLedgerHtml(summary.terms.term2)}
+
+          <!-- Term 3 Ledger -->
+          <div class="term-section-header">
+            <span>TERM 3 LEDGER &bull; Expected Fee: ${currency} ${summary.terms.term3.expected_fee.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Carried Forward BF: ${currency} ${summary.terms.term3.opening_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })})</span>
+            <span>Status: ${summary.terms.term3.status.toUpperCase()}</span>
+          </div>
+          ${renderTermLedgerHtml(summary.terms.term3)}
+
+          <h3 class="section-title">3. Annual Payment Receipts &amp; Reference Register</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Date Paid</th>
+                <th>Receipt No.</th>
+                <th>Term</th>
+                <th>Payment Ref No.</th>
+                <th>Channel</th>
+                <th>Payer</th>
+                <th class="text-right">Amount Paid</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allStudentPayments.length === 0 ? `
+                <tr><td colspan="7" class="text-center" style="color: #94a3b8; padding: 16px;">No payments recorded for this academic year yet.</td></tr>
+              ` : allStudentPayments.map(p => `
+                <tr>
+                  <td>${new Date(p.payment_date).toLocaleDateString()}</td>
+                  <td class="font-mono" style="font-weight: 600; color: #4338ca;">${p.receipt_number}</td>
+                  <td>${p.term}</td>
+                  <td>
+                    <span class="font-mono" style="font-weight: 700; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; font-size: 10.5px;">
+                      ${p.reference_number || '-'}
+                    </span>
+                  </td>
+                  <td style="text-transform: uppercase; font-size: 10px;">${p.payment_method}</td>
+                  <td>${p.payer_name || (p.payer_type === 'donor' ? 'Donor Sponsor' : (guardian?.name || 'Guardian'))}</td>
+                  <td class="text-right font-mono" style="font-weight: 700; color: #059669;">${currency} ${Number(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="footer-section">
+            <div>
+              <div>Prepared by: <strong>Finance &amp; Accounts Department</strong></div>
+              <div class="signature-line"></div>
+              <div style="margin-top: 6px;">Authorized Signature &amp; Official Stamp</div>
+            </div>
+            <div style="text-align: right;">
+              <div>${bName} &bull; Official Student Ledger</div>
+              <div>Generated on: ${new Date().toLocaleString()}</div>
+            </div>
           </div>
         </div>
       </body>
@@ -1149,9 +1176,6 @@ export class SchoolFeeService {
     }, 400);
   }
 
-  /**
-   * Format and print official single payment receipt
-   */
   static printSchoolFeeReceipt(payment: SchoolFeePayment, summary: StudentFeeTermSummary | null, businessSettings: any) {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -1159,7 +1183,7 @@ export class SchoolFeeService {
     const bName = businessSettings?.business_name || 'EMPOWER SCHOOL';
     const bAddress = businessSettings?.business_address || 'P.O. Box Nairobi, Kenya';
     const bPhone = businessSettings?.business_phone || '+254 700 000000';
-    const logoUrl = businessSettings?.logo_url || '';
+    const logoUrl = businessSettings?.logo_url || businessSettings?.logo || '';
     const currency = businessSettings?.default_currency || 'KSh';
 
     const childName = payment.child ? `${payment.child.first_name} ${payment.child.last_name}` : 'Student';
@@ -1170,81 +1194,143 @@ export class SchoolFeeService {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Receipt - ${payment.receipt_number}</title>
+        <title>Fee Receipt - ${payment.receipt_number}</title>
+        <meta charset="utf-8" />
         <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 30px; color: #1e293b; line-height: 1.4; font-size: 13px; max-width: 550px; margin: 0 auto; padding: 20px; border: 1px dashed #cbd5e1; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            color: #1e293b; 
+            line-height: 1.45; 
+            font-size: 12px; 
+            max-width: 580px; 
+            margin: 0 auto; 
+            background: #fff;
+          }
+          .receipt-card {
+            border: 1.5px solid #cbd5e1;
+            border-radius: 14px;
+            padding: 22px;
+            position: relative;
+            background: #fff;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+          }
+          .watermark-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 0;
+          }
+          .watermark-image {
+            max-width: 320px;
+            max-height: 320px;
+            width: 70%;
+            opacity: 0.048;
+            transform: rotate(-25deg);
+            filter: grayscale(100%) contrast(120%);
+          }
+          .watermark-text {
+            font-size: 38px;
+            font-weight: 900;
+            color: #0f172a;
+            opacity: 0.04;
+            transform: rotate(-25deg);
+            text-transform: uppercase;
+            letter-spacing: 4px;
+          }
+          .receipt-content {
+            position: relative;
+            z-index: 1;
+          }
           .header { text-align: center; border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 16px; }
-          .logo { max-height: 55px; margin-bottom: 6px; }
-          .school-name { font-size: 18px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; }
-          .sub { font-size: 12px; color: #64748b; }
-          .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 4px 12px; border-radius: 12px; font-weight: 700; font-size: 13px; margin-top: 8px; }
-          .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px; }
+          .logo { max-height: 52px; margin-bottom: 6px; }
+          .school-name { font-size: 18px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; letter-spacing: 0.5px; }
+          .sub { font-size: 11px; color: #64748b; margin-top: 1px; }
+          .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 4px 14px; border-radius: 20px; font-weight: 800; font-size: 11px; margin-top: 8px; letter-spacing: 0.5px; }
+          .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11.5px; border-bottom: 1px dashed #f1f5f9; padding-bottom: 4px; }
           .label { color: #64748b; font-weight: 500; }
           .val { font-weight: 700; color: #0f172a; }
           .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
           .amount-box { background: #f8fafc; border: 2px solid #4f46e5; border-radius: 10px; padding: 12px; margin: 16px 0; text-align: center; }
-          .amount-val { font-size: 24px; font-weight: 900; color: #4f46e5; }
-          .summary-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 12px; }
+          .amount-val { font-size: 24px; font-weight: 900; color: #4f46e5; letter-spacing: 0.5px; }
+          .summary-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
           .summary-table td { padding: 6px 0; border-top: 1px solid #e2e8f0; }
-          .footer { text-align: center; margin-top: 24px; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+          .footer { text-align: center; margin-top: 20px; font-size: 10.5px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+          @media print {
+            body { padding: 0; margin: 0; }
+            .receipt-card { border: none; box-shadow: none; padding: 10px; }
+          }
         </style>
       </head>
       <body>
-        <div class="header">
-          ${logoUrl ? `<img src="${logoUrl}" class="logo" />` : ''}
-          <div class="school-name">${bName}</div>
-          <div class="sub">Empower School • Department of Education</div>
-          <div class="sub">${bAddress} • ${bPhone}</div>
-          <div class="badge">OFFICIAL SCHOOL FEE RECEIPT</div>
-        </div>
+        <div class="receipt-card">
+          ${getReportWatermarkHtml(logoUrl, bName)}
 
-        <div class="row"><span class="label">Receipt Number:</span><span class="val font-mono">${payment.receipt_number}</span></div>
-        <div class="row"><span class="label">Date & Time:</span><span class="val">${new Date(payment.payment_date).toLocaleDateString()}</span></div>
-        <div class="row"><span class="label">Academic Period:</span><span class="val">${payment.term}, ${payment.academic_year}</span></div>
-        <div class="row"><span class="label">Student Name:</span><span class="val">${childName} (${childCode})</span></div>
-        <div class="row"><span class="label">Payer (Guardian):</span><span class="val">${guardianName}</span></div>
-        <div class="row"><span class="label">Payment Channel:</span><span class="val" style="text-transform: uppercase;">${payment.payment_method} ${payment.reference_number ? `(${payment.reference_number})` : ''}</span></div>
-        <div class="row"><span class="label">Receiving Bank:</span><span class="val">Equity Bank</span></div>
-        <div class="row"><span class="label">Department:</span><span class="val">Empower School</span></div>
+          <div class="receipt-content">
+            <div class="header">
+              ${logoUrl ? `<img src="${logoUrl}" class="logo" />` : ''}
+              <div class="school-name">${bName}</div>
+              <div class="sub">Department of Education & Child Support</div>
+              <div class="sub">${bAddress} &bull; ${bPhone}</div>
+              <div class="badge">OFFICIAL SCHOOL FEE RECEIPT</div>
+            </div>
 
-        <div class="amount-box">
-          <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700;">Amount Received</div>
-          <div class="amount-val">${currency} ${Number(payment.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
-          <div style="font-size: 11px; color: #059669; font-weight: 600;">✓ Payment Posted to General Ledger</div>
-        </div>
+            <div class="row"><span class="label">Receipt Number:</span><span class="val font-mono" style="color: #4338ca;">${payment.receipt_number}</span></div>
+            <div class="row"><span class="label">Payment Date:</span><span class="val">${new Date(payment.payment_date).toLocaleDateString('en-KE', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>
+            <div class="row"><span class="label">Academic Period:</span><span class="val">${payment.term}, ${payment.academic_year}</span></div>
+            <div class="row"><span class="label">Student Name:</span><span class="val">${childName} (${childCode})</span></div>
+            <div class="row"><span class="label">Payer / Source:</span><span class="val">${payment.payer_name || (payment.payer_type === 'donor' ? 'Donor Sponsor' : guardianName)}</span></div>
+            <div class="row"><span class="label">Payment Channel:</span><span class="val" style="text-transform: uppercase;">${payment.payment_method} ${payment.reference_number ? `(${payment.reference_number})` : ''}</span></div>
+            <div class="row"><span class="label">Receiving Entity:</span><span class="val">${bName} Accounts Department</span></div>
 
-        ${summary ? `
-          <table class="summary-table">
-            <tr>
-              <td>${payment.term} Expected Fee:</td>
-              <td style="text-align: right; font-weight: 700;">${currency} ${summary.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-            </tr>
-            <tr>
-              <td>Previous Balance / (Credit BF):</td>
-              <td style="text-align: right; font-weight: 700;">${currency} ${summary.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-            </tr>
-            <tr>
-              <td>Total Paid for ${payment.term}:</td>
-              <td style="text-align: right; font-weight: 700; color: #059669;">${currency} ${summary.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-            </tr>
-            <tr style="font-size: 13px; font-weight: 800; border-top: 2px solid #cbd5e1;">
-              <td>${payment.term} Remaining Standing:</td>
-              <td style="text-align: right; color: ${summary.closing_balance > 0 ? '#b91c1c' : (summary.closing_balance < 0 ? '#4338ca' : '#059669')};">
-                ${summary.closing_balance < 0 ? `(${currency} ${Math.abs(summary.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Overpaid Credit` : (summary.closing_balance > 0 ? `${currency} ${summary.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})} Balance Due` : 'Fully Cleared')}
-              </td>
-            </tr>
-          </table>
-        ` : ''}
+            <div class="amount-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; letter-spacing: 0.5px;">Total Amount Received</div>
+              <div class="amount-val">${currency} ${Number(payment.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</div>
+              <div style="font-size: 10.5px; color: #059669; font-weight: 700; margin-top: 2px;">✓ Verified &amp; Posted to General Ledger</div>
+            </div>
 
-        ${payment.notes ? `
-          <div style="margin-top: 10px; font-size: 12px; color: #64748b;">
-            <strong>Note:</strong> ${payment.notes}
+            ${summary ? `
+              <table class="summary-table">
+                <tr>
+                  <td>${payment.term} Expected Fee:</td>
+                  <td style="text-align: right; font-weight: 700;">${currency} ${summary.expected_fee.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>
+                <tr>
+                  <td>Previous Balance / (Credit BF):</td>
+                  <td style="text-align: right; font-weight: 700;">${currency} ${summary.opening_balance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>
+                <tr>
+                  <td>Total Paid for ${payment.term}:</td>
+                  <td style="text-align: right; font-weight: 700; color: #059669;">${currency} ${summary.paid_amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>
+                <tr style="font-size: 12px; font-weight: 800; border-top: 2px solid #cbd5e1;">
+                  <td>${payment.term} Remaining Standing:</td>
+                  <td style="text-align: right; color: ${summary.closing_balance > 0 ? '#b91c1c' : (summary.closing_balance < 0 ? '#4338ca' : '#059669')};">
+                    ${summary.closing_balance < 0 ? `(${currency} ${Math.abs(summary.closing_balance).toLocaleString(undefined, {minimumFractionDigits: 2})}) Overpaid Credit` : (summary.closing_balance > 0 ? `${currency} ${summary.closing_balance.toLocaleString(undefined, {minimumFractionDigits: 2})} Balance Due` : 'Fully Cleared')}
+                  </td>
+                </tr>
+              </table>
+            ` : ''}
+
+            ${payment.notes ? `
+              <div style="margin-top: 10px; font-size: 11px; color: #64748b;">
+                <strong>Note:</strong> ${payment.notes}
+              </div>
+            ` : ''}
+
+            <div class="footer">
+              <p>Official Computer Generated Payment Voucher</p>
+              <p>${bName} Finance &bull; Printed: ${new Date().toLocaleString()}</p>
+            </div>
           </div>
-        ` : ''}
-
-        <div class="footer">
-          <p>Thank you for supporting education.</p>
-          <p>Generated by Empower School Finance System • ${new Date().toLocaleTimeString()}</p>
         </div>
       </body>
       </html>

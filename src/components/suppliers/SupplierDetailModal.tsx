@@ -10,6 +10,8 @@ import RecordPaymentModal from '../inventory/RecordPaymentModal';
 import { useNavigate } from 'react-router-dom';
 import { SupplierService } from '../../services/supplierService';
 import { toast } from 'react-hot-toast';
+import { useSettingsContext } from '../../contexts/SettingsContext';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../../utils/reportPrintUtils';
 
 interface SupplierDetailModalProps {
   open: boolean;
@@ -32,6 +34,7 @@ const SupplierDetailModal: React.FC<SupplierDetailModalProps> = ({
   onEditSupplier,
   onRefreshPurchases
 }) => {
+  const { settings } = useSettingsContext();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'statement' | 'aging'>('overview');
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<Purchase | null>(null);
@@ -169,95 +172,115 @@ const SupplierDetailModal: React.FC<SupplierDetailModalProps> = ({
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
+    const bName = settings?.business_name || 'Business Management System';
+    const logoUrl = settings?.logo_url || '';
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
         <title>Supplier Statement - ${supplier.name}</title>
+        <meta charset="UTF-8" />
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 30px; color: #1f2937; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #3b82f6; padding-bottom: 20px; margin-bottom: 25px; }
-          .title { font-size: 24px; font-weight: bold; color: #1e3a8a; }
-          .meta { font-size: 13px; color: #6b7280; }
-          .supplier-box { background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #e2e8f0; }
-          .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
-          .summary-card { background: #f1f5f9; padding: 12px; border-radius: 6px; text-align: center; }
-          .summary-val { font-size: 18px; font-weight: bold; color: #0f172a; margin-top: 4px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
-          th, td { padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
-          th { background: #f8fafc; font-weight: 600; color: #475569; }
+          ${getReportPrintStyles('portrait')}
+
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2.5px solid #2563eb;
+            padding-bottom: 14px;
+            margin-bottom: 18px;
+            page-break-after: avoid;
+            break-after: avoid;
+          }
+          .company-logo { max-height: 60px; max-width: 160px; object-fit: contain; margin-bottom: 4px; }
+          .title { font-size: 18px; font-weight: 800; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; }
+          .meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+          .supplier-box { background: #f8fafc; padding: 12px 16px; border-radius: 8px; margin-bottom: 18px; border: 1px solid #cbd5e1; page-break-inside: avoid; break-inside: avoid; }
+          .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
+          .summary-card { background: #f8fafc; padding: 10px 14px; border-radius: 6px; text-align: center; border: 1px solid #cbd5e1; }
+          .summary-val { font-size: 16px; font-weight: 800; color: #0f172a; margin-top: 4px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; page-break-inside: auto; }
+          th, td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+          th { background: #f1f5f9; font-weight: 700; color: #334155; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid #cbd5e1; border-bottom: 1.5px solid #94a3b8; }
           .text-right { text-align: right; }
           .bold { font-weight: 600; }
-          .balance-cell { font-family: monospace; font-weight: bold; color: #1e293b; }
-          .footer { margin-top: 40px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+          .balance-cell { font-variant-numeric: tabular-nums; font-weight: 700; color: #1e293b; }
+          .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; page-break-inside: avoid; break-inside: avoid; }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div>
-            <div class="title">SUPPLIER STATEMENT OF ACCOUNT</div>
-            <div class="meta">Generated: ${new Date().toLocaleDateString()} | Currency: ${currency}</div>
+        ${getReportWatermarkHtml(logoUrl, bName)}
+        <div class="report-document-body">
+          <div class="header">
+            <div>
+              ${logoUrl ? `<img src="${logoUrl}" alt="${bName}" class="company-logo" />` : ''}
+              <div class="title">SUPPLIER STATEMENT OF ACCOUNT</div>
+              <div class="meta">${bName} &bull; Generated: ${new Date().toLocaleDateString()} &bull; Currency: ${currency}</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-weight: 800; font-size: 14px; color: #0f172a;">Vendor Code: ${supplier.code}</div>
+              <div class="meta">${supplier.organization_name || ''}</div>
+            </div>
           </div>
-          <div style="text-align: right;">
-            <div style="font-weight: bold; font-size: 16px;">Vendor Code: ${supplier.code}</div>
-            <div class="meta">${supplier.organization_name || ''}</div>
-          </div>
-        </div>
 
-        <div class="supplier-box">
-          <div style="font-weight: bold; font-size: 16px; margin-bottom: 5px;">${supplier.name}</div>
-          <div class="meta">Contact: ${supplier.contact_person || 'N/A'} | Email: ${supplier.email || 'N/A'} | Phone: ${supplier.phone || 'N/A'}</div>
-          <div class="meta">Address: ${supplier.address || 'N/A'}</div>
-        </div>
+          <div class="supplier-box">
+            <div style="font-weight: 800; font-size: 14px; margin-bottom: 4px; color: #0f172a;">${supplier.name}</div>
+            <div class="meta">Contact: ${supplier.contact_person || 'N/A'} &bull; Email: ${supplier.email || 'N/A'} &bull; Phone: ${supplier.phone || 'N/A'}</div>
+            <div class="meta">Address: ${supplier.address || 'N/A'}</div>
+          </div>
 
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="meta">Total Invoiced</div>
-            <div class="summary-val">${currency} ${financialSummary.totalBilled.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          <div class="summary-grid">
+            <div class="summary-card">
+              <div class="meta" style="text-transform: uppercase; font-size: 9.5px; font-weight: 700;">Total Invoiced</div>
+              <div class="summary-val">${currency} ${financialSummary.totalBilled.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div class="summary-card">
+              <div class="meta" style="text-transform: uppercase; font-size: 9.5px; font-weight: 700;">Total Payments</div>
+              <div class="summary-val" style="color: #059669;">${currency} ${financialSummary.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div class="summary-card" style="background: #fef2f2; border-color: #fecaca;">
+              <div class="meta" style="text-transform: uppercase; font-size: 9.5px; font-weight: 700; color: #991b1b;">Outstanding Balance Due</div>
+              <div class="summary-val" style="color: #dc2626;">${currency} ${financialSummary.balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            </div>
           </div>
-          <div class="summary-card">
-            <div class="meta">Total Payments</div>
-            <div class="summary-val" style="color: #059669;">${currency} ${financialSummary.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-          </div>
-          <div class="summary-card">
-            <div class="meta">Outstanding Balance Due</div>
-            <div class="summary-val" style="color: #dc2626;">${currency} ${financialSummary.balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-          </div>
-        </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Reference #</th>
-              <th>Description</th>
-              <th class="text-right">Invoiced (+)</th>
-              <th class="text-right">Paid (-)</th>
-              <th class="text-right">Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filteredStatementEntries.map(e => `
+          <table>
+            <thead>
               <tr>
-                <td>${new Date(e.date).toLocaleDateString()}</td>
-                <td><strong>${e.ref}</strong></td>
-                <td>${e.description}</td>
-                <td class="text-right">${e.debit > 0 ? currency + ' ' + e.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                <td class="text-right">${e.credit > 0 ? currency + ' ' + e.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
-                <td class="text-right balance-cell">${currency} ${e.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                <th style="width: 14%;">Date</th>
+                <th style="width: 18%;">Reference #</th>
+                <th style="width: 32%;">Description</th>
+                <th class="text-right" style="width: 12%;">Invoiced (+)</th>
+                <th class="text-right" style="width: 12%;">Paid (-)</th>
+                <th class="text-right" style="width: 12%;">Balance</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${filteredStatementEntries.map(e => `
+                <tr>
+                  <td>${new Date(e.date).toLocaleDateString()}</td>
+                  <td><strong>${e.ref}</strong></td>
+                  <td>${e.description}</td>
+                  <td class="text-right">${e.debit > 0 ? currency + ' ' + e.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                  <td class="text-right" style="color: #059669;">${e.credit > 0 ? currency + ' ' + e.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
+                  <td class="text-right balance-cell">${currency} ${e.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
 
-        <div class="footer">
-          This is an official computer-generated statement of accounts.
+          <div class="footer">
+            Official computer-generated statement &bull; Generated by ${bName} Enterprise ERP &bull; ${new Date().toLocaleString()}
+          </div>
         </div>
       </body>
       </html>
     `);
     printWindow.document.close();
-    printWindow.print();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 350);
   };
 
   if (!open) return null;

@@ -5,6 +5,7 @@ import { ApiService } from '../services/api';
 import { SalesService } from '../services/salesService';
 import type { Customer, Sale } from '../types';
 import { useSettingsContext } from '../contexts/SettingsContext';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../utils/reportPrintUtils';
 
 const Customers: React.FC = () => {
   const { settings } = useSettingsContext();
@@ -188,26 +189,20 @@ const Customers: React.FC = () => {
         <title>Customer Statement - ${customer.name}</title>
         <meta charset="UTF-8" />
         <style>
-          @page { size: A4; margin: 15mm; }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            color: #1e293b;
-            background: #fff;
-            margin: 0;
-            padding: 20px;
-            font-size: 13px;
-            line-height: 1.5;
-          }
+          ${getReportPrintStyles('portrait')}
+
           .statement-container { max-width: 850px; margin: 0 auto; }
           .header-row {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            border-bottom: 2px solid #2563eb;
-            padding-bottom: 16px;
-            margin-bottom: 20px;
+            border-bottom: 2.5px solid #2563eb;
+            padding-bottom: 14px;
+            margin-bottom: 18px;
+            page-break-after: avoid;
+            break-after: avoid;
           }
-          .company-logo { max-height: 70px; max-width: 180px; object-fit: contain; margin-bottom: 8px; }
+          .company-logo { max-height: 70px; max-width: 180px; object-fit: contain; margin-bottom: 6px; }
           .company-name { font-size: 20px; font-weight: 800; color: #0f172a; }
           .company-sub { font-size: 11px; color: #64748b; line-height: 1.4; }
           .statement-title-badge {
@@ -220,18 +215,20 @@ const Customers: React.FC = () => {
             text-transform: uppercase;
             letter-spacing: 0.5px;
           }
-          .meta-line { font-size: 12px; color: #64748b; margin-top: 3px; }
+          .meta-line { font-size: 11.5px; color: #64748b; margin-top: 3px; }
           .meta-line strong { color: #1e293b; }
 
           .profile-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 16px;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .profile-box {
             background: #f8fafc;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #cbd5e1;
             border-radius: 8px;
             padding: 12px 16px;
           }
@@ -245,25 +242,27 @@ const Customers: React.FC = () => {
             border-bottom: 1px solid #e2e8f0;
             padding-bottom: 4px;
           }
-          .profile-box p { margin: 3px 0; font-size: 12px; }
+          .profile-box p { margin: 3px 0; font-size: 11.5px; }
 
           .summary-cards {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 12px;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .card {
             padding: 12px 16px;
             border-radius: 8px;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #cbd5e1;
             background: #fff;
           }
           .card-billed { background: #f8fafc; }
           .card-paid { background: #f0fdf4; border-color: #bbf7d0; }
           .card-balance { background: #fef2f2; border-color: #fecaca; }
           .card-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; }
-          .card-val { font-size: 18px; font-weight: 900; margin-top: 4px; }
+          .card-val { font-size: 17px; font-weight: 900; margin-top: 4px; }
           .text-billed { color: #1e293b; }
           .text-paid { color: #16a34a; }
           .text-balance { color: #dc2626; }
@@ -271,8 +270,8 @@ const Customers: React.FC = () => {
           table.statement-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 24px;
-            font-size: 12px;
+            margin-bottom: 20px;
+            page-break-inside: auto;
           }
           table.statement-table th {
             background: #0f172a;
@@ -280,13 +279,14 @@ const Customers: React.FC = () => {
             font-weight: 700;
             text-align: left;
             padding: 8px 10px;
-            font-size: 11px;
+            font-size: 10.5px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
           }
           table.statement-table td {
             padding: 8px 10px;
             border-bottom: 1px solid #e2e8f0;
+            font-size: 11px;
           }
           table.statement-table tr:nth-child(even) td { background: #f8fafc; }
           table.statement-table .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -295,7 +295,7 @@ const Customers: React.FC = () => {
             background: #f1f5f9;
             border-top: 2px solid #94a3b8;
             border-bottom: 2px solid #94a3b8;
-            font-size: 13px;
+            font-size: 12px;
           }
 
           .remittance-box {
@@ -303,8 +303,10 @@ const Customers: React.FC = () => {
             border: 1px solid #bfdbfe;
             border-radius: 8px;
             padding: 12px 16px;
-            margin-bottom: 24px;
-            font-size: 12px;
+            margin-bottom: 20px;
+            font-size: 11.5px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .remittance-box h5 {
             margin: 0 0 6px 0;
@@ -317,35 +319,36 @@ const Customers: React.FC = () => {
           .signatures {
             display: flex;
             justify-content: space-between;
-            margin-top: 36px;
-            padding-top: 16px;
+            margin-top: 32px;
+            padding-top: 14px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .sig-line {
             width: 200px;
             border-top: 1px solid #94a3b8;
             text-align: center;
-            font-size: 11px;
+            font-size: 10.5px;
             color: #64748b;
             padding-top: 4px;
           }
 
           .footer-note {
             text-align: center;
-            font-size: 11px;
+            font-size: 10px;
             color: #94a3b8;
-            margin-top: 30px;
+            margin-top: 24px;
             border-top: 1px dashed #e2e8f0;
-            padding-top: 12px;
-          }
-
-          @media print {
-            body { padding: 0; }
-            .no-print { display: none; }
+            padding-top: 10px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
         </style>
       </head>
       <body>
-        <div class="statement-container">
+        ${getReportWatermarkHtml(logoUrl, businessName)}
+        <div class="report-document-body">
+          <div class="statement-container">
           <div class="header-row">
             <div>
               ${logoUrl ? `<img src="${logoUrl}" alt="Logo" class="company-logo" />` : ''}
@@ -468,6 +471,7 @@ const Customers: React.FC = () => {
           <div class="footer-note">
             Generated by ${businessName} Accounting &amp; ERP System &bull; Printed on ${new Date().toLocaleString()}
           </div>
+        </div>
         </div>
       </body>
       </html>

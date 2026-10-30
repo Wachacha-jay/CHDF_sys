@@ -15,6 +15,7 @@ import {
 import { AccountingService } from '../../services/accountingService';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { ApiService } from '../../services/api';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../../utils/reportPrintUtils';
 import { Department } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useAuthContext } from '../../contexts/useAuthContext';
@@ -275,23 +276,23 @@ const IncomeStatement: React.FC = () => {
       <head>
         <title>Income Statement - ${businessName}</title>
         <style>
-          @page { margin: 15mm; size: auto; }
-          * { box-sizing: border-box; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 20px; font-size: 13px; line-height: 1.5; }
-          .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 15px; margin-bottom: 25px; }
-          .header h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px; }
-          .header h2 { margin: 0 0 6px 0; font-size: 15px; font-weight: 700; color: #475569; letter-spacing: 1px; }
-          .header p { margin: 0; color: #64748b; font-size: 12px; }
-          .section { margin-bottom: 20px; }
-          .section-title { font-size: 13px; font-weight: 800; text-transform: uppercase; border-bottom: 1.5px solid #0f172a; padding-bottom: 4px; margin-bottom: 8px; color: #0f172a; }
-          .row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; }
-          .row-total { display: flex; justify-content: space-between; padding: 6px 0; font-weight: 700; border-top: 1px solid #cbd5e1; margin-top: 4px; font-size: 13px; }
-          .highlight-box { display: flex; justify-content: space-between; padding: 10px 14px; font-weight: 800; font-size: 15px; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; margin: 15px 0; background-color: #f8fafc; }
-          .net-income-box { display: flex; justify-content: space-between; padding: 12px 14px; font-weight: 800; font-size: 17px; border-top: 3px double #0f172a; border-bottom: 3px double #0f172a; margin: 20px 0; background-color: #f1f5f9; }
-          .footer { margin-top: 40px; padding-top: 15px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; }
+          ${getReportPrintStyles('portrait')}
+          .header { text-align: center; border-bottom: 2.5px solid #0f172a; padding-bottom: 14px; margin-bottom: 20px; page-break-after: avoid; break-after: avoid; }
+          .header h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px; }
+          .header h2 { margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: #475569; letter-spacing: 1px; }
+          .header p { margin: 0; color: #64748b; font-size: 11px; }
+          .section { margin-bottom: 18px; page-break-inside: auto; }
+          .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; border-bottom: 1.5px solid #0f172a; padding-bottom: 4px; margin-bottom: 6px; color: #0f172a; page-break-after: avoid; break-after: avoid; }
+          .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 11.5px; }
+          .row-total { display: flex; justify-content: space-between; padding: 5px 0; font-weight: 700; border-top: 1px solid #cbd5e1; margin-top: 3px; font-size: 11.5px; page-break-inside: avoid; break-inside: avoid; }
+          .highlight-box { display: flex; justify-content: space-between; padding: 9px 12px; font-weight: 800; font-size: 13.5px; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; margin: 12px 0; background-color: #f8fafc; page-break-inside: avoid; break-inside: avoid; }
+          .net-income-box { display: flex; justify-content: space-between; padding: 10px 14px; font-weight: 800; font-size: 15px; border-top: 3px double #0f172a; border-bottom: 3px double #0f172a; margin: 16px 0; background-color: #f1f5f9; page-break-inside: avoid; break-inside: avoid; }
+          .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; page-break-inside: avoid; break-inside: avoid; }
         </style>
       </head>
       <body>
+        ${getReportWatermarkHtml(settings?.logo_url, businessName)}
+        <div class="report-document-body">
         <div class="header">
           ${logoHtml}
           <h1>${businessName}</h1>
@@ -357,6 +358,7 @@ const IncomeStatement: React.FC = () => {
           <span>Department: ${selectedDeptName}</span>
           <span>Prepared by: ${user?.name || user?.email || 'System User'}</span>
           <span>Printed on: ${new Date().toLocaleString()}</span>
+        </div>
         </div>
       </body>
       </html>

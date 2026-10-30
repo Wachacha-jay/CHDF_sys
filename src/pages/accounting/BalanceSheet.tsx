@@ -12,6 +12,7 @@ import {
 import { AccountingService } from '../../services/accountingService';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { ApiService } from '../../services/api';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../../utils/reportPrintUtils';
 import { BalanceSheetData, Account, AccountCategory, JournalEntry, Department } from '../../types';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -352,25 +353,25 @@ const BalanceSheet: React.FC = () => {
       <head>
         <title>Balance Sheet - ${businessName}</title>
         <style>
-          @page { margin: 15mm; size: auto; }
-          * { box-sizing: border-box; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 20px; font-size: 12px; line-height: 1.5; }
-          .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 15px; margin-bottom: 25px; }
-          .header h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 800; text-transform: uppercase; color: #0f172a; }
-          .header h2 { margin: 0 0 6px 0; font-size: 15px; font-weight: 700; color: #475569; }
-          .header p { margin: 0; color: #64748b; font-size: 12px; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
-          .col-title { font-size: 14px; font-weight: 800; text-transform: uppercase; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 12px; }
-          .sub-section { margin-bottom: 16px; }
-          .sub-title { font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-          .row { display: flex; justify-content: space-between; padding: 3px 0 3px 10px; font-size: 12px; }
-          .subtotal-row { display: flex; justify-content: space-between; padding: 5px 0 5px 10px; font-weight: 600; border-top: 1px solid #cbd5e1; margin-top: 4px; font-size: 12px; }
-          .total-box { display: flex; justify-content: space-between; padding: 10px; font-weight: 800; font-size: 14px; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; margin-top: 15px; background: #f8fafc; }
-          .balance-check { margin-top: 30px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; }
-          .footer { margin-top: 40px; padding-top: 15px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; }
+          ${getReportPrintStyles('portrait')}
+          .header { text-align: center; border-bottom: 2.5px solid #0f172a; padding-bottom: 14px; margin-bottom: 20px; page-break-after: avoid; break-after: avoid; }
+          .header h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px; }
+          .header h2 { margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: #475569; }
+          .header p { margin: 0; color: #64748b; font-size: 11px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+          .col-title { font-size: 13px; font-weight: 800; text-transform: uppercase; border-bottom: 2px solid #0f172a; padding-bottom: 5px; margin-bottom: 10px; page-break-after: avoid; break-after: avoid; }
+          .sub-section { margin-bottom: 14px; page-break-inside: avoid; break-inside: avoid; }
+          .sub-title { font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; page-break-after: avoid; break-after: avoid; }
+          .row { display: flex; justify-content: space-between; padding: 3px 0 3px 8px; font-size: 11.5px; }
+          .subtotal-row { display: flex; justify-content: space-between; padding: 4px 0 4px 8px; font-weight: 700; border-top: 1px solid #cbd5e1; margin-top: 3px; font-size: 11.5px; }
+          .total-box { display: flex; justify-content: space-between; padding: 8px 10px; font-weight: 800; font-size: 13px; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; margin-top: 12px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid; }
+          .balance-check { margin-top: 24px; padding: 10px 14px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; display: flex; justify-content: space-between; font-weight: 700; font-size: 12px; page-break-inside: avoid; break-inside: avoid; }
+          .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; page-break-inside: avoid; break-inside: avoid; }
         </style>
       </head>
       <body>
+        ${getReportWatermarkHtml(settings?.logo_url, businessName)}
+        <div class="report-document-body">
         <div class="header">
           ${logoHtml}
           <h1>${businessName}</h1>
@@ -490,6 +491,7 @@ const BalanceSheet: React.FC = () => {
           <span>Department: ${selectedDeptName}</span>
           <span>Prepared by: ${user?.name || user?.email || 'System User'}</span>
           <span>Printed on: ${new Date().toLocaleString()}</span>
+        </div>
         </div>
       </body>
       </html>

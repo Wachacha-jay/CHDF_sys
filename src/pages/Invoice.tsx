@@ -6,6 +6,7 @@ import { SalesService } from '../services/salesService';
 import { BusinessSettingsService } from '../services/businessSettingsService';
 import { AccountingService } from '../services/accountingService';
 import { printPaymentReceipt, ReceiptData } from '../utils/receiptUtils';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../utils/reportPrintUtils';
 import { useAuthContext } from '../contexts/useAuthContext';
 import type { Sale, BusinessSettings, Account } from '../types';
 
@@ -133,145 +134,165 @@ const Invoice: React.FC = () => {
     const printWindow = window.open('', '_blank');
     if (printWindow && sale && businessSettings) {
       const logoUrl = businessSettings.logo_url || '';
+      const bName = businessSettings.business_name || 'Business Manager';
 
       printWindow.document.write(`
         <!DOCTYPE html>
         <html>
         <head>
           <title>Invoice - ${sale.sale_number}</title>
+          <meta charset="UTF-8" />
           <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; color: #333; line-height: 1.6; }
-            .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 30px; }
-            .logo { max-width: 180px; max-height: 80px; object-fit: contain; margin: 0 auto 12px auto; display: block; }
-            .business-name { font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px 0; }
-            .business-info { font-size: 14px; color: #6b7280; margin-bottom: 5px; }
-            .invoice-title { font-size: 20px; font-weight: bold; color: #2563eb; margin: 15px 0; }
-            .invoice-details { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
-            .customer-info, .invoice-info { background: #f9fafb; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; }
-            .customer-info h3, .invoice-info h3 { margin: 0 0 15px 0; font-size: 16px; font-weight: bold; color: #374151; }
-            .info-item { margin: 8px 0; }
-            .info-label { font-weight: 600; color: #6b7280; }
-            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-            .items-table th, .items-table td { padding: 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-            .items-table th { background: #f9fafb; font-weight: bold; color: #374151; }
-            .items-table .total-row { background: #f0f9ff; border-top: 2px solid #0ea5e9; }
-            .items-table .total-row td { font-weight: bold; color: #0f172a; }
-            .totals { text-align: right; margin-bottom: 30px; }
-            .totals table { margin-left: auto; border-collapse: collapse; }
-            .totals td { padding: 8px 20px; border-bottom: 1px solid #e5e7eb; }
-            .totals .total-row { border-bottom: 2px solid #0ea5e9; font-weight: bold; font-size: 16px; color: #0f172a; }
-            .payment-info { background: #f0f9ff; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #0ea5e9; }
-            .payment-info h3 { margin: 0 0 15px 0; color: #0f172a; }
-            .mpesa-info { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 15px; border: 1px solid #e5e7eb; }
-            .mpesa-info h4 { margin: 0 0 10px 0; color: #374151; }
-            .mpesa-info p { margin: 5px 0; font-size: 14px; }
-            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 20px; }
-            .highlight { color: #059669; font-weight: 600; }
-            .warning { color: #dc2626; font-weight: 600; }
-            @media print { body { margin: 0; } .no-print { display: none; } }
+            ${getReportPrintStyles('portrait')}
+
+            .invoice-brand-block {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2.5px solid #2563eb;
+              padding-bottom: 14px;
+              margin-bottom: 20px;
+            }
+            .invoice-logo { max-width: 170px; max-height: 70px; object-fit: contain; }
+            .business-name { font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+            .business-info { font-size: 11px; color: #475569; margin-bottom: 2px; }
+            .invoice-badge-title { font-size: 22px; font-weight: 800; color: #2563eb; text-align: right; text-transform: uppercase; letter-spacing: 0.5px; }
+
+            .invoice-details { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 22px; page-break-inside: avoid; break-inside: avoid; }
+            .customer-info, .invoice-info { background: #f8fafc; padding: 14px 16px; border-radius: 8px; border: 1px solid #cbd5e1; }
+            .customer-info h3, .invoice-info h3 { margin: 0 0 10px 0; font-size: 12px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+            .info-item { margin: 6px 0; font-size: 11px; display: flex; justify-content: space-between; }
+            .info-label { font-weight: 600; color: #64748b; }
+
+            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; page-break-inside: auto; }
+            .items-table th { background: #f1f5f9; padding: 9px 12px; font-weight: 700; color: #334155; border-top: 1px solid #cbd5e1; border-bottom: 1.5px solid #94a3b8; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; }
+            .items-table td { padding: 9px 12px; border-bottom: 1px solid #e2e8f0; font-size: 11px; }
+            .items-table tbody tr:nth-child(even) { background-color: #fafbfc; }
+
+            .totals-section { display: flex; justify-content: flex-end; margin-bottom: 20px; page-break-inside: avoid; break-inside: avoid; }
+            .totals-table { width: 300px; border-collapse: collapse; }
+            .totals-table td { padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 11.5px; }
+            .totals-table .total-row { border-top: 2px solid #2563eb; border-bottom: 2px solid #2563eb; background: #eff6ff; font-weight: 700; font-size: 12.5px; color: #1e3a8a; }
+
+            .payment-info { background: #f8fafc; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #cbd5e1; page-break-inside: avoid; break-inside: avoid; }
+            .payment-info h3 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+            .mpesa-info { background-color: #ffffff; padding: 10px 14px; border-radius: 6px; margin-top: 8px; border: 1px solid #e2e8f0; }
+            .mpesa-info h4 { margin: 0 0 6px 0; color: #059669; font-size: 11.5px; font-weight: 700; }
+            .mpesa-info p { margin: 3px 0; font-size: 10.5px; color: #475569; }
+
+            .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 14px; page-break-inside: avoid; break-inside: avoid; }
+            .highlight { color: #059669; font-weight: 700; }
+            .warning { color: #dc2626; font-weight: 700; }
           </style>
         </head>
         <body>
-          <div class="header">
-            ${logoUrl ? `<img src="${logoUrl}" alt="${businessSettings.business_name}" class="logo" />` : ''}
-            <div class="business-name">${businessSettings.business_name}</div>
-            <div class="business-info"><strong>Address:</strong> ${businessSettings.business_address || 'N/A'}</div>
-            <div class="business-info"><strong>Phone:</strong> ${businessSettings.business_phone || 'N/A'}</div>
-            <div class="business-info"><strong>Email:</strong> ${businessSettings.business_email || 'N/A'}</div>
-            <div class="invoice-title">Sales Invoice</div>
-          </div>
-
-          <div class="invoice-details">
-            <div class="customer-info">
-              <h3>Bill To:</h3>
-              <div class="info-item"><span class="info-label">Customer:</span> ${sale.customer?.name || 'Walk-in Customer'}</div>
-              <div class="info-item"><span class="info-label">Email:</span> ${sale.customer?.email || 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Phone:</span> ${sale.customer?.phone || 'N/A'}</div>
-              ${sale.child ? `
-                <div class="info-item" style="margin-top: 15px; border-top: 1px dashed #e5e7eb; pt-10">
-                  <span class="info-label">Beneficiary (Child):</span> 
-                  <span style="color: #2563eb; font-weight: bold;">${sale.child.first_name} ${sale.child.last_name}</span>
-                  <div style="font-size: 11px; color: #6b7280;">Code: ${sale.child.code}</div>
-                </div>
-              ` : ''}
-            </div>
-            <div class="invoice-info">
-              <h3>Invoice Details:</h3>
-              <div class="info-item"><span class="info-label">Invoice #:</span> ${sale.sale_number}</div>
-              <div class="info-item">
-                <span class="info-label">Type:</span> 
-                <span style="text-transform: uppercase; font-weight: bold; color: #4b5563;">
-                  ${(sale.sale_type || 'Standard').replace('_', ' ')}
-                </span>
+          ${getReportWatermarkHtml(logoUrl, bName)}
+          <div class="report-document-body">
+            <div class="invoice-brand-block">
+              <div>
+                ${logoUrl ? `<img src="${logoUrl}" alt="${bName}" class="invoice-logo" />` : ''}
+                <div class="business-name">${bName}</div>
+                <div class="business-info"><strong>Address:</strong> ${businessSettings.business_address || 'N/A'}</div>
+                <div class="business-info"><strong>Phone:</strong> ${businessSettings.business_phone || 'N/A'} &bull; <strong>Email:</strong> ${businessSettings.business_email || 'N/A'}</div>
               </div>
-              <div class="info-item"><span class="info-label">Date:</span> ${new Date(sale.sale_date).toLocaleDateString()}</div>
-              <div class="info-item"><span class="info-label">Due Date:</span> ${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : 'N/A'}</div>
-              <div class="info-item"><span class="info-label">Status:</span> <span class="${sale.payment_status === 'paid' ? 'highlight' : 'warning'}">${sale.payment_status.toUpperCase()}</span></div>
+              <div>
+                <div class="invoice-badge-title">INVOICE</div>
+                <div style="font-size: 13px; font-weight: 700; color: #475569; text-align: right; margin-top: 4px;">#${sale.sale_number}</div>
+                <div style="text-align: right; margin-top: 6px;">
+                  <span class="report-badge" style="background: ${sale.payment_status === 'paid' ? '#dcfce7' : '#fee2e2'}; color: ${sale.payment_status === 'paid' ? '#166534' : '#991b1b'}; border-color: ${sale.payment_status === 'paid' ? '#bbf7d0' : '#fecaca'};">
+                    ${sale.payment_status.toUpperCase()}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
 
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th>Description</th>
-                <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Price</th>
-                <th style="text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${sale.items?.map(item => `
+            <div class="invoice-details">
+              <div class="customer-info">
+                <h3>Bill To:</h3>
+                <div class="info-item"><span class="info-label">Customer:</span> <strong>${sale.customer?.name || 'Walk-in Customer'}</strong></div>
+                <div class="info-item"><span class="info-label">Email:</span> ${sale.customer?.email || 'N/A'}</div>
+                <div class="info-item"><span class="info-label">Phone:</span> ${sale.customer?.phone || 'N/A'}</div>
+                ${sale.child ? `
+                  <div class="info-item" style="margin-top: 10px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+                    <span class="info-label">Beneficiary:</span> 
+                    <span style="color: #2563eb; font-weight: 700;">${sale.child.first_name} ${sale.child.last_name} (${sale.child.code})</span>
+                  </div>
+                ` : ''}
+              </div>
+              <div class="invoice-info">
+                <h3>Invoice Details:</h3>
+                <div class="info-item"><span class="info-label">Invoice Date:</span> ${new Date(sale.sale_date).toLocaleDateString()}</div>
+                <div class="info-item"><span class="info-label">Due Date:</span> ${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : 'Due Upon Receipt'}</div>
+                <div class="info-item"><span class="info-label">Billing Type:</span> <span style="text-transform: uppercase; font-weight: 600; color: #475569;">${(sale.sale_type || 'Standard').replace('_', ' ')}</span></div>
+                <div class="info-item"><span class="info-label">Payment Method:</span> ${sale.payment_method || 'Standard Terms'}</div>
+              </div>
+            </div>
+
+            <table class="items-table">
+              <thead>
                 <tr>
-                  <td>${item.product?.name || 'N/A'}</td>
-                  <td>${item.product?.description || 'N/A'}</td>
-                  <td style="text-align: center;">${item.quantity}</td>
-                  <td style="text-align: right;">${displayCurrency} ${item.unit_price.toFixed(2)}</td>
-                  <td style="text-align: right;">${displayCurrency} ${item.total_amount.toFixed(2)}</td>
+                  <th style="width: 32%;">Item</th>
+                  <th style="width: 33%;">Description</th>
+                  <th style="width: 10%; text-align: center;">Qty</th>
+                  <th style="width: 12%; text-align: right;">Unit Price</th>
+                  <th style="width: 13%; text-align: right;">Total</th>
                 </tr>
-              `).join('') || ''}
-            </tbody>
-          </table>
-
-          <div class="totals">
-            <table>
-              <tr><td>Subtotal:</td><td style="text-align: right;">${displayCurrency} ${sale.subtotal.toFixed(2)}</td></tr>
-              <tr><td>Tax (16%):</td><td style="text-align: right;">${displayCurrency} ${sale.tax_amount.toFixed(2)}</td></tr>
-              <tr><td>Discount:</td><td style="text-align: right;">${displayCurrency} ${sale.discount_amount.toFixed(2)}</td></tr>
-              <tr class="total-row"><td><strong>Total:</strong></td><td style="text-align: right;"><strong>${displayCurrency} ${sale.total_amount.toFixed(2)}</strong></td></tr>
-              <tr><td>Paid:</td><td style="text-align: right;">${displayCurrency} ${sale.paid_amount.toFixed(2)}</td></tr>
-              <tr class="total-row"><td><strong>Balance:</strong></td><td style="text-align: right;"><strong class="warning">${displayCurrency} ${(sale.total_amount - sale.paid_amount).toFixed(2)}</strong></td></tr>
+              </thead>
+              <tbody>
+                ${sale.items?.map(item => `
+                  <tr>
+                    <td style="font-weight: 600; color: #0f172a;">${item.product?.name || 'Item'}</td>
+                    <td style="color: #475569;">${item.product?.description || '-'}</td>
+                    <td style="text-align: center;">${item.quantity}</td>
+                    <td style="text-align: right;">${displayCurrency} ${item.unit_price.toFixed(2)}</td>
+                    <td style="text-align: right; font-weight: 600; color: #0f172a;">${displayCurrency} ${item.total_amount.toFixed(2)}</td>
+                  </tr>
+                `).join('') || ''}
+              </tbody>
             </table>
-          </div>
 
-          <div class="payment-info">
-            <h3>Payment Information:</h3>
-            <div class="info-item"><span class="info-label">Payment Method:</span> ${sale.payment_method || 'Not specified'}</div>
-            <div class="info-item"><span class="info-label">Payment Status:</span> <span class="${sale.payment_status === 'paid' ? 'highlight' : 'warning'}">${sale.payment_status.toUpperCase()}</span></div>
+            <div class="totals-section">
+              <table class="totals-table">
+                <tr><td>Subtotal:</td><td style="text-align: right;">${displayCurrency} ${sale.subtotal.toFixed(2)}</td></tr>
+                ${sale.tax_amount > 0 ? `<tr><td>Tax (16%):</td><td style="text-align: right;">${displayCurrency} ${sale.tax_amount.toFixed(2)}</td></tr>` : ''}
+                ${sale.discount_amount > 0 ? `<tr><td>Discount:</td><td style="text-align: right; color: #166534;">-${displayCurrency} ${sale.discount_amount.toFixed(2)}</td></tr>` : ''}
+                <tr class="total-row"><td><strong>Total Amount:</strong></td><td style="text-align: right;"><strong>${displayCurrency} ${sale.total_amount.toFixed(2)}</strong></td></tr>
+                <tr><td>Paid to Date:</td><td style="text-align: right; color: #059669;">${displayCurrency} ${sale.paid_amount.toFixed(2)}</td></tr>
+                <tr class="total-row" style="background: ${(sale.total_amount - sale.paid_amount) > 0 ? '#fff1f2' : '#f0fdf4'}; border-color: ${(sale.total_amount - sale.paid_amount) > 0 ? '#e11d48' : '#16a34a'}; color: ${(sale.total_amount - sale.paid_amount) > 0 ? '#9f1239' : '#14532d'};">
+                  <td><strong>Outstanding Balance:</strong></td>
+                  <td style="text-align: right;"><strong class="${(sale.total_amount - sale.paid_amount) > 0 ? 'warning' : 'highlight'}">${displayCurrency} ${(sale.total_amount - sale.paid_amount).toFixed(2)}</strong></td>
+                </tr>
+              </table>
+            </div>
 
-            ${sale.payment_status !== 'paid' ? `
-              <div class="mpesa-info">
-                <h4>M-Pesa Payment Instructions:</h4>
-                <p>1. Dial *150*00# on your phone</p>
-                <p>2. Select "Pay Bill"</p>
-                <p>3. Enter Business Number: ${businessSettings.mpesa_business_number || '000000'}</p>
-                <p>4. Enter Account Number: ${sale.sale_number}</p>
-                <p>5. Enter Amount: ${displayCurrency} ${(sale.total_amount - sale.paid_amount).toFixed(2)}</p>
-                <p>6. Enter your M-Pesa PIN</p>
-                <p>7. Confirm payment</p>
+            ${(sale.total_amount - sale.paid_amount) > 0 ? `
+              <div class="payment-info">
+                <h3>Payment Instructions</h3>
+                <div class="info-item"><span class="info-label">Account Name:</span> <strong>${bName}</strong></div>
+                <div class="info-item"><span class="info-label">Payment Reference:</span> <strong>${sale.sale_number}</strong></div>
+                ${businessSettings.mpesa_business_number ? `
+                  <div class="mpesa-info">
+                    <h4>M-Pesa Express / Paybill:</h4>
+                    <p>1. Go to M-Pesa menu &gt; Lipa na M-Pesa &gt; Pay Bill</p>
+                    <p>2. Enter Business No: <strong>${businessSettings.mpesa_business_number}</strong></p>
+                    <p>3. Enter Account No: <strong>${sale.sale_number}</strong></p>
+                    <p>4. Enter Balance: <strong>${displayCurrency} ${(sale.total_amount - sale.paid_amount).toFixed(2)}</strong> and complete with PIN.</p>
+                  </div>
+                ` : ''}
               </div>
             ` : ''}
-          </div>
 
-          <div class="footer">
-            <p>Thank you for your business!</p>
-            <p>Generated by ${businessSettings.business_name} - ${new Date().toLocaleDateString()}</p>
+            <div class="footer">
+              <p style="font-weight: 600; color: #475569; margin-bottom: 4px;">Thank you for your business!</p>
+              <p>Generated by ${bName} Enterprise ERP &bull; Printed on ${new Date().toLocaleString()}</p>
+            </div>
           </div>
         </body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.print();
+      printWindow.focus();
+      setTimeout(() => printWindow.print(), 350);
     }
   };
 

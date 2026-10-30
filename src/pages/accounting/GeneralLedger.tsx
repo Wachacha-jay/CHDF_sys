@@ -15,6 +15,7 @@ import {
 import { AccountingService } from '../../services/accountingService';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { ApiService } from '../../services/api';
+import { getReportWatermarkHtml, getReportPrintStyles } from '../../utils/reportPrintUtils';
 import { JournalEntry, Account, Department, JournalEntryLine } from '../../types';
 import { useSettingsContext } from '../../contexts/SettingsContext';
 import { useAuthContext } from '../../contexts/useAuthContext';
@@ -350,28 +351,26 @@ const GeneralLedger: React.FC = () => {
       <head>
         <title>General Ledger - ${businessName}</title>
         <style>
-          @page { margin: 12mm; size: auto; }
-          * { box-sizing: border-box; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; padding: 20px; font-size: 11px; line-height: 1.4; }
-          .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; }
+          ${getReportPrintStyles('landscape')}
+          .header { text-align: center; border-bottom: 2.5px solid #0f172a; padding-bottom: 12px; margin-bottom: 18px; page-break-after: avoid; break-after: avoid; }
           .header h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 800; text-transform: uppercase; color: #0f172a; }
           .header h2 { margin: 0 0 4px 0; font-size: 13px; font-weight: 700; color: #475569; }
-          .header p { margin: 0; color: #64748b; font-size: 11px; }
+          .header p { margin: 0; color: #64748b; font-size: 10.5px; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-          thead { display: table-header-group; }
-          tr { page-break-inside: avoid; }
           th { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: #f1f5f9; text-align: left; }
           th.right, td.right { text-align: right; }
           th.center, td.center { text-align: center; }
-          td { border: 1px solid #e2e8f0; padding: 5px 8px; font-size: 11px; }
+          td { border: 1px solid #e2e8f0; padding: 5px 8px; font-size: 10.5px; }
           tr.entry-header { background: #f8fafc; font-weight: 600; }
           tr.line-item td { color: #475569; font-size: 10.5px; }
-          tr.totals-row td { font-weight: 800; background: #0f172a; color: #fff; border-color: #0f172a; font-size: 12px; }
+          tr.totals-row td { font-weight: 800; background: #0f172a; color: #fff; border-color: #0f172a; font-size: 11.5px; }
           .badge { display: inline-block; padding: 2px 5px; font-size: 9px; font-weight: 600; border-radius: 4px; background: #e2e8f0; color: #334155; }
-          .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; }
+          .footer { margin-top: 24px; padding-top: 10px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; page-break-inside: avoid; break-inside: avoid; }
         </style>
       </head>
       <body>
+        ${getReportWatermarkHtml(settings?.logo_url, businessName)}
+        <div class="report-document-body">
         <div class="header">
           ${logoHtml}
           <h1>${businessName}</h1>
@@ -459,6 +458,7 @@ const GeneralLedger: React.FC = () => {
           <span>Department: ${selectedDeptName}</span>
           <span>Prepared by: ${user?.name || user?.email || 'System User'}</span>
           <span>Printed on: ${new Date().toLocaleString()}</span>
+        </div>
         </div>
       </body>
       </html>

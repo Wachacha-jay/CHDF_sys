@@ -1,3 +1,4 @@
+import { getReportWatermarkHtml, getReportPrintStyles } from '../../utils/reportPrintUtils';
 import React, { useState, useEffect, useMemo } from 'react';
 import { FundAccountingService } from '../../services/fundAccountingService';
 import { AccountingService } from '../../services/accountingService';
@@ -1354,130 +1355,48 @@ const FundReports: React.FC = () => {
         <title>${reportTitle} - ${businessName}</title>
         <meta charset="utf-8" />
         <style>
-          @page {
-            size: A4 portrait;
-            margin: 12mm 12mm 15mm 12mm;
-          }
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            font-size: 11px;
-            color: #0f172a;
-            background: #fff;
-            line-height: 1.4;
-            padding: 15px;
-          }
-          .report-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            border-bottom: 2px solid #2563eb;
-            padding-bottom: 12px;
-            margin-bottom: 15px;
-          }
-          .org-brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-          }
-          .org-logo {
-            max-height: 55px;
-            max-width: 120px;
-            object-fit: contain;
-          }
-          .org-name {
-            font-size: 20px;
-            font-weight: 800;
-            color: #1e293b;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-          .org-contact {
-            font-size: 10px;
-            color: #64748b;
-            margin-top: 2px;
-          }
-          .report-meta {
-            text-align: right;
-          }
-          .report-title {
-            font-size: 15px;
-            font-weight: 700;
-            color: #1e40af;
-          }
-          .report-cycle {
-            font-size: 10px;
-            font-weight: 600;
-            color: #475569;
-            margin-top: 2px;
-          }
+          ${getReportPrintStyles('portrait')}
+
           .summary-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-            margin-bottom: 16px;
+            gap: 12px;
+            margin-bottom: 18px;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .card {
             padding: 10px 14px;
-            border-radius: 6px;
+            border-radius: 8px;
             border: 1px solid #e2e8f0;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .in-card { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
           .out-card { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
           .net-card { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
-          .card-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8; }
+          .card-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.85; }
           .card-val { font-size: 15px; font-weight: 800; margin-top: 2px; }
+          
           .section-title {
-            font-size: 12px;
-            font-weight: 700;
-            color: #334155;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 15px;
-            page-break-inside: auto;
-          }
-          thead {
-            display: table-header-group;
-          }
-          tr {
-            page-break-inside: avoid;
-            page-break-after: auto;
-          }
-          th {
-            background-color: #f1f5f9;
-            color: #334155;
-            font-size: 9px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 7px 8px;
-            border-top: 1px solid #cbd5e1;
-            border-bottom: 1.5px solid #94a3b8;
-            text-align: left;
-          }
-          td {
-            padding: 6px 8px;
-            border-bottom: 1px solid #e2e8f0;
-            font-size: 10px;
-            vertical-align: top;
-          }
-          .total-row td {
-            background: #f8fafc;
+            font-size: 11.5px;
             font-weight: 800;
-            font-size: 11px;
-            border-top: 1.5px solid #94a3b8;
-            border-bottom: 2px solid #334155;
-            color: #0f172a;
+            color: #1e293b;
+            margin: 16px 0 8px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-left: 3.5px solid #2563eb;
+            padding-left: 8px;
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
+
           .empty-cell {
             text-align: center;
             color: #94a3b8;
-            padding: 16px;
+            padding: 18px;
             font-style: italic;
           }
           .badge {
@@ -1492,56 +1411,49 @@ const FundReports: React.FC = () => {
           .badge-green { background: #dcfce7; color: #166534; }
           .badge-amber { background: #fef3c7; color: #92400e; }
           .badge-purple { background: #f3e8ff; color: #6b21a8; }
-          .report-footer {
-            margin-top: 24px;
-            padding-top: 10px;
-            border-top: 1px solid #cbd5e1;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 9.5px;
-            color: #64748b;
-          }
         </style>
       </head>
       <body>
-        <div class="report-header">
-          <div class="org-brand">
-            ${logoUrl ? `<img src="${logoUrl}" class="org-logo" alt="Logo" />` : ''}
-            <div>
-              <div class="org-name">${businessName}</div>
-              <div class="org-contact">
-                ${businessAddress ? `<span>${businessAddress}</span> &middot; ` : ''}
-                ${businessPhone ? `<span>Tel: ${businessPhone}</span> &middot; ` : ''}
-                ${businessEmail ? `<span>Email: ${businessEmail}</span>` : ''}
+        ${getReportWatermarkHtml(logoUrl, businessName)}
+
+        <div class="report-document-body">
+          <div class="report-header">
+            <div class="org-brand">
+              ${logoUrl ? `<img src="${logoUrl}" class="org-logo" alt="${businessName}" />` : ''}
+              <div>
+                <div class="org-name">${businessName}</div>
+                <div class="org-contact">
+                  ${businessAddress ? `<span>${businessAddress}</span> &bull; ` : ''}
+                  ${businessPhone ? `<span>Tel: ${businessPhone}</span> &bull; ` : ''}
+                  ${businessEmail ? `<span>Email: ${businessEmail}</span>` : ''}
+                </div>
               </div>
             </div>
+            <div class="report-meta">
+              <div class="report-title">${reportTitle}</div>
+              ${selectedDept ? `<div style="font-size: 11px; font-weight: 700; color: #1e40af; margin-top: 2px;">Department: ${departments.find(d => d.id === selectedDept)?.name || 'Selected Department'}</div>` : ''}
+              <div class="report-cycle">${periodLabel}</div>
+            </div>
           </div>
-          <div class="report-meta">
-            <div class="report-title">${reportTitle}</div>
-            ${selectedDept ? `<div style="font-size: 11px; font-weight: 700; color: #1e40af; margin-top: 2px;">Department: ${departments.find(d => d.id === selectedDept)?.name || 'Selected Department'}</div>` : ''}
-            <div class="report-cycle">${periodLabel}</div>
-          </div>
-        </div>
 
-        ${summaryCardsHtml}
-        ${reportTableHtml}
+          ${summaryCardsHtml}
+          ${reportTableHtml}
 
-        <div class="report-footer">
-          <div>
-            Prepared by: <strong>${user?.name || user?.email || 'Authorized Officer'}</strong>
-          </div>
-          <div>
-            Printed on: ${todayDateFormatted} at ${printTime}
-          </div>
-          <div>
-            Fund Accounting Sub-system &middot; ${businessName}
+          <div class="report-footer">
+            <div>
+              Prepared by: <strong>${user?.name || user?.email || 'Authorized Officer'}</strong>
+            </div>
+            <div>
+              Printed on: ${todayDateFormatted} at ${printTime}
+            </div>
+            <div>
+              Fund Accounting Sub-system &bull; ${businessName}
+            </div>
           </div>
         </div>
       </body>
       </html>
     `);
-
     printWindow.document.close();
     printWindow.focus();
     setTimeout(() => {
