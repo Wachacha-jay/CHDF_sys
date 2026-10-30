@@ -13,6 +13,8 @@ interface AuthResponse {
     role_name?: string;
     permissions?: string[];
     employee_id?: string;
+    is_active?: number;
+    created_at?: string;
   };
   token: string;
 }
@@ -28,11 +30,19 @@ export const useAuth = () => {
   const checkAuth = async () => {
     try {
       const token = localStorage.getItem('auth_token');
-      if (token && token !== 'undefined') {
+      if (token && token !== 'undefined' && token !== 'null' && token.trim() !== '') {
         const apiUser = await apiClient.get<AuthResponse['user']>('/auth/me');
-        setUser(mapApiUser(apiUser));
+        if (apiUser) {
+          setUser(mapApiUser(apiUser));
+        } else {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('auth_user');
+          setUser(null);
+        }
       } else {
-        setLoading(false);
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_user');
+        setUser(null);
       }
     } catch (error) {
       localStorage.removeItem('auth_token');
@@ -49,17 +59,19 @@ export const useAuth = () => {
       id: apiUser.id,
       email: apiUser.email,
       username: apiUser.username,
-      name: `${apiUser.first_name || ''} ${apiUser.last_name || ''}`.trim() || apiUser.email,
+      name: `${apiUser.first_name || ''} ${apiUser.last_name || ''}`.trim() || apiUser.username || apiUser.email,
       role: apiUser.role_name || apiUser.role,
       permissions: apiUser.permissions || [],
-      created_at: new Date().toISOString(),
+      created_at: apiUser.created_at || new Date().toISOString(),
     };
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (emailOrUsername: string, password: string) => {
     try {
+      const cleanIdentifier = String(emailOrUsername || '').trim();
       const response = await apiClient.post<AuthResponse>('/auth/login', {
-        email,
+        email: cleanIdentifier,
+        username: cleanIdentifier,
         password,
       });
 
@@ -85,6 +97,7 @@ export const useAuth = () => {
     employee_id?: string;
     first_name: string;
     last_name: string;
+    is_active?: number;
   }) => {
     try {
       await apiClient.post('/auth/register', data);

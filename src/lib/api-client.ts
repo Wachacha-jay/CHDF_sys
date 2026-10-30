@@ -16,7 +16,7 @@ const axiosInstance: AxiosInstance = axios.create({
 axiosInstance.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('auth_token');
-    if (token && config.headers) {
+    if (token && token !== 'undefined' && token !== 'null' && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
@@ -33,18 +33,22 @@ axiosInstance.interceptors.response.use(
   },
   async (error) => {
     const originalRequest = error.config;
+    const isLoginEndpoint = originalRequest?.url?.includes('/auth/login');
 
-    // Handle 401 Unauthorized - Token expired or invalid
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      
-      // Clear token and redirect to login
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_user');
-      
-      // Redirect to login page
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+    // Handle 401 Unauthorized or 403 Forbidden (Token expired, invalid, or account deactivated)
+    // Never trigger window reload/redirect on normal /auth/login failures
+    if (!isLoginEndpoint && (error.response?.status === 401 || (error.response?.status === 403 && error.response?.data?.error?.includes('deactivated')))) {
+      if (!originalRequest?._retry) {
+        if (originalRequest) originalRequest._retry = true;
+        
+        // Clear token and redirect to login
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_user');
+        
+        // Redirect to login page
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
 

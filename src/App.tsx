@@ -99,13 +99,31 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ permission, element, mo
 
 const DashboardRoute: React.FC = () => {
   const { user } = useAuthContext();
-  if (user?.role !== 'Super Admin' && !user?.permissions?.includes('dashboard_view')) {
-    if (user?.permissions?.includes('pos_view')) {
-      return <Navigate to="/pos" replace />;
-    }
-    return <AccessDenied moduleName="Dashboard" />;
+  if (!user) return <Navigate to="/login" replace />;
+
+  if (user.role === 'Super Admin') return <Dashboard />;
+
+  const perms = user.permissions || [];
+  if (perms.includes('dashboard_view')) {
+    return <Dashboard />;
   }
-  return <Dashboard />;
+
+  // Smooth enterprise role redirection: seamlessly direct the user to their granted module
+  if (perms.includes('pos_view')) return <Navigate to="/pos" replace />;
+  if (perms.includes('accounting_view') || perms.includes('accounting_manage')) return <Navigate to="/accounting" replace />;
+  if (perms.includes('fund_accounting_view') || perms.includes('donations_view') || perms.includes('child_support_view')) return <Navigate to="/funds" replace />;
+  if (perms.includes('invoices_view') || perms.includes('sales_view')) return <Navigate to="/invoices" replace />;
+  if (perms.includes('inventory_view')) return <Navigate to="/inventory" replace />;
+  if (perms.includes('expenses_view')) return <Navigate to="/expenses" replace />;
+  if (perms.includes('employees_view')) return <Navigate to="/employees" replace />;
+  if (perms.includes('customers_view')) return <Navigate to="/customers" replace />;
+  if (perms.includes('suppliers_view')) return <Navigate to="/suppliers" replace />;
+  if (perms.includes('reports_view')) return <Navigate to="/reports/sales" replace />;
+  if (perms.includes('user_management_manage')) return <Navigate to="/users" replace />;
+  if (perms.includes('audit_logs_view')) return <Navigate to="/audit-log" replace />;
+  if (perms.includes('settings_manage')) return <Navigate to="/settings" replace />;
+
+  return <AccessDenied moduleName="Dashboard" />;
 };
 
 const AppRoutes: React.FC = () => {
@@ -118,40 +136,40 @@ const AppRoutes: React.FC = () => {
         <Route element={<Layout />}>
           <Route path="/" element={<DashboardRoute />} />
           <Route path="/settings" element={<ProtectedRoute permission="settings_manage" moduleName="Settings" element={<Settings />} />} />
-          <Route path="/accounting/general-ledger" element={<ProtectedRoute permission="accounting_view" moduleName="General Ledger" element={<GeneralLedger />} />} />
+          <Route path="/accounting/general-ledger" element={<ProtectedRoute permission={['accounting_view', 'journal_entries_view']} moduleName="General Ledger" element={<GeneralLedger />} />} />
           <Route path="/accounting/balance-sheet" element={<ProtectedRoute permission="accounting_view" moduleName="Balance Sheet" element={<BalanceSheet />} />} />
           <Route path="/accounting/trial-balance" element={<ProtectedRoute permission="accounting_view" moduleName="Trial Balance" element={<TrialBalance />} />} />
           <Route path="/accounting/categories" element={<ProtectedRoute permission="accounting_view" moduleName="Account Categories" element={<AccountCategories />} />} />
-          <Route path="/accounting/chart-of-accounts" element={<ProtectedRoute permission="accounting_view" moduleName="Chart of Accounts" element={<ChartOfAccounts />} />} />
-          <Route path="/accounting/bank-reconciliation" element={<ProtectedRoute permission="bank_reconciliation_view" moduleName="Bank Reconciliation" element={<BankReconciliation />} />} />
+          <Route path="/accounting/chart-of-accounts" element={<ProtectedRoute permission={['accounting_view', 'chart_of_accounts_view', 'chart_of_accounts_manage']} moduleName="Chart of Accounts" element={<ChartOfAccounts />} />} />
+          <Route path="/accounting/bank-reconciliation" element={<ProtectedRoute permission={['bank_reconciliation_view', 'bank_recon_view', 'bank_recon_manage', 'accounting_view']} moduleName="Bank Reconciliation" element={<BankReconciliation />} />} />
           <Route path="/accounting/income-statement" element={<ProtectedRoute permission="accounting_view" moduleName="Income Statement" element={<IncomeStatement />} />} />
           <Route path="/accounting/cash-flow" element={<ProtectedRoute permission="accounting_view" moduleName="Cash Flow" element={<CashFlow />} />} />
           <Route path="/pos" element={<ProtectedRoute permission="pos_view" moduleName="Point of Sale" element={<PointOfSale />} />} />
-          <Route path="/inventory" element={<ProtectedRoute permission="inventory_view" moduleName="Inventory" element={<Inventory />} />} />
-          <Route path="/inventory/add-stock" element={<ProtectedRoute permission={['inventory_create', 'inventory_edit']} moduleName="Add Stock" element={<AddStockPage />} />} />
-          <Route path="/expenses" element={<ProtectedRoute permission="expenses_view" moduleName="Expenses" element={<Expenses />} />} />
-          <Route path="/invoices" element={<ProtectedRoute permission="invoices_view" moduleName="Invoices" element={<InvoiceList />} />} />
-          <Route path="/accounting" element={<ProtectedRoute permission="accounting_view" moduleName="Accounting Dashboard" element={<AccountingDashboard />} />} />
-          <Route path="/accounting/fixed-assets" element={<ProtectedRoute permission="accounting_view" moduleName="Fixed Assets" element={<FixedAssets />} />} />
-          <Route path="/customers" element={<ProtectedRoute permission="customers_view" moduleName="Customers" element={<Customers />} />} />
-          <Route path="/employees" element={<ProtectedRoute permission="employees_view" moduleName="Employees" element={<Employees />} />} />
-          <Route path="/suppliers" element={<ProtectedRoute permission="suppliers_view" moduleName="Suppliers" element={<Suppliers />} />} />
-          <Route path="/invoice/:id" element={<ProtectedRoute permission="invoices_view" moduleName="Invoice" element={<Invoice />} />} />
-          <Route path="/invoice" element={<ProtectedRoute permission="invoices_view" moduleName="Invoice" element={<Invoice />} />} />
-          <Route path="/purchase-invoice/:id" element={<ProtectedRoute permission="invoices_view" moduleName="Purchase Invoice" element={<PurchaseInvoiceDetail />} />} />
-          <Route path="/purchases/:id" element={<ProtectedRoute permission="invoices_view" moduleName="Purchase Invoice" element={<PurchaseInvoiceDetail />} />} />
+          <Route path="/inventory" element={<ProtectedRoute permission={['inventory_view', 'inventory_manage']} moduleName="Inventory" element={<Inventory />} />} />
+          <Route path="/inventory/add-stock" element={<ProtectedRoute permission={['inventory_create', 'inventory_edit', 'inventory_manage']} moduleName="Add Stock" element={<AddStockPage />} />} />
+          <Route path="/expenses" element={<ProtectedRoute permission={['expenses_view', 'expenses_record', 'expenses_approve']} moduleName="Expenses" element={<Expenses />} />} />
+          <Route path="/invoices" element={<ProtectedRoute permission={['invoices_view', 'sales_view', 'purchases_view']} moduleName="Invoices" element={<InvoiceList />} />} />
+          <Route path="/accounting" element={<ProtectedRoute permission={['accounting_view', 'accounting_manage']} moduleName="Accounting Dashboard" element={<AccountingDashboard />} />} />
+          <Route path="/accounting/fixed-assets" element={<ProtectedRoute permission={['accounting_view', 'fixed_assets_view', 'fixed_assets_manage']} moduleName="Fixed Assets" element={<FixedAssets />} />} />
+          <Route path="/customers" element={<ProtectedRoute permission={['customers_view', 'customers_manage']} moduleName="Customers" element={<Customers />} />} />
+          <Route path="/employees" element={<ProtectedRoute permission={['employees_view', 'employees_manage']} moduleName="Employees" element={<Employees />} />} />
+          <Route path="/suppliers" element={<ProtectedRoute permission={['suppliers_view', 'suppliers_manage']} moduleName="Suppliers" element={<Suppliers />} />} />
+          <Route path="/invoice/:id" element={<ProtectedRoute permission={['invoices_view', 'sales_view']} moduleName="Invoice" element={<Invoice />} />} />
+          <Route path="/invoice" element={<ProtectedRoute permission={['invoices_view', 'sales_view']} moduleName="Invoice" element={<Invoice />} />} />
+          <Route path="/purchase-invoice/:id" element={<ProtectedRoute permission={['invoices_view', 'purchases_view']} moduleName="Purchase Invoice" element={<PurchaseInvoiceDetail />} />} />
+          <Route path="/purchases/:id" element={<ProtectedRoute permission={['invoices_view', 'purchases_view']} moduleName="Purchase Invoice" element={<PurchaseInvoiceDetail />} />} />
           <Route path="/reports/sales" element={<ProtectedRoute permission="reports_view" moduleName="Sales Reports" element={<SalesReports />} />} />
           <Route path="/users" element={<ProtectedRoute permission="user_management_manage" moduleName="User Management" element={<UserManagement />} />} />
-          <Route path="/audit-log" element={<ProtectedRoute permission="audit_logs_view" moduleName="Audit Log" element={<AuditLog />} />} />
+          <Route path="/audit-log" element={<ProtectedRoute permission={['audit_logs_view', 'user_management_manage']} moduleName="Audit Log" element={<AuditLog />} />} />
           
           {/* Fund Accounting & Child Support */}
-          <Route path="/funds" element={<ProtectedRoute permission="fund_accounting_view" moduleName="Fund Dashboard" element={<FundDashboard />} />} />
-          <Route path="/funds/children" element={<ProtectedRoute permission={['child_support_view', 'school_fees_view']} moduleName="Child Support & School Fees" element={<ChildManagement />} />} />
-          <Route path="/funds/donations" element={<ProtectedRoute permission="donations_view" moduleName="Donations" element={<Donations />} />} />
-          <Route path="/funds/setup" element={<ProtectedRoute permission="fund_accounting_manage" moduleName="Dept. & Funds Setup" element={<DepartmentsAndFunds />} />} />
-          <Route path="/funds/transfers" element={<ProtectedRoute permission="fund_accounting_manage" moduleName="Internal Transfers" element={<InternalTransfers />} />} />
-          <Route path="/funds/billing" element={<ProtectedRoute permission="fund_accounting_manage" moduleName="NGO Billing" element={<NGOBilling />} />} />
-          <Route path="/funds/reports" element={<ProtectedRoute permission="fund_reports_view" moduleName="Fund Reports" element={<FundReports />} />} />
+          <Route path="/funds" element={<ProtectedRoute permission={['fund_accounting_view', 'donations_view', 'child_support_view', 'fund_accounting_manage']} moduleName="Fund Dashboard" element={<FundDashboard />} />} />
+          <Route path="/funds/children" element={<ProtectedRoute permission={['child_support_view', 'school_fees_view', 'children_manage']} moduleName="Child Support & School Fees" element={<ChildManagement />} />} />
+          <Route path="/funds/donations" element={<ProtectedRoute permission={['donations_view', 'donations_record', 'fund_accounting_view']} moduleName="Donations" element={<Donations />} />} />
+          <Route path="/funds/setup" element={<ProtectedRoute permission={['fund_accounting_manage', 'fund_setup_view', 'fund_setup_manage']} moduleName="Dept. & Funds Setup" element={<DepartmentsAndFunds />} />} />
+          <Route path="/funds/transfers" element={<ProtectedRoute permission={['fund_accounting_manage', 'transfers_view', 'transfers_create', 'transfers_approve']} moduleName="Internal Transfers" element={<InternalTransfers />} />} />
+          <Route path="/funds/billing" element={<ProtectedRoute permission={['fund_accounting_manage', 'sales_view', 'invoices_view']} moduleName="NGO Billing" element={<NGOBilling />} />} />
+          <Route path="/funds/reports" element={<ProtectedRoute permission={['fund_reports_view', 'fund_accounting_view', 'reports_view']} moduleName="Fund Reports" element={<FundReports />} />} />
           <Route path="/fund-accounting/donations" element={<Navigate to="/funds/donations" replace />} />
           <Route path="/fund-accounting/*" element={<Navigate to="/funds" replace />} />
 
@@ -178,8 +196,10 @@ function App() {
             toastOptions={{
               duration: 4000,
               style: {
-                background: '#363636',
+                background: '#1e293b',
                 color: '#fff',
+                borderRadius: '0.75rem',
+                border: '1px solid #334155'
               },
               success: {
                 duration: 3000,

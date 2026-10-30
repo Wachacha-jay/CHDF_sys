@@ -5,7 +5,7 @@ import { User } from '../types';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; user?: User | null }>;
+  login: (emailOrUsername: string, password: string) => Promise<{ success: boolean; error?: string; user?: User | null }>;
   register: (data: {
     email: string;
     username: string;
@@ -14,6 +14,7 @@ interface AuthContextType {
     employee_id?: string;
     first_name: string;
     last_name: string;
+    is_active?: number;
   }) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
 }

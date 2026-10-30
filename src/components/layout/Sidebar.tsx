@@ -79,44 +79,44 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const navigation: NavItem[] = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard, permission: 'dashboard_view' },
     { name: 'Point of Sale', href: '/pos', icon: ShoppingCart, permission: 'pos_view' },
-    { name: 'Inventory', href: '/inventory', icon: Package, permission: 'inventory_view' },
-    { name: 'Expenses', href: '/expenses', icon: DollarSign, permission: 'expenses_view' },
-    { name: 'Invoices', href: '/invoices', icon: Receipt, permission: 'invoices_view' },
+    { name: 'Inventory', href: '/inventory', icon: Package, permission: ['inventory_view', 'inventory_manage'] },
+    { name: 'Expenses', href: '/expenses', icon: DollarSign, permission: ['expenses_view', 'expenses_record', 'expenses_approve'] },
+    { name: 'Invoices', href: '/invoices', icon: Receipt, permission: ['invoices_view', 'sales_view'] },
     { name: 'Sales Reports', href: '/reports/sales', icon: TrendingUp, permission: 'reports_view' },
     {
       name: 'Accounting', href: '/accounting', icon: DollarSign, children: [
-        { name: 'Dashboard', href: '/accounting', icon: LayoutDashboard, permission: 'accounting_view' },
-        { name: 'General Ledger', href: '/accounting/general-ledger', icon: BookOpen, permission: 'accounting_view' },
+        { name: 'Dashboard', href: '/accounting', icon: LayoutDashboard, permission: ['accounting_view', 'accounting_manage'] },
+        { name: 'General Ledger', href: '/accounting/general-ledger', icon: BookOpen, permission: ['accounting_view', 'journal_entries_view'] },
         { name: 'Balance Sheet', href: '/accounting/balance-sheet', icon: BarChart3, permission: 'accounting_view' },
         { name: 'Trial Balance', href: '/accounting/trial-balance', icon: Receipt, permission: 'accounting_view' },
         { name: 'Income Statement', href: '/accounting/income-statement', icon: TrendingUp, permission: 'accounting_view' },
         { name: 'Cash Flow', href: '/accounting/cash-flow', icon: ArrowRightLeft, permission: 'accounting_view' },
-        { name: 'Bank Reconciliation', href: '/accounting/bank-reconciliation', icon: Layers, permission: 'bank_reconciliation_view' },
+        { name: 'Bank Reconciliation', href: '/accounting/bank-reconciliation', icon: Layers, permission: ['bank_reconciliation_view', 'bank_recon_view', 'bank_recon_manage'] },
       ]
     },
     {
       name: 'Fund Accounting', href: '/funds', icon: HeartHandshake, children: [
-        { name: 'Fund Dashboard', href: '/funds', icon: LayoutDashboard, permission: 'fund_accounting_view' },
-        { name: 'Child Support', href: '/funds/children', icon: Baby, permission: ['child_support_view', 'school_fees_view'] },
-        { name: 'Donations', href: '/funds/donations', icon: Heart, permission: 'donations_view' },
-        { name: 'Internal Transfers', href: '/funds/transfers', icon: ArrowRightLeft, permission: 'fund_accounting_manage' },
-        { name: 'NGO Billing', href: '/funds/billing', icon: Receipt, permission: 'fund_accounting_manage' },
-        { name: 'Reports Workspace', href: '/funds/reports', icon: BookOpen, permission: 'fund_reports_view' },
-        { name: 'Dept. & Funds Setup', href: '/funds/setup', icon: Building2, permission: 'fund_accounting_manage' },
+        { name: 'Fund Dashboard', href: '/funds', icon: LayoutDashboard, permission: ['fund_accounting_view', 'donations_view', 'child_support_view', 'fund_accounting_manage'] },
+        { name: 'Child Support', href: '/funds/children', icon: Baby, permission: ['child_support_view', 'school_fees_view', 'children_manage'] },
+        { name: 'Donations', href: '/funds/donations', icon: Heart, permission: ['donations_view', 'donations_record'] },
+        { name: 'Internal Transfers', href: '/funds/transfers', icon: ArrowRightLeft, permission: ['fund_accounting_manage', 'transfers_view', 'transfers_create', 'transfers_approve'] },
+        { name: 'NGO Billing', href: '/funds/billing', icon: Receipt, permission: ['fund_accounting_manage', 'sales_view', 'invoices_view'] },
+        { name: 'Reports Workspace', href: '/funds/reports', icon: BookOpen, permission: ['fund_reports_view', 'fund_accounting_view', 'reports_view'] },
+        { name: 'Dept. & Funds Setup', href: '/funds/setup', icon: Building2, permission: ['fund_accounting_manage', 'fund_setup_view', 'fund_setup_manage'] },
       ]
     },
 
     {
       name: 'CRM & Vendors', href: '/customers', icon: Users, children: [
-        { name: 'Customers (AR)', href: '/customers', icon: Users, permission: 'customers_view' },
-        { name: 'Suppliers & Vendors (AP)', href: '/suppliers', icon: Truck, permission: 'suppliers_view' },
+        { name: 'Customers (AR)', href: '/customers', icon: Users, permission: ['customers_view', 'customers_manage'] },
+        { name: 'Suppliers & Vendors (AP)', href: '/suppliers', icon: Truck, permission: ['suppliers_view', 'suppliers_manage', 'purchases_view'] },
       ]
     },
-    { name: 'HR & Payroll', href: '/employees', icon: UserCheck, permission: 'employees_view' },
+    { name: 'HR & Payroll', href: '/employees', icon: UserCheck, permission: ['employees_view', 'employees_manage', 'payroll_view'] },
     {
       name: 'Security & Logs', href: '/users', icon: Shield, children: [
         { name: 'User Management (RBAC)', href: '/users', icon: Shield, permission: 'user_management_manage' },
-        { name: 'Audit Trail / Logs', href: '/audit-log', icon: Activity, permission: 'audit_logs_view' },
+        { name: 'Audit Trail / Logs', href: '/audit-log', icon: Activity, permission: ['audit_logs_view', 'user_management_manage'] },
       ]
     },
     { name: 'Settings', href: '/settings', icon: Settings, permission: 'settings_manage' },
